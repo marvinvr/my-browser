@@ -5,3 +5,4 @@ DerivedData/
 *.xcworkspace/xcuserdata/
 .mmux/
 mmux.local.yml
+*.xcodeproj/

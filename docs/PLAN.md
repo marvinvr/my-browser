@@ -11,7 +11,7 @@ Opinionated macOS browser, Arc-style. Open source, public GitHub repo. iPhone la
 - Spaces: each Space has its own profile (own cookies/storage via `WKWebsiteDataStore(forIdentifier:)`), own pinned items, own color/icon. Switching Spaces by two-finger horizontal swipe on the sidebar + shortcuts.
 - Horizontal two-finger swipe on the page/sidebar switches tabs (and back/forward stays on the page edge-swipe as in Safari; decide in Phase 1).
 - iCloud sync of the sidebar (spaces, pinned items, folders) via CloudKit (`CKSyncEngine`), private database. Tabs/history not synced at first.
-- Safari web extensions via `WKWebExtensionController` (macOS 15.4+ API). Install/enable per profile. uBlock Origin bundling: later, not now.
+- Extensions: they just have to work, the source doesn't matter (Marvin 22.10.). Plan: WebKit's `WKWebExtensionController` (macOS 15.4+), which loads standard WebExtensions (MV2/MV3) from a folder or zip, so besides Safari extensions also unpacked Chrome Web Store (.crx) and Firefox (.xpi) extensions can be installed. Install/enable per profile. uBlock Origin bundling: later, not now.
 - Import:
   - Chrome (and Chromium browsers: Brave, Edge, Arc-as-Chromium) bookmarks → sidebar folders.
   - Arc: everything from `~/Library/Application Support/Arc/StorableSidebar.json`: spaces (name, icon, color, profile mapping), pinned/favorites, folders (nested), pinned tabs.
@@ -34,6 +34,6 @@ Opinionated macOS browser, Arc-style. Open source, public GitHub repo. iPhone la
 2. **Parallel workstreams** (after Phase 1, each its own lead + worktree):
    - A. Sidebar UX & feel: pinned icon grid, nested folders, drag & drop, context menus, animations, swipe gestures for tabs/spaces, app icon.
    - B. Importers: Chrome/Chromium bookmarks, Arc full import (spaces, pins, folders) with a nice import flow.
-   - C. Extensions: WKWebExtension support (install .appex/web-extension folders, toolbar buttons in the sidebar, popups, per-profile enable).
+   - C. Extensions: WKWebExtension support: install from the Chrome Web Store (download + unpack .crx), from .xpi/.zip/folder, and installed Safari extensions where possible; toolbar buttons in the sidebar, popups, permissions, per-profile enable.
    - D. iCloud sync: CKSyncEngine for the sidebar model, conflict handling; needs entitlements → coordinate with signing.
 3. **Polish & release**: crash/perf pass, settings, onboarding (import on first launch), signing + notarized DMG + Sparkle (Tim for certificates), README/screenshots.
