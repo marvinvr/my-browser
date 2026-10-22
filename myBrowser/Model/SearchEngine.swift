@@ -20,10 +20,32 @@ nonisolated enum SearchEngine: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    /// Search URL for `query`. `+`, `&`, `#` and non-ASCII characters are percent-encoded
+    /// so the engine receives them as part of the query rather than as delimiters.
     func searchURL(for query: String) -> URL {
-        // TODO(worker D): per-engine templates with proper query encoding.
-        var components = URLComponents(string: "https://www.google.com/search")!
-        components.queryItems = [URLQueryItem(name: "q", value: query)]
-        return components.url!
+        let (host, path) = endpoint
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = host
+        components.path = path
+        components.percentEncodedQuery = "q=\(Self.percentEncodeQuery(query))"
+        if let url = components.url { return url }
+        preconditionFailure("Search template for \(displayName) did not produce a URL")
+    }
+
+    private var endpoint: (host: String, path: String) {
+        switch self {
+        case .google: ("www.google.com", "/search")
+        case .duckDuckGo: ("duckduckgo.com", "/")
+        case .kagi: ("kagi.com", "/search")
+        case .bing: ("www.bing.com", "/search")
+        case .ecosia: ("www.ecosia.org", "/search")
+        }
+    }
+
+    private static func percentEncodeQuery(_ query: String) -> String {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "+&#")
+        return query.addingPercentEncoding(withAllowedCharacters: allowed) ?? query
     }
 }

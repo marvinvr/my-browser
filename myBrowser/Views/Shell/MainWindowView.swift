@@ -31,6 +31,7 @@ struct MainWindowView: View {
         .background {
             WindowConfigurator(anchor: $traffic)
         }
+        .overlay { CommandBarOverlay() }
         .onAppear {
             let clamped = min(SidebarMetrics.maxWidth, max(SidebarMetrics.minWidth, storedSidebarWidth))
             if clamped != storedSidebarWidth {
