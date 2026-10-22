@@ -6,3 +6,4 @@ DerivedData/
 .mmux/
 mmux.local.yml
 *.xcodeproj/
+myBrowser/Info.plist
