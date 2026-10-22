@@ -175,6 +175,9 @@ struct SpaceEditor: View {
             model.library.updateSpace(space.id) { draft in
                 draft.symbol = symbol
                 draft.color = color
+                if symbol != space.symbol {
+                    draft.emoji = nil
+                }
             }
         }
         dismiss()

@@ -45,10 +45,7 @@ struct SpaceSwitcher: View {
         return Button {
             model.selectSpace(space.id)
         } label: {
-            Image(systemName: space.symbol)
-                .font(.system(size: Self.symbolSize, weight: .regular))
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(space.color.color)
+            spaceGlyph(space)
                 .frame(width: Self.target, height: Self.target)
                 .background {
                     FlatFill(color: chipColor(selected: selected, color: space.color), cornerRadius: Self.corner)
@@ -64,6 +61,19 @@ struct SpaceSwitcher: View {
             Button("Edit…") { editorMode = .edit(space) }
             Button("Delete", role: .destructive) { model.deleteSpace(space.id) }
                 .disabled(onlySpace)
+        }
+    }
+
+    @ViewBuilder
+    private func spaceGlyph(_ space: Space) -> some View {
+        if let emoji = space.emoji, !emoji.isEmpty {
+            Text(emoji)
+                .font(.system(size: 15))
+        } else {
+            Image(systemName: space.symbol)
+                .font(.system(size: Self.symbolSize, weight: .regular))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(space.color.color)
         }
     }
 

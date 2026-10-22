@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     override init() {
         let directory = Self.storageDirectory()
+        Onboarding.prepareForLaunch(libraryDirectory: directory)
         library = LibraryStore(directory: directory)
         session = SessionStore(directory: directory)
         model = BrowserModel(library: library, session: session)
@@ -77,8 +78,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             break
         }
-        if env["MYBROWSER_DEBUG_LIBRARY"] != nil {
+        if env["MYBROWSER_DEBUG_LIBRARY"] != nil, env["MYBROWSER_DEBUG_IMPORT_FILE"] == nil {
             seedSnapshotChrome()
+        }
+        importDebugFixture()
+    }
+
+    /// Snapshot-only. Reads a fixture path from the environment and applies it to the debug library.
+    private func importDebugFixture() {
+        let env = ProcessInfo.processInfo.environment
+        guard let path = env["MYBROWSER_DEBUG_IMPORT_FILE"], !path.isEmpty else { return }
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return }
+        let kind = env["MYBROWSER_DEBUG_IMPORT_KIND"] ?? "arc"
+        let plan: ImportPlan?
+        if kind == "chrome" || kind == "chromium" {
+            plan = ChromiumBookmarkParser.plan(
+                data: data,
+                options: ChromiumBookmarkParser.Options(
+                    spaceName: "Chrome",
+                    bookmarkBarAsFolder: env["MYBROWSER_DEBUG_IMPORT_BAR_FOLDER"] != "0"
+                )
+            )
+        } else {
+            plan = ArcSidebarParser.read(
+                data: data,
+                includeUnpinned: env["MYBROWSER_DEBUG_IMPORT_UNPINNED"] == "1"
+            )?.plan
+        }
+        guard let plan else { return }
+        let result = model.library.apply(plan)
+        if let id = result.spaceIDs.first {
+            model.selectSpace(id)
+        }
+        let spaceID = model.selectedSpaceID
+        if let tab = model.library.children(of: nil, section: .tabs, in: spaceID).first {
+            model.select(tab.id)
+        }
+        guard model.library.orderedSpaces.count > 1 else { return }
+        for space in model.library.orderedSpaces where space.name == "Personal" && space.id != model.selectedSpaceID {
+            let empty = SidebarItem.Section.allCases.allSatisfy { section in
+                model.library.children(of: nil, section: section, in: space.id).isEmpty
+            }
+            if empty {
+                model.deleteSpace(space.id)
+            }
         }
     }
 

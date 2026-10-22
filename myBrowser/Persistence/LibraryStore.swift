@@ -11,8 +11,8 @@ final class LibraryStore {
         case after(UUID)
     }
 
-    private(set) var profiles: [UUID: Profile] = [:]
-    private(set) var spaces: [UUID: Space] = [:]
+    var profiles: [UUID: Profile] = [:]
+    var spaces: [UUID: Space] = [:]
     private(set) var items: [UUID: SidebarItem] = [:]
 
     /// `nil` = in-memory only (tests, previews). Never reads or writes disk.
@@ -285,7 +285,7 @@ final class LibraryStore {
         didChange([profileID])
     }
 
-    private func performBatch(_ body: () -> Void) {
+    func performBatch(_ body: () -> Void) {
         if batchedChangeIDs != nil {
             body()
             return
@@ -297,7 +297,7 @@ final class LibraryStore {
         publish(ids)
     }
 
-    private func didChange(_ ids: Set<UUID>) {
+    func didChange(_ ids: Set<UUID>) {
         if batchedChangeIDs != nil {
             batchedChangeIDs?.formUnion(ids)
             return

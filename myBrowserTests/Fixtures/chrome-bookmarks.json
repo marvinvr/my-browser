@@ -1,0 +1,53 @@
+{
+  "checksum": "fixture",
+  "version": 1,
+  "roots": {
+    "bookmark_bar": {
+      "type": "folder",
+      "name": "Bookmarks bar",
+      "children": [
+        { "type": "url", "name": "News", "url": "https://example.com/news" },
+        { "type": "url", "name": "News duplicate", "url": "https://example.com/news" },
+        { "type": "url", "name": "Script", "url": "javascript:void(0)" },
+        { "type": "url", "name": "Script again", "url": "JavaScript:alert(1)" },
+        { "type": "folder", "name": "Empty", "children": [] },
+        {
+          "type": "folder",
+          "name": "Work",
+          "children": [
+            { "type": "url", "name": "Docs", "url": "https://example.com/docs" },
+            {
+              "type": "folder",
+              "name": "Only script",
+              "children": [
+                { "type": "url", "name": "Bad", "url": "javascript:void(0)" }
+              ]
+            },
+            {
+              "type": "folder",
+              "name": "Nested",
+              "children": [
+                { "type": "url", "name": "Spec", "url": "https://example.com/spec" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "other": {
+      "type": "folder",
+      "name": "Other bookmarks",
+      "children": [
+        { "type": "url", "name": "Also news", "url": "https://example.com/news" },
+        { "type": "url", "name": "Notes", "url": "https://example.com/notes" }
+      ]
+    },
+    "synced": {
+      "type": "folder",
+      "name": "Mobile bookmarks",
+      "children": [
+        { "type": "url", "name": "Phone", "url": "https://example.com/phone" }
+      ]
+    }
+  }
+}
