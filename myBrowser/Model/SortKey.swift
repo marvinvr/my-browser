@@ -20,24 +20,40 @@ nonisolated enum SortKey {
     private static let smallestInteger: String = String(intDigits[0]) + String(repeating: digits[0], count: intDigits.count / 2)
 
     /// A key strictly between `a` and `b`. `nil` means open-ended (start / end).
-    /// Both keys must be valid. Equal or out-of-order bounds do not trap: the result is a key after `a`.
+    ///
+    /// Total: an invalid bound is ignored. Equal or out-of-order bounds produce a key after the
+    /// lower valid bound. When neither bound is valid, the result is the first key (`a0`).
     static func between(_ a: String?, _ b: String?) -> String {
-        if let a { validate(a) }
-        if let b { validate(b) }
-        if let a, let b, a >= b {
-            return key(after: a)
+        let lower = a.flatMap { isValid($0) ? $0 : nil }
+        let upper = b.flatMap { isValid($0) ? $0 : nil }
+        if let lower, let upper, lower >= upper {
+            return key(after: lower)
         }
 
-        guard let a else {
-            guard let b else {
+        guard let lower else {
+            guard let upper else {
                 return String(intDigits[intDigits.count / 2]) + String(digits[0])
             }
-            return key(before: b)
+            return key(before: upper)
         }
-        guard let b else {
-            return key(after: a)
+        guard let upper else {
+            return key(after: lower)
         }
-        return key(between: a, and: b)
+        return key(between: lower, and: upper)
+    }
+
+    /// True when `key` can be used as a bound. Invalid remote keys fail this and are rewritten.
+    static func isValid(_ key: String) -> Bool {
+        if key.isEmpty || key == smallestInteger { return false }
+        guard let head = key.first, intDigitIndex[head] != nil else { return false }
+        let length = integerLength(of: head)
+        guard length <= key.count else { return false }
+        let fraction = key.dropFirst(length)
+        if fraction.last == digits[0] { return false }
+        for character in key.dropFirst() where digitIndex[character] == nil {
+            return false
+        }
+        return true
     }
 
     /// `count` increasing keys, e.g. for initial ordering.
@@ -61,7 +77,7 @@ nonisolated enum SortKey {
             return ib
         }
         guard let decremented = decrementInteger(ib) else {
-            preconditionFailure("cannot decrement any more")
+            return key(after: b)
         }
         return decremented
     }
@@ -84,7 +100,7 @@ nonisolated enum SortKey {
             return ia + midpoint(fa, fb)
         }
         guard let incremented = incrementInteger(ia) else {
-            preconditionFailure("cannot increment any more")
+            return ia + midpoint(fa, nil)
         }
         if incremented < b {
             return incremented
@@ -137,22 +153,6 @@ nonisolated enum SortKey {
     }
 
     // MARK: - Integers
-
-    private static func validate(_ key: String) {
-        precondition(key != smallestInteger, "invalid order key: \(key)")
-        guard let head = key.first else {
-            preconditionFailure("invalid order key")
-        }
-        let length = integerLength(of: head)
-        precondition(length <= key.count, "invalid order key: \(key)")
-        let fraction = key.dropFirst(length)
-        if let last = fraction.last {
-            precondition(last != digits[0], "invalid order key: \(key)")
-        }
-        for character in key.dropFirst() {
-            precondition(digitIndex[character] != nil, "invalid order key: \(key)")
-        }
-    }
 
     private static func integerPart(of key: String) -> String {
         guard let head = key.first else {

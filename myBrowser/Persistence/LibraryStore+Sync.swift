@@ -23,6 +23,7 @@ extension LibraryStore {
     /// Writes a remote batch without echoing it through `onChange`.
     /// `onChange` is cleared for the call (`applyingRemote`) so the sync engine does not upload the same rows back.
     /// Deletions run after upserts. A `.tabs` row is left untouched.
+    /// An invalid `sortKey` is replaced with a key after the last valid sibling.
     func applyRemote(upserts: RemoteLibraryUpdate, deletions: Set<UUID>) {
         let savedChangeHandler = onChange
         onChange = nil
@@ -33,11 +34,17 @@ extension LibraryStore {
             profiles[profile.id] = profile
             changed = true
         }
-        for space in upserts.spaces {
+        for var space in upserts.spaces {
+            if !SortKey.isValid(space.sortKey) {
+                space.sortKey = sortKeyAfterLastSpace(excluding: space.id)
+            }
             spaces[space.id] = space
             changed = true
         }
-        for item in upserts.items where item.section != .tabs {
+        for var item in upserts.items where item.section != .tabs {
+            if !SortKey.isValid(item.sortKey) {
+                item.sortKey = sortKeyAfterLastSibling(of: item)
+            }
             items[item.id] = item
             changed = true
         }
@@ -110,5 +117,20 @@ extension LibraryStore {
         }
         if !removed.isEmpty { scheduleSave() }
         return removed
+    }
+
+    /// A valid key after the last live space, ignoring `excluding` and any key `SortKey` would reject.
+    private func sortKeyAfterLastSpace(excluding: UUID) -> String {
+        let last = spaces.values
+            .filter { $0.id != excluding && $0.deletedAt == nil && SortKey.isValid($0.sortKey) }
+            .max { ($0.sortKey, $0.id.uuidString) < ($1.sortKey, $1.id.uuidString) }
+        return SortKey.between(last?.sortKey, nil)
+    }
+
+    /// A valid key after the last live sibling of `item` (same space, section, and parent).
+    private func sortKeyAfterLastSibling(of item: SidebarItem) -> String {
+        let last = children(of: item.parentID, section: item.section, in: item.spaceID)
+            .last { $0.id != item.id && SortKey.isValid($0.sortKey) }
+        return SortKey.between(last?.sortKey, nil)
     }
 }

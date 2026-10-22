@@ -212,6 +212,82 @@ struct SyncTests {
         #expect(reloaded.item(local.id)?.title == "Local")
     }
 
+    @Test func applyRemoteReplacesInvalidSortKeys() {
+        let store = LibraryStore(directory: nil)
+        let space = store.createSpace(name: "Personal")
+        let kept = store.addItem(spaceID: space.id, section: .pinned, title: "Kept", url: URL(string: "https://example.com"))
+        let badSpace = Space(
+            name: "Remote",
+            symbol: "circle.fill",
+            color: .blue,
+            profileID: space.profileID,
+            sortKey: "nope",
+            modifiedAt: older
+        )
+        var first = SidebarItem(
+            spaceID: space.id,
+            section: .pinned,
+            kind: .site,
+            title: "Bad",
+            url: URL(string: "https://example.com/a"),
+            sortKey: "M",
+            createdAt: older
+        )
+        first.modifiedAt = older
+        var second = SidebarItem(
+            spaceID: space.id,
+            section: .pinned,
+            kind: .site,
+            title: "Also bad",
+            url: URL(string: "https://example.com/b"),
+            sortKey: "!!!",
+            createdAt: older
+        )
+        second.modifiedAt = older
+        let otherSection = SidebarItem(
+            spaceID: space.id,
+            section: .favorites,
+            kind: .site,
+            title: "Favorite",
+            url: URL(string: "https://example.com/c"),
+            sortKey: "M",
+            createdAt: older
+        )
+        let tab = SidebarItem(
+            spaceID: space.id,
+            section: .tabs,
+            kind: .site,
+            title: "Tab",
+            sortKey: "M",
+            createdAt: older
+        )
+
+        store.applyRemote(
+            upserts: RemoteLibraryUpdate(spaces: [badSpace], items: [first, second, otherSection, tab]),
+            deletions: []
+        )
+
+        let storedSpace = store.spaces[badSpace.id]
+        #expect(SortKey.isValid(storedSpace?.sortKey ?? ""))
+        #expect((storedSpace?.sortKey ?? "") > space.sortKey)
+        #expect(storedSpace?.modifiedAt == older)
+
+        let storedFirst = store.items[first.id]
+        let storedSecond = store.items[second.id]
+        #expect(SortKey.isValid(storedFirst?.sortKey ?? ""))
+        #expect(SortKey.isValid(storedSecond?.sortKey ?? ""))
+        #expect((storedFirst?.sortKey ?? "") > kept.sortKey)
+        #expect((storedSecond?.sortKey ?? "") > (storedFirst?.sortKey ?? ""))
+        #expect(storedFirst?.modifiedAt == older)
+        #expect(store.items[otherSection.id]?.sortKey == SortKey.between(nil, nil))
+        #expect(store.items[tab.id] == nil)
+        #expect(store.items[kept.id]?.sortKey == kept.sortKey)
+
+        let inserted = store.addItem(spaceID: space.id, section: .pinned, title: "After")
+        #expect(SortKey.isValid(inserted.sortKey))
+        #expect(inserted.sortKey > (storedSecond?.sortKey ?? ""))
+    }
+
     @Test func pendingChangesSkipTabsAndEmitTombstones() {
         let store = LibraryStore(directory: nil)
         let space = store.createSpace(name: "Personal")

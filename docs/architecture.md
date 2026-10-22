@@ -172,7 +172,7 @@ Synced rows are profiles, spaces, favorites, and pinned items (including folder 
 
 ### Remote edits into the store
 
-`LibraryStore.applyRemote(upserts:deletions:)` writes the tables directly and clears `onChange` for that call (the `applyingRemote` suppression), then schedules the normal debounced save. Remote `modifiedAt` / `deletedAt` are stored as received. A remote record deletion hard-deletes the local profile, space, or synced item. Tombstone fields on a record (`deletedAt`) stay as tombstones so last-writer-wins can still see them.
+`LibraryStore.applyRemote(upserts:deletions:)` writes the tables directly and clears `onChange` for that call (the `applyingRemote` suppression), then schedules the normal debounced save. Remote `modifiedAt` / `deletedAt` are stored as received. An invalid `sortKey` is replaced with a fresh key after the last valid sibling; `SortKey.between` never traps (an invalid, equal, or out-of-order bound yields a key after the lower valid bound, or `a0` when neither bound is valid). A remote record deletion hard-deletes the local profile, space, or synced item. Tombstone fields on a record (`deletedAt`) stay as tombstones so last-writer-wins can still see them.
 
 ### Conflicts
 
