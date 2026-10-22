@@ -9,5 +9,6 @@ struct MainWindowView: View {
         }
         .ignoresSafeArea(edges: .top)
         .background(WindowConfigurator())
+        .overlay { CommandBarOverlay() }
     }
 }

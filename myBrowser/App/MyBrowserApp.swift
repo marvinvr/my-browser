@@ -12,6 +12,7 @@ struct MyBrowserApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
+        .commands { AppCommands(model: appDelegate.model) }
     }
 }
 
