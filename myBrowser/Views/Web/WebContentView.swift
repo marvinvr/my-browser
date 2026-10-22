@@ -53,6 +53,7 @@ private struct HostedWebView: NSViewRepresentable {
             return
         }
         if context.coordinator.installedID == tabID, webView.superview === container {
+            tab.restoreHistoryWhenWindowed()
             return
         }
         for subview in container.subviews where subview !== webView {
@@ -70,6 +71,7 @@ private struct HostedWebView: NSViewRepresentable {
             ])
         }
         context.coordinator.installedID = tabID
+        tab.restoreHistoryWhenWindowed()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }

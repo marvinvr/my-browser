@@ -35,6 +35,8 @@ final class BrowserTab: Identifiable {
 
     @ObservationIgnored private let initialURL: URL?
     @ObservationIgnored private var storedInteractionState: Data?
+    @ObservationIgnored private var historyRestoreScheduled = false
+    @ObservationIgnored private var historyRestoreAttempts = 0
     /// Set when `load` happens before the web view exists, so it wins over restored history.
     @ObservationIgnored private var pendingURL: URL?
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
@@ -78,13 +80,36 @@ final class BrowserTab: Identifiable {
         if let pendingURL {
             self.pendingURL = nil
             webView.load(URLRequest(url: pendingURL))
-        } else if let storedInteractionState {
-            webView.interactionState = storedInteractionState
+        } else if let state = storedInteractionState {
+            webView.interactionState = state
         } else if let initialURL {
             webView.load(URLRequest(url: initialURL))
         }
 
         useCachedFavicon()
+    }
+
+    /// WebKit ignores `interactionState` until the view is in a window and has a real frame.
+    /// Called from the host after the web view is installed.
+    func restoreHistoryWhenWindowed() {
+        guard let state = storedInteractionState else { return }
+        guard let webView, webView.window != nil, webView.bounds.width > 1, webView.bounds.height > 1 else {
+            guard historyRestoreAttempts < 40, !historyRestoreScheduled else { return }
+            historyRestoreAttempts += 1
+            historyRestoreScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                self?.historyRestoreScheduled = false
+                self?.restoreHistoryWhenWindowed()
+            }
+            return
+        }
+        let list = webView.backForwardList
+        guard list.backList.isEmpty, list.forwardList.isEmpty else {
+            storedInteractionState = nil
+            return
+        }
+        webView.interactionState = state
+        storedInteractionState = nil
     }
 
     private func attach(_ webView: WKWebView) {
