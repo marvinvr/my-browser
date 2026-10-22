@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updater.start()
         #if DEBUG
         applyDebugAppearance()
+        applyDebugScene()
         if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_COMMAND_BAR"] == "1" {
             model.showCommandBar(.newTab)
         }
@@ -46,9 +47,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     #if DEBUG
+    /// Snapshot-only scene setup. Opt-in, so a normal debug launch leaves the library alone.
+    private func applyDebugScene() {
+        let env = ProcessInfo.processInfo.environment
+        if let name = env["MYBROWSER_DEBUG_SPACE"],
+           let space = model.library.orderedSpaces.first(where: { $0.name == name }) {
+            model.selectSpace(space.id)
+        }
+        if env["MYBROWSER_DEBUG_SEED"] == "1",
+           !model.library.children(of: nil, section: .pinned, in: model.selectedSpaceID).contains(where: { $0.kind == .folder }) {
+            _ = model.createFolder(named: "Projects", parentID: nil)
+        }
+        switch env["MYBROWSER_DEBUG_SIDEBAR"] {
+        case "hidden":
+            model.session.isSidebarVisible = false
+        case "shown":
+            model.session.isSidebarVisible = true
+        default:
+            break
+        }
+    }
+
     /// Snapshot-only. `defaults` and System Events cannot change this machine's appearance.
     private func applyDebugAppearance() {
-        switch ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_APPEARANCE"]?.lowercased() {
+        let requested = ProcessInfo.processInfo.environment["MYBROWSER_APPEARANCE"]
+            ?? ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_APPEARANCE"]
+        switch requested?.lowercased() {
         case "dark":
             NSApp.appearance = NSAppearance(named: .darkAqua)
         case "light":

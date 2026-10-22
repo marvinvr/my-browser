@@ -54,10 +54,20 @@ private struct CommandBarPresenter: View {
             }
         }
         .ignoresSafeArea()
+        .onAppear { applyDebugQuery() }
         .onChange(of: browser.commandBarMode) { _, mode in
             guard let mode else { return }
             bar = CommandBarModel(browser: browser, mode: mode, engine: bar.engine)
+            applyDebugQuery()
         }
+    }
+
+    private func applyDebugQuery() {
+        #if DEBUG
+        guard let seeded = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_COMMAND_QUERY"],
+              !seeded.isEmpty, bar.query != seeded else { return }
+        bar.query = seeded
+        #endif
     }
 }
 

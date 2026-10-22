@@ -45,7 +45,7 @@ struct SpaceSwitcher: View {
             model.selectSpace(space.id)
         } label: {
             Image(systemName: space.symbol)
-                .font(.system(size: Self.symbolSize, weight: selected ? .semibold : .regular))
+                .font(.system(size: Self.symbolSize, weight: .regular))
                 .foregroundStyle(space.color.color)
                 .frame(width: Self.target, height: Self.target)
                 .background {

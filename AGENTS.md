@@ -24,7 +24,7 @@ myBrowser: native macOS browser (Swift 6, SwiftUI + AppKit, WebKit). Product + p
 - Direct pushes to `main` are fine. `git fetch && git rebase` before pushing; check staged files (several agents share the repo).
 - UI: native macOS look, Liquid Glass, subtle, minimal. Smooth spring animations. Nothing over the top.
 - Screenshots: every Grok worker that changes anything visible runs the app and takes screenshots of the app window (light + dark mode, key states: pinned icons, folders, selected/hovered rows, command bar open) before committing, and lists the paths in its report. Use `scripts/snapshot.sh <out.png>` (DEBUG in-app snapshot; this terminal has no Screen Recording permission, glass effects don't render in it). The Grok High reviewer checks them for anything off (alignment, spacing, clipping, ugly defaults, non-native look) and sends work back if needed.
-- Agents verify UI with `scripts/snapshot.sh`.
+- Agents verify UI with `scripts/snapshot.sh`. Debug builds honor `MYBROWSER_APPEARANCE=dark|light` at launch so snapshots can switch appearance without System Events.
 - Never commit personal data. Marvin's real Arc data (`~/Library/Application Support/Arc/StorableSidebar.json`) may be READ locally to test the importer, but tests use small anonymised fixtures.
 - Releases go through `scripts/release.sh` (Developer ID, notarization, DMG, Sparkle). Local Debug builds stay ad-hoc. Do not publish a release unless asked.
 - Commits: short imperative subject, no Co-Authored-By trailers.
