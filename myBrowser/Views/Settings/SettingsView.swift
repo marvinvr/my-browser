@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings scene (⌘,). General holds the search engine; Appearance holds the address bar and Dock icon.
+/// Settings scene (⌘,). General holds the search engine; Appearance holds the address bar and Dock icon; Extensions holds installed web extensions.
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -8,8 +8,10 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             AppearanceSettingsView()
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
+            ExtensionsSettingsView()
+                .tabItem { Label("Extensions", systemImage: "puzzlepiece.extension") }
         }
-        .frame(width: 460, height: 300)
+        .frame(width: 520, height: 460)
     }
 }
 

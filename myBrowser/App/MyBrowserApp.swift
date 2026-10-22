@@ -9,6 +9,7 @@ struct MyBrowserApp: App {
         Window("myBrowser", id: "main") {
             MainWindowView()
                 .environment(appDelegate.model)
+                .environment(appDelegate.extensions)
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
@@ -16,6 +17,8 @@ struct MyBrowserApp: App {
 
         Settings {
             SettingsView()
+                .environment(appDelegate.model)
+                .environment(appDelegate.extensions)
         }
     }
 }
@@ -26,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let session: SessionStore
     let model: BrowserModel
     let sync: SyncController
+    let extensions: ExtensionManager
     let updater = Updater()
 
     override init() {
@@ -33,7 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Onboarding.prepareForLaunch(libraryDirectory: directory)
         library = LibraryStore(directory: directory)
         session = SessionStore(directory: directory)
-        model = BrowserModel(library: library, session: session)
+        extensions = ExtensionManager(directory: directory.appending(path: "Extensions", directoryHint: .isDirectory))
+        extensions.connectOwner()
+        model = BrowserModel(library: library, session: session, extensions: extensions)
+        extensions.attach(model)
         sync = SyncController(library: library)
         super.init()
         #if DEBUG
@@ -55,12 +62,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SETTINGS"] == "1" {
             openSettingsForDebug()
         }
+        installDebugExtensionsIfRequested()
         DebugSnapshot.install(model: model)
         installDebugToggle()
         #endif
     }
 
     #if DEBUG
+    /// Snapshot-only. `MYBROWSER_DEBUG_EXTENSIONS=1` installs the Tint fixture.
+    /// `MYBROWSER_DEBUG_EXTENSION_PROMPT=1` shows a sample permission sheet.
+    /// `MYBROWSER_DEBUG_EXTENSION_POPUP=1` opens that fixture's popup after it loads.
+    private func installDebugExtensionsIfRequested() {
+        let env = ProcessInfo.processInfo.environment
+        let wantsFixture = env["MYBROWSER_DEBUG_EXTENSIONS"] == "1"
+        let wantsPrompt = env["MYBROWSER_DEBUG_EXTENSION_PROMPT"] == "1"
+        let wantsPopup = env["MYBROWSER_DEBUG_EXTENSION_POPUP"] == "1"
+        let storeID = env["MYBROWSER_DEBUG_EXTENSION_STORE"]
+        let filePath = env["MYBROWSER_DEBUG_EXTENSION_FILE"]
+        guard wantsFixture || wantsPrompt || storeID != nil || filePath != nil else { return }
+        if wantsFixture || wantsPopup || storeID != nil || filePath != nil {
+            Task { @MainActor in
+                if wantsFixture {
+                    await extensions.installDebugFixture(autoGrant: true)
+                }
+                if let storeID, !storeID.isEmpty {
+                    await extensions.installFromChromeWebStore(storeID)
+                }
+                if let filePath, !filePath.isEmpty {
+                    await extensions.install(from: URL(fileURLWithPath: filePath))
+                }
+                if wantsPopup {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    extensions.performDebugPopup()
+                }
+            }
+        }
+        if wantsPrompt {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(700))
+                NSApp.activate(ignoringOtherApps: true)
+                await extensions.showDebugPermissionPrompt()
+            }
+        }
+    }
+
     /// Snapshot-only scene setup. Opt-in, so a normal debug launch leaves the library alone.
     private func applyDebugScene() {
         let env = ProcessInfo.processInfo.environment
@@ -271,6 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         restoreDebugAddressBar()
         #endif
+        extensions.save()
         model.saveState()
     }
 

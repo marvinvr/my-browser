@@ -74,6 +74,7 @@ extension BrowserModel {
 
 struct PreviewHost<Content: View>: View {
     @State private var model: BrowserModel
+    @State private var extensions: ExtensionManager
     private var width: CGFloat?
     private var height: CGFloat?
     private var content: Content
@@ -84,7 +85,13 @@ struct PreviewHost<Content: View>: View {
         height: CGFloat? = nil,
         @ViewBuilder content: () -> Content
     ) {
-        _model = State(initialValue: BrowserModel.preview(sidebarVisible: sidebarVisible))
+        let model = BrowserModel.preview(sidebarVisible: sidebarVisible)
+        _model = State(initialValue: model)
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "mybrowser-preview-extensions", directoryHint: .isDirectory)
+        let extensions = ExtensionManager(directory: directory)
+        extensions.connectOwner()
+        _extensions = State(initialValue: extensions)
         self.width = width
         self.height = height
         self.content = content()
@@ -93,6 +100,7 @@ struct PreviewHost<Content: View>: View {
     var body: some View {
         content
             .environment(model)
+            .environment(extensions)
             .frame(width: width, height: height)
     }
 }

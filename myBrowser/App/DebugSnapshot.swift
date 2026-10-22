@@ -14,11 +14,13 @@ enum DebugSnapshot {
         guard relays.isEmpty else { return }
         // `.capture` is the same shot as `.snapshot`. Snapshot scripts can use it when another
         // debug build is already listening for `.snapshot`.
-        // `MYBROWSER_DEBUG_SNAPSHOT_NAME` is a private channel so a second debug build
-        // does not write this process's window over the requested path.
+        // A private channel so a second debug build does not write this process's window
+        // over the requested path. Either env var is accepted.
         var names = ["ch.marvinvr.mybrowser.debug.snapshot", "ch.marvinvr.mybrowser.debug.capture"]
-        if let extra = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SNAPSHOT_NAME"], !extra.isEmpty {
-            names.append(extra)
+        for key in ["MYBROWSER_DEBUG_SNAPSHOT_NAME", "MYBROWSER_DEBUG_SNAPSHOT_CHANNEL"] {
+            if let extra = ProcessInfo.processInfo.environment[key], !extra.isEmpty {
+                names.append(extra)
+            }
         }
         for name in names {
             relays.append(observe(name) { note in
@@ -134,14 +136,15 @@ enum DebugSnapshot {
             item.view.blendingMode = item.blending
         }
 
-        var page: (NSImage, NSRect)?
-        if let webView = model?.selectedTab?.webView, webView.window === window, webView.bounds.width > 1 {
+        // cacheDisplay leaves WKWebView blank, including an extension popup's page.
+        var pages: [(NSImage, NSRect)] = []
+        for webView in webViews(in: content) where webView.bounds.width > 1 && webView.bounds.height > 1 {
             let configuration = WKSnapshotConfiguration()
-            if let shot = try? await webView.takeSnapshot(configuration: configuration) {
-                let frame = webView.convert(webView.bounds, to: content)
-                page = (shot, frame)
-            }
+            guard let shot = try? await webView.takeSnapshot(configuration: configuration) else { continue }
+            let frame = webView.convert(webView.bounds, to: content)
+            pages.append((shot, imageRect(for: frame, in: content)))
         }
+        let sheetImage = attachedSheetImage(on: window, content: content)
 
         var buttons: [(NSImage, NSRect)] = []
         for kind: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
@@ -187,8 +190,11 @@ enum DebugSnapshot {
         for (image, frame) in sidebar {
             image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
         }
-        if let (shot, frame) = page {
-            shot.draw(in: imageRect(for: frame, in: content), from: .zero, operation: .sourceOver, fraction: 1)
+        for (shot, frame) in pages {
+            shot.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
+        }
+        if let (shot, frame) = sheetImage {
+            shot.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
         }
         if let overlay = overlayCapture(in: content) {
             // Glass often cacheDisplays as clear pixels, and the window background is white,
@@ -211,6 +217,28 @@ enum DebugSnapshot {
 
         guard let data = output.representation(using: .png, properties: [:]) else { return }
         try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    private static func webViews(in view: NSView) -> [WKWebView] {
+        var found: [WKWebView] = []
+        if let webView = view as? WKWebView { found.append(webView) }
+        for subview in view.subviews {
+            found.append(contentsOf: webViews(in: subview))
+        }
+        return found
+    }
+
+    /// An `NSAlert` sheet is a separate window. Draw it on top of the parent capture.
+    private static func attachedSheetImage(on window: NSWindow, content: NSView) -> (NSImage, NSRect)? {
+        guard let sheet = window.attachedSheet, sheet !== window, let sheetContent = sheet.contentView,
+              sheetContent.bounds.width > 1, sheetContent.bounds.height > 1 else { return nil }
+        sheetContent.layoutSubtreeIfNeeded()
+        guard let cached = cacheImage(of: sheetContent) else { return nil }
+        let inWindow = sheetContent.convert(sheetContent.bounds, to: nil)
+        let inScreen = sheet.convertToScreen(inWindow)
+        let inParent = window.convertFromScreen(inScreen)
+        let inContent = content.convert(inParent, from: nil)
+        return (cached.image, imageRect(for: inContent, in: content))
     }
 
     /// Content view is flipped; the bitmap context is not. Map a content-view rect into the image.
@@ -436,8 +464,29 @@ enum DebugSnapshot {
     }
 
     private static func targetWindow(preferring titleHint: String?) -> NSWindow? {
-        let candidates = NSApp.windows.filter { $0.isVisible && $0.contentView != nil && $0.frame.width > 200 }
+        var candidates = NSApp.windows.filter { window in
+            guard window.isVisible, window.contentView != nil else { return false }
+            if window.frame.width > 200 { return true }
+            let identifier = window.identifier?.rawValue ?? ""
+            return identifier.contains("extension-popup") || identifier.contains("extension-permission")
+        }
+        for window in NSApp.windows {
+            guard let sheet = window.attachedSheet, sheet.contentView != nil else { continue }
+            if !candidates.contains(where: { $0 === sheet }) {
+                candidates.append(sheet)
+            }
+        }
         if let hint = titleHint?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !hint.isEmpty {
+            if hint.contains("permission") || hint.contains("access") {
+                if let sheet = candidates.first(where: { window in
+                    let identifier = window.identifier?.rawValue.lowercased() ?? ""
+                    return window.sheetParent != nil
+                        || identifier.contains("extension-permission")
+                        || window.title.lowercased().contains("extension access")
+                }) {
+                    return sheet
+                }
+            }
             if let match = candidates.first(where: { window in
                 window.title.lowercased().contains(hint)
                     || window.identifier?.rawValue.lowercased().contains(hint) == true

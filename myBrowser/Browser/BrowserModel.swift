@@ -19,6 +19,8 @@ final class BrowserModel {
     let session: SessionStore
     @ObservationIgnored let profiles = ProfileManager()
     @ObservationIgnored let favicons: FaviconStore
+    /// Web extensions for this window. Nil in tests and previews.
+    @ObservationIgnored weak var extensions: ExtensionManager?
 
     /// Live tabs by item id. Missing means the item is not loaded.
     private(set) var tabs: [UUID: BrowserTab] = [:]
@@ -36,15 +38,19 @@ final class BrowserModel {
     /// File → Import… presents the import sheet from the main window.
     var isPresentingImport = false
 
-    init(library: LibraryStore, session: SessionStore) {
+    init(library: LibraryStore, session: SessionStore, extensions: ExtensionManager? = nil) {
         self.library = library
         self.session = session
         favicons = FaviconStore(directory: library.directory)
+        self.extensions = extensions
         let fallback = library.ensureDefaultSpace().id
         let resolved = session.selectedSpaceID.flatMap { library.space($0)?.id } ?? fallback
         selectedSpaceID = resolved
         if session.selectedSpaceID != resolved {
             session.selectedSpaceID = resolved
+        }
+        profiles.extensionController = { [weak extensions] profileID in
+            extensions?.controller(for: profileID)
         }
         if let itemID = session.selectedItemBySpace[resolved] {
             select(itemID)
@@ -119,13 +125,22 @@ final class BrowserModel {
     func select(_ itemID: UUID) {
         guard let item = library.item(itemID), item.kind == .site else { return }
         sidebarFocusID = itemID
+        let previous = selectedTab
         if selectedSpaceID != item.spaceID {
             adoptSpace(item.spaceID)
         }
         if session.selectedItemBySpace[item.spaceID] != itemID {
             session.selectedItemBySpace[item.spaceID] = itemID
         }
-        ensureTab(for: item).loadIfNeeded(using: profiles)
+        let tab = ensureTab(for: item)
+        let created = !tab.isLoaded
+        tab.loadIfNeeded(using: profiles)
+        if created {
+            extensions?.tabOpened(tab)
+        }
+        if previous?.id != tab.id {
+            extensions?.tabActivated(tab, previous: previous)
+        }
         refreshNavigationState()
     }
 
@@ -256,12 +271,14 @@ final class BrowserModel {
         if let url, library.item(itemID)?.url != url {
             library.updateItem(itemID) { $0.url = url }
         }
+        if let tab = tabs[itemID] { extensions?.tabPropertiesChanged(tab) }
     }
 
     /// Moves a pinned or favorite site to the top of `.tabs`.
     func unpin(_ itemID: UUID) {
         guard let item = library.item(itemID), item.kind == .site, item.section != .tabs else { return }
         library.moveItem(itemID, to: .tabs, parentID: nil, at: .start)
+        if let tab = tabs[itemID] { extensions?.tabPropertiesChanged(tab) }
     }
 
     func addToFavorites(_ itemID: UUID) {
@@ -452,6 +469,7 @@ final class BrowserModel {
         let tab = BrowserTab(id: item.id, profileID: profileID, title: title, url: pageURL, adopting: webView)
         wire(tab, spaceID: spaceID)
         tabs[item.id] = tab
+        extensions?.tabOpened(tab)
         if selectedSpaceID != spaceID {
             adoptSpace(spaceID)
         }
@@ -489,7 +507,7 @@ final class BrowserModel {
         select(item.id)
     }
 
-    private func ensureTab(for item: SidebarItem) -> BrowserTab {
+    func ensureTab(for item: SidebarItem) -> BrowserTab {
         if let existing = tabs[item.id] { return existing }
         let profileID = library.space(item.spaceID)?.profileID ?? item.spaceID
         let tab = BrowserTab(
@@ -515,7 +533,9 @@ final class BrowserModel {
         }
         tab.onStateChange = { [weak self] tab in
             self?.mirror(tab)
+            self?.extensions?.tabPropertiesChanged(tab)
         }
+        connectExtension(tab, spaceID: spaceID)
         tab.onNavigationChange = { [weak self] tab in
             guard tab.id == self?.selectedItemID else { return }
             self?.refreshNavigationState()
@@ -553,7 +573,10 @@ final class BrowserModel {
     }
 
     private func unloadTab(_ id: UUID) {
-        tabs[id]?.unload()
+        if let tab = tabs[id] {
+            extensions?.tabClosed(tab)
+            tab.unload()
+        }
         tabs[id] = nil
     }
 
@@ -565,7 +588,7 @@ final class BrowserModel {
         }
     }
 
-    private func navigableItems(in spaceID: UUID) -> [SidebarItem] {
+    func navigableItems(in spaceID: UUID) -> [SidebarItem] {
         guard library.space(spaceID) != nil else { return [] }
         var items: [SidebarItem] = []
         items.append(contentsOf: library.children(of: nil, section: .favorites, in: spaceID).filter { $0.kind == .site })
@@ -679,7 +702,7 @@ final class BrowserModel {
         selectSpace(spaces[next].id)
     }
 
-    private static func fallbackTitle(for url: URL) -> String {
+    static func fallbackTitle(for url: URL) -> String {
         if let host = url.host(), !host.isEmpty { return host }
         let absolute = url.absoluteString
         return absolute.isEmpty ? "New Tab" : absolute

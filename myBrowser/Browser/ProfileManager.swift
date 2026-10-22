@@ -4,6 +4,9 @@ import WebKit
 final class ProfileManager {
     private var dataStores: [UUID: WKWebsiteDataStore] = [:]
 
+    /// Per-profile extension controller. Set before the first web view is created.
+    var extensionController: ((UUID) -> WKWebExtensionController?)?
+
     func dataStore(for profileID: UUID) -> WKWebsiteDataStore {
         if let store = dataStores[profileID] { return store }
         let store = WKWebsiteDataStore(forIdentifier: profileID)
@@ -24,6 +27,9 @@ final class ProfileManager {
         configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
         // Appended to WebKit's default UA so sites see a Safari-shaped token instead of a bare WebKit shell.
         configuration.applicationNameForUserAgent = Self.safariApplicationName
+        if let controller = extensionController?(profileID) {
+            configuration.webExtensionController = controller
+        }
         return configuration
     }
 
