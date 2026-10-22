@@ -1,10 +1,15 @@
 name: myBrowser
 options:
-  bundleIdPrefix: org.mybrowser
+  bundleIdPrefix: ch.marvinvr
   deploymentTarget:
     macOS: "26.0"
   createIntermediateGroups: true
   groupSortPosition: top
+
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
 
 settings:
   base:
@@ -21,9 +26,11 @@ targets:
     platform: macOS
     sources:
       - path: myBrowser
+        excludes:
+          - "**/*.entitlements"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.mybrowser.app
+        PRODUCT_BUNDLE_IDENTIFIER: ch.marvinvr.mybrowser
         PRODUCT_NAME: myBrowser
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
         GENERATE_INFOPLIST_FILE: YES
@@ -32,16 +39,29 @@ targets:
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Debug stays ad-hoc. scripts/release.sh signs Release with Developer ID.
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
         DEVELOPMENT_TEAM: ""
         ENABLE_HARDENED_RUNTIME: NO
         ENABLE_APP_SANDBOX: NO
+      configs:
+        Release:
+          ENABLE_HARDENED_RUNTIME: YES
+          CODE_SIGN_ENTITLEMENTS: myBrowser/myBrowser.entitlements
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+    dependencies:
+      - package: Sparkle
     info:
       path: myBrowser/Info.plist
       properties:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoadsInWebContent: true
+        SUFeedURL: https://raw.githubusercontent.com/marvinvr/my-browser/main/appcast.xml
+        SUPublicEDKey: "CiZk8aNFb6vYzST1ZCGdDJJOTZ5fGjBEDJbpP/a9xzM="
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
+        SUVerifyUpdateBeforeExtraction: true
     scheme:
       testTargets:
         - myBrowserTests
@@ -55,7 +75,7 @@ targets:
       - target: myBrowser
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.mybrowser.app.tests
+        PRODUCT_BUNDLE_IDENTIFIER: ch.marvinvr.mybrowser.tests
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
         CODE_SIGN_STYLE: Manual

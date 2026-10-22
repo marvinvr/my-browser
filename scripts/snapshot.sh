@@ -20,7 +20,7 @@ SNAPSHOT_PATH="$out" swift -e '
 import Foundation
 let path = ProcessInfo.processInfo.environment["SNAPSHOT_PATH"] ?? ""
 DistributedNotificationCenter.default().postNotificationName(
-    Notification.Name("org.mybrowser.debug.snapshot"),
+    Notification.Name("ch.marvinvr.mybrowser.debug.snapshot"),
     object: nil,
     userInfo: ["path": path],
     deliverImmediately: true

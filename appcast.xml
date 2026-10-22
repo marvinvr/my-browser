@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Empty until the first release. scripts/release.sh replaces this from releases.json. -->
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>myBrowser</title>
+    <link>https://raw.githubusercontent.com/marvinvr/my-browser/main/appcast.xml</link>
+    <description>Updates of myBrowser</description>
+    <language>en</language>
+  </channel>
+</rss>

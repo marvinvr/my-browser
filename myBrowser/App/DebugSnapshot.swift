@@ -4,7 +4,7 @@ import WebKit
 
 /// DEBUG-only window capture. Screen recording is denied on this machine, so the app draws itself.
 ///
-/// `org.mybrowser.debug.snapshot` — userInfo["path"] is an absolute PNG path.
+/// `ch.marvinvr.mybrowser.debug.snapshot` — userInfo["path"] is an absolute PNG path.
 enum DebugSnapshot {
     private static var relays: [SnapshotRelay] = []
     private static weak var attachedModel: BrowserModel?
@@ -12,7 +12,7 @@ enum DebugSnapshot {
     static func install(model: BrowserModel) {
         attachedModel = model
         guard relays.isEmpty else { return }
-        relays.append(observe("org.mybrowser.debug.snapshot") { note in
+        relays.append(observe("ch.marvinvr.mybrowser.debug.snapshot") { note in
             let path = note.userInfo?["path"] as? String
             Task { @MainActor in
                 await DebugSnapshot.capture(to: path)
