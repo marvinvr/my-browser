@@ -1,0 +1,273 @@
+{
+  "version": 1,
+  "sidebar": {
+    "containers": [
+      { "global": {} },
+      {
+        "topAppsContainerIDs": [
+          { "default": true },
+          "fav-default",
+          { "custom": { "_0": { "directoryBasename": "Profile 1", "machineID": "machine-a" } } },
+          "fav-custom"
+        ],
+        "items": [
+          "fav-default",
+          {
+            "id": "fav-default",
+            "parentID": null,
+            "childrenIds": ["fav-1", "fav-2"],
+            "title": null,
+            "data": { "itemContainer": { "containerType": { "topApps": { "_0": { "default": true } } } } }
+          },
+          "fav-1",
+          {
+            "id": "fav-1",
+            "parentID": "fav-default",
+            "childrenIds": [],
+            "title": "Mail",
+            "data": { "tab": { "savedURL": "https://example.com/mail", "savedTitle": "Mail" } }
+          },
+          "fav-2",
+          {
+            "id": "fav-2",
+            "parentID": "fav-default",
+            "childrenIds": [],
+            "title": "Calendar",
+            "data": { "tab": { "savedURL": "https://example.com/calendar", "savedTitle": "Calendar" } }
+          },
+          "fav-custom",
+          {
+            "id": "fav-custom",
+            "parentID": null,
+            "childrenIds": ["fav-3"],
+            "title": null,
+            "data": {
+              "itemContainer": {
+                "containerType": {
+                  "topApps": { "_0": { "custom": { "_0": { "directoryBasename": "Profile 1", "machineID": "machine-a" } } } }
+                }
+              }
+            }
+          },
+          "fav-3",
+          {
+            "id": "fav-3",
+            "parentID": "fav-custom",
+            "childrenIds": [],
+            "title": "Board",
+            "data": { "tab": { "savedURL": "https://example.com/board-fav", "savedTitle": "Board" } }
+          },
+          "pin-personal",
+          {
+            "id": "pin-personal",
+            "parentID": null,
+            "childrenIds": ["folder-projects", "site-news", "site-news-dup", "folder-empty", "site-js"],
+            "title": null,
+            "data": { "itemContainer": { "containerType": { "spaceItems": { "_0": "space-personal" } } } }
+          },
+          "unpin-personal",
+          {
+            "id": "unpin-personal",
+            "parentID": null,
+            "childrenIds": ["tab-today"],
+            "title": null,
+            "data": { "itemContainer": { "containerType": { "spaceItems": { "_0": "space-personal" } } } }
+          },
+          "folder-projects",
+          {
+            "id": "folder-projects",
+            "parentID": "pin-personal",
+            "childrenIds": ["site-docs", "folder-nested"],
+            "title": "Projects",
+            "data": { "list": {} }
+          },
+          "folder-nested",
+          {
+            "id": "folder-nested",
+            "parentID": "folder-projects",
+            "childrenIds": ["site-spec"],
+            "title": "Specs",
+            "data": { "list": {} }
+          },
+          "folder-empty",
+          {
+            "id": "folder-empty",
+            "parentID": "pin-personal",
+            "childrenIds": [],
+            "title": "Empty",
+            "data": { "list": {} }
+          },
+          "site-news",
+          {
+            "id": "site-news",
+            "parentID": "pin-personal",
+            "childrenIds": [],
+            "title": "News",
+            "data": { "tab": { "savedURL": "https://example.com/news", "savedTitle": "News" } }
+          },
+          "site-news-dup",
+          {
+            "id": "site-news-dup",
+            "parentID": "pin-personal",
+            "childrenIds": [],
+            "title": "News again",
+            "data": { "tab": { "savedURL": "https://example.com/news", "savedTitle": "News again" } }
+          },
+          "site-js",
+          {
+            "id": "site-js",
+            "parentID": "pin-personal",
+            "childrenIds": [],
+            "title": "Script",
+            "data": { "tab": { "savedURL": "javascript:void(0)", "savedTitle": "Script" } }
+          },
+          "site-docs",
+          {
+            "id": "site-docs",
+            "parentID": "folder-projects",
+            "childrenIds": [],
+            "title": "Docs",
+            "data": { "tab": { "savedURL": "https://example.com/docs", "savedTitle": "Docs" } }
+          },
+          "site-spec",
+          {
+            "id": "site-spec",
+            "parentID": "folder-nested",
+            "childrenIds": [],
+            "title": "Spec",
+            "data": { "tab": { "savedURL": "https://example.com/spec", "savedTitle": "Spec" } }
+          },
+          "tab-today",
+          {
+            "id": "tab-today",
+            "parentID": "unpin-personal",
+            "childrenIds": [],
+            "title": "Today",
+            "data": { "tab": { "savedURL": "https://example.com/today", "savedTitle": "Today" } }
+          },
+          "pin-studio",
+          {
+            "id": "pin-studio",
+            "parentID": null,
+            "childrenIds": ["site-studio"],
+            "title": null,
+            "data": { "itemContainer": { "containerType": { "spaceItems": { "_0": "space-studio" } } } }
+          },
+          "site-studio",
+          {
+            "id": "site-studio",
+            "parentID": "pin-studio",
+            "childrenIds": [],
+            "title": "Studio home",
+            "data": { "tab": { "savedURL": "https://example.com/studio", "savedTitle": "Studio home" } }
+          },
+          "pin-notes",
+          {
+            "id": "pin-notes",
+            "parentID": null,
+            "childrenIds": ["site-note"],
+            "title": null,
+            "data": { "itemContainer": { "containerType": { "pinned": {} } } }
+          },
+          "site-note",
+          {
+            "id": "site-note",
+            "parentID": "pin-notes",
+            "childrenIds": [],
+            "title": "Note",
+            "data": { "tab": { "savedURL": "https://example.com/note", "savedTitle": "Note" } }
+          },
+          "unpin-notes",
+          {
+            "id": "unpin-notes",
+            "parentID": null,
+            "childrenIds": ["tab-draft", "folder-loose"],
+            "title": null,
+            "data": { "itemContainer": { "containerType": { "unpinned": {} } } }
+          },
+          "folder-loose",
+          {
+            "id": "folder-loose",
+            "parentID": "unpin-notes",
+            "childrenIds": ["tab-loose"],
+            "title": "Loose",
+            "data": { "list": {} }
+          },
+          "tab-draft",
+          {
+            "id": "tab-draft",
+            "parentID": "unpin-notes",
+            "childrenIds": [],
+            "title": "Draft",
+            "data": { "tab": { "savedURL": "https://example.com/draft", "savedTitle": "Draft" } }
+          },
+          "tab-loose",
+          {
+            "id": "tab-loose",
+            "parentID": "folder-loose",
+            "childrenIds": [],
+            "title": "Loose tab",
+            "data": { "tab": { "savedURL": "https://example.com/loose", "savedTitle": "Loose tab" } }
+          }
+        ],
+        "spaces": [
+          "space-personal",
+          {
+            "id": "space-personal",
+            "title": "Personal",
+            "profile": { "default": true },
+            "containerIDs": ["missing", "pin-personal", "missing-2", "unpin-personal"],
+            "newContainerIDs": [
+              { "pinned": {} },
+              "pin-personal",
+              { "unpinned": { "_0": { "shared": {} } } },
+              "unpin-personal"
+            ],
+            "customInfo": {
+              "iconType": { "emoji_v2": "🏠", "emoji": 127968 },
+              "windowTheme": {
+                "primaryColorPalette": {
+                  "midTone": { "red": 0.56, "green": 0.754, "blue": 0.884, "alpha": 1, "colorSpace": "extendedSRGB" }
+                }
+              }
+            }
+          },
+          "space-studio",
+          {
+            "id": "space-studio",
+            "title": "Studio",
+            "profile": { "custom": { "_0": { "directoryBasename": "Profile 1", "machineID": "machine-a" } } },
+            "containerIDs": ["pin-studio"],
+            "newContainerIDs": [
+              { "pinned": {} },
+              "pin-studio"
+            ],
+            "customInfo": {
+              "iconType": { "icon": "github" },
+              "windowTheme": {
+                "primaryColorPalette": {
+                  "midTone": { "red": 0.95, "green": 0.608, "blue": 0.733, "alpha": 1 }
+                }
+              }
+            }
+          },
+          "space-notes",
+          {
+            "id": "space-notes",
+            "title": "Notes",
+            "profile": { "custom": { "_0": { "directoryBasename": "Profile 1", "machineID": "machine-a" } } },
+            "containerIDs": ["pin-notes", "unpin-notes"],
+            "customInfo": {
+              "iconType": { "emoji_v2": "📚", "emoji": 128218 },
+              "windowTheme": {
+                "primaryColorPalette": {
+                  "midTone": { "red": 0.95, "green": 0.85, "blue": 0.2, "alpha": 1 }
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

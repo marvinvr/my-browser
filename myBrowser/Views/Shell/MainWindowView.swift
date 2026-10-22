@@ -34,6 +34,7 @@ struct MainWindowView: View {
             WindowConfigurator(anchor: $traffic)
         }
         .overlay { CommandBarOverlay() }
+        .importPresentations(model: model)
         .focusedSceneValue(\.browserNavigation, BrowserNavigationState(
             canGoBack: model.canGoBack,
             canGoForward: model.canGoForward,

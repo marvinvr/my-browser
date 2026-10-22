@@ -297,7 +297,7 @@ final class LibraryStore {
         publish(ids)
     }
 
-    private func didChange(_ ids: Set<UUID>) {
+    func didChange(_ ids: Set<UUID>) {
         if batchedChangeIDs != nil {
             batchedChangeIDs?.formUnion(ids)
             return

@@ -77,6 +77,13 @@ struct SidebarRow: View {
                 hovering = false
             }
         }
+        .onAppear {
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_HOVER"] == "1", isSelected {
+                hovering = true
+            }
+            #endif
+        }
         .animation(SidebarMotion.row, value: hovering)
         .sidebarDragRow(item: item, depth: depth)
         .modifier(SidebarItemMenu(item: item, onRename: onRename, onNewFolderInside: onNewFolderInside))

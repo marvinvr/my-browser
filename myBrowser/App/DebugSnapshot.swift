@@ -14,7 +14,13 @@ enum DebugSnapshot {
         guard relays.isEmpty else { return }
         // `.capture` is the same shot as `.snapshot`. Snapshot scripts can use it when another
         // debug build is already listening for `.snapshot`.
-        for name in ["ch.marvinvr.mybrowser.debug.snapshot", "ch.marvinvr.mybrowser.debug.capture"] {
+        // `MYBROWSER_DEBUG_SNAPSHOT_NAME` is a private channel so a second debug build
+        // does not write this process's window over the requested path.
+        var names = ["ch.marvinvr.mybrowser.debug.snapshot", "ch.marvinvr.mybrowser.debug.capture"]
+        if let extra = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SNAPSHOT_NAME"], !extra.isEmpty {
+            names.append(extra)
+        }
+        for name in names {
             relays.append(observe(name) { note in
                 let path = note.userInfo?["path"] as? String
                 let window = note.userInfo?["window"] as? String

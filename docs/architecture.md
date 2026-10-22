@@ -19,11 +19,13 @@ myBrowser/
   Persistence/    LibraryStore (synced data), SessionStore (local window/tab session), JSONFileStorage
   Sync/           CKSyncEngine wrapper, record mapping, sync-state.json. Idle unless iCloud Sync is enabled.
   Browser/        BrowserModel (per-window coordinator), BrowserTab (one WKWebView), ProfileManager, FaviconStore
+  Importer/       Chromium and Arc parsers. Pure `ImportPlan` values, no UI
   Views/
     Shell/        MainWindowView: sidebar + content card, ContentToolbar above the page or in the sidebar
     Toolbar/      AddressField, NavigationButtons, CopyLinkButton (shared by the top bar and the sidebar address bar)
     Sidebar/      SidebarView, SpaceSwipeContainer, FavoritesGrid, PinnedTree, TabList, SpaceSwitcher, SidebarRow
     Settings/     Settings scene: General (search engine), Appearance (address bar position, Dock icon)
+    Import/       Import sheet (File → Import…) and the first-launch welcome sheet
     Web/          WebContentView (NSViewRepresentable that swaps the selected tab's WKWebView in)
     CommandBar/   CommandBarView + CommandBarModel (results)
   Resources/      Assets.xcassets
@@ -41,7 +43,7 @@ Two kinds of state:
 `Profile { id: UUID, name, modifiedAt, deletedAt? }`. The profile's `id` is the identifier passed to `WKWebsiteDataStore(forIdentifier:)`, so cookies, local storage, caches etc. are isolated per profile and persist across launches. By default every new Space gets its own new Profile (1:1); the model allows several Spaces to share a Profile later (Arc does this).
 
 ### Space
-`Space { id, name, symbol (SF Symbol name), color: SpaceColor, profileID, sortKey, modifiedAt, deletedAt? }`.
+`Space { id, name, symbol (SF Symbol name), emoji?, color: SpaceColor, profileID, sortKey, modifiedAt, deletedAt? }`. `emoji` is optional. Older `library.json` files omit it and still decode. The space switcher draws the emoji when it is set, and the SF Symbol otherwise.
 
 ### SidebarItem
 One flat table; the tree comes from `parentID`.
@@ -90,6 +92,16 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 ### Persistence
 `~/Library/Application Support/myBrowser/` (`library.json`, `session.json`, `Favicons/`). Writes are debounced (~0.5 s) and atomic; also flushed on `applicationWillTerminate`. A `schemaVersion` field allows migrations. Tests use a temp directory.
 
+## Import
+
+Parsers in `Importer/` are `nonisolated`. They turn a Chromium `Bookmarks` file or Arc's `StorableSidebar.json` into an `ImportPlan` (profiles, spaces, and a tree of sites and folders per sidebar section). `LibraryStore.apply(_:to:)` in `LibraryStore+Import.swift` writes that plan in one batch, so the library saves once. Cookies are never copied.
+
+Chromium-family browsers (Chrome, Brave, Edge, Vivaldi, Arc's `User Data`, Chromium): profile names come from `Local State` → `profile.info_cache`. The user adds the bookmarks to a new space named after the profile, or appends them to an existing space. The bookmarks bar is a pinned folder named "Bookmarks Bar", unless the user hoists its children to the pinned root. "Other Bookmarks" and "Mobile Bookmarks" are pinned folders. Empty folders and `javascript:` URLs are dropped. The same URL twice in one folder keeps the first copy.
+
+Arc: `sidebar.containers[].spaces` and `items` are flat lists alternating an id string and an object. Items form a tree via `childrenIds`. `data.tab` is a site (`savedURL`), `data.list` is a folder, and `data.itemContainer` is `pinned`, `unpinned`, `topApps`, or `spaceItems` (a space column whose pinned/unpinned role is the matching `newContainerIDs` entry). Each Arc space keeps its name, emoji (or the closest SF Symbol), and nearest `SpaceColor` from `windowTheme.primaryColorPalette.midTone`. Spaces that shared an Arc profile share one new `Profile`. Pinned tabs and nested folders keep their order. Favorites (`topApps`, one list per Arc profile) go on the first imported space of that profile. Unpinned tabs stay out unless the user includes them; they are flattened into the tabs section.
+
+File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCompletedOnboarding` is unset and `library.json` did not exist, shows the same sheet with Start Fresh. An existing library sets the flag so people who already browse are not asked.
+
 ## Window / scene structure
 
 - Phase 1: one main window (`Window` scene, id `main`) with one `BrowserModel`. `LibraryStore` and `SessionStore` are app-level singletons owned by the app and injected. Multiple windows (each its own `BrowserModel` sharing the library) come later.
@@ -133,6 +145,7 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 | Cmd+R | Reload (`KeyMonitor` only; Ctrl+R does nothing) |
 | Cmd+Shift+C | Copy link |
 | Cmd+S | Hide / show sidebar |
+| Cmd+Shift+I | Import bookmarks or an Arc sidebar |
 | Cmd+D | Pin / unpin current tab |
 | Esc | Close command bar / stop loading |
 | Delete | Delete the focused folder. A non-empty folder asks first. Ignored while a field, the page, or the command bar is focused. |
@@ -241,3 +254,4 @@ Do not flip those switches before the container and the profile exist. A Release
 - 2026-10-23: Dock icon is the light AppIcon unless Settings → Appearance picks dark. Applied at launch and on change with `NSApp.applicationIconImage` only. `NSWorkspace.setIcon` is not used; it modifies the signed bundle and breaks the code signature and Sparkle updates.
 - 2026-10-23: CloudKit sync (`CKSyncEngine`, private zone `Library`) is in the app and off by default. It starts only when `iCloudSyncEnabled`, Info.plist `MBCloudKitContainer`, and an iCloud account are all present. The container and the iCloud entitlements file are not wired into the build yet.
 - 2026-10-23: sidebar drag and drop uses `LibraryStore.move` (one batch, subtree included). A drop on a space icon keeps a site's section; folders land in pinned. A live tab that changes space is unloaded and keeps its URL. A space swipe that is still tracking settles on a new outside touch, resign-key, or resign-active.
+- 2026-10-23: Chrome-family bookmarks and Arc sidebars import through an `ImportPlan` applied in one `LibraryStore` batch. Arc favorites go on the first space of each shared profile. `Space.emoji` is optional so older library files still open.

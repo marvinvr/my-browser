@@ -33,6 +33,8 @@ final class BrowserModel {
     private(set) var lastSpaceSwitchDirection: SpaceSwitchDirection = .next
     /// `nil` = command bar hidden.
     var commandBarMode: CommandBarMode?
+    /// File → Import… presents the import sheet from the main window.
+    var isPresentingImport = false
 
     init(library: LibraryStore, session: SessionStore) {
         self.library = library

@@ -27,6 +27,9 @@ struct AppCommands: Commands {
                 .keyboardShortcut("t")
             Button("Open Location") { model.showCommandBar(.editCurrent) }
                 .keyboardShortcut("l")
+            Divider()
+            Button("Import…") { model.isPresentingImport = true }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
         }
 
         // Replacing .saveItem removes the default Close Window item, which owns ⌘W.
