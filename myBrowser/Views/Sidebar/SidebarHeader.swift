@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The sidebar's top row: kept clear of the traffic lights, with a button to hide the sidebar.
-/// Back, forward, reload, and the address field live in `ContentToolbar`.
+/// The sidebar's top row when the address bar sits above the page.
+/// Traffic lights and the hide button share one line. Sidebar address-bar mode uses `ContentToolbar` instead.
 struct SidebarHeader: View {
     var traffic: TrafficLightAnchor
 
@@ -10,7 +10,7 @@ struct SidebarHeader: View {
     var body: some View {
         HStack(spacing: 0) {
             Color.clear
-                .frame(width: max(0, traffic.clearance))
+                .frame(width: max(traffic.clearance, SidebarMetrics.minimumTrafficClearance))
                 .accessibilityHidden(true)
             Spacer(minLength: 0)
             SidebarHeaderButton(systemName: "sidebar.left", help: "Hide Sidebar") {
@@ -23,8 +23,9 @@ struct SidebarHeader: View {
         .padding(.bottom, 4)
     }
 
+    /// Same centre as the content toolbar, so the lights do not jump when the sidebar collapses.
     private var topPadding: CGFloat {
-        max(0, traffic.centerFromTop - SidebarMetrics.navRowHeight / 2)
+        max(0, SidebarMetrics.chromeCenterFromTop - SidebarMetrics.navRowHeight / 2)
     }
 }
 

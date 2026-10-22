@@ -6,6 +6,7 @@ import SwiftUI
 struct MainWindowView: View {
     @Environment(BrowserModel.self) private var model
     @AppStorage(SidebarMetrics.widthDefaultsKey) private var storedSidebarWidth = SidebarMetrics.defaultWidth
+    @AppStorage(AddressBarPosition.defaultsKey) private var addressBarPosition: AddressBarPosition = .top
     @State private var draggedWidth: Double?
     @State private var dragOrigin: Double?
     @State private var traffic = TrafficLightAnchor.fallback
@@ -22,9 +23,10 @@ struct MainWindowView: View {
             HStack(spacing: 0) {
                 sidebarColumn(shownWidth: shownWidth, fullWidth: fullWidth, visible: sidebarVisible)
                 gap(visible: sidebarVisible)
-                contentCard
+                contentCard(sidebarVisible: sidebarVisible)
             }
             .animation(SidebarMotion.sidebar, value: sidebarVisible)
+            .animation(SidebarMotion.sidebar, value: addressBarPosition)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea()
@@ -37,6 +39,7 @@ struct MainWindowView: View {
             canGoForward: model.canGoForward,
             canReload: model.canReload
         ))
+        .focusedSceneValue(\.sidebarIsVisible, sidebarVisible)
         .onAppear {
             let clamped = min(SidebarMetrics.maxWidth, max(SidebarMetrics.minWidth, storedSidebarWidth))
             if clamped != storedSidebarWidth {
@@ -67,9 +70,10 @@ struct MainWindowView: View {
     }
 
     /// Leading inset of the content card. While the sidebar is open this is also the drag handle.
+    /// Collapsed, the gap is zero so the card meets the window edge.
     private func gap(visible: Bool) -> some View {
         Color.clear
-            .frame(width: SidebarMetrics.contentInset)
+            .frame(width: visible ? SidebarMetrics.contentInset : 0)
             .frame(maxHeight: .infinity)
             .overlay {
                 if visible {
@@ -78,18 +82,44 @@ struct MainWindowView: View {
             }
     }
 
-    private var contentCard: some View {
-        VStack(spacing: 0) {
-            ContentToolbar(traffic: traffic, sidebarVisible: model.session.isSidebarVisible)
+    /// Sidebar address-bar position hides the content toolbar while the sidebar is open.
+    /// Collapsed, the toolbar comes back so the URL stays on screen.
+    private func showsContentToolbar(sidebarVisible: Bool) -> Bool {
+        switch addressBarPosition {
+        case .top: true
+        case .sidebar: !sidebarVisible
+        }
+    }
+
+    private func contentCard(sidebarVisible: Bool) -> some View {
+        let inset = sidebarVisible ? SidebarMetrics.contentInset : 0
+        let showsToolbar = showsContentToolbar(sidebarVisible: sidebarVisible)
+        // Outer inset and this spacer trade off, so the toolbar stays on the traffic-light line.
+        let topCompensation = showsToolbar && !sidebarVisible ? SidebarMetrics.contentInset : 0
+        return VStack(spacing: 0) {
+            Color.clear
+                .frame(height: topCompensation)
+                .accessibilityHidden(true)
+            if showsToolbar {
+                ContentToolbar(traffic: traffic, sidebarVisible: sidebarVisible)
+                    .transition(.opacity)
+            }
             WebContentView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: SidebarMetrics.cardCornerRadius, style: .continuous))
-        .shadow(color: Color.black.opacity(0.16), radius: 5, y: 1)
-        .padding(.top, SidebarMetrics.contentInset)
-        .padding(.bottom, SidebarMetrics.contentInset)
-        .padding(.trailing, SidebarMetrics.contentInset)
+        .clipShape(RoundedRectangle(
+            cornerRadius: sidebarVisible ? SidebarMetrics.cardCornerRadius : 0,
+            style: .continuous
+        ))
+        .shadow(
+            color: Color.black.opacity(sidebarVisible ? 0.16 : 0),
+            radius: sidebarVisible ? 5 : 0,
+            y: sidebarVisible ? 1 : 0
+        )
+        .padding(.top, inset)
+        .padding(.bottom, inset)
+        .padding(.trailing, inset)
     }
 
     private func resize(translation: CGFloat, ended: Bool) {

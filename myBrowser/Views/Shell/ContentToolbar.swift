@@ -1,11 +1,22 @@
 import AppKit
 import SwiftUI
 
-/// Compact toolbar above the page. The controls live in `Views/Toolbar` so the sidebar can reuse them.
-/// When the sidebar is hidden, controls are inset so they clear the traffic lights.
+/// Back, forward, reload, and the address field.
+///
+/// `.content` is one row above the page and crossfades to the page tint.
+/// `.sidebar` puts the same `NavigationButtons` and `AddressField` on the traffic-light
+/// row, with the field underneath. Sidebar chrome stays untinted so the symbols sit on
+/// the vibrancy material rather than on a colour that is not painted there.
+/// When the sidebar is hidden, the content bar insets its controls past the traffic lights.
 struct ContentToolbar: View {
+    enum Style: Equatable {
+        case content
+        case sidebar
+    }
+
     var traffic: TrafficLightAnchor
     var sidebarVisible: Bool
+    var style: Style = .content
 
     @Environment(BrowserModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
@@ -18,6 +29,11 @@ struct ContentToolbar: View {
         ToolbarChrome.resolve(tint: model.selectedTab?.themeColor, colorScheme: colorScheme)
     }
 
+    /// Neutral chrome for the sidebar. The page tint is not painted behind these controls.
+    private var sidebarChrome: ToolbarChrome {
+        ToolbarChrome.resolve(tint: nil, colorScheme: colorScheme)
+    }
+
     /// Quantized so a fresh `NSColor` each pass does not restart the crossfade.
     private var tintToken: TintToken {
         TintToken(scheme: colorScheme, color: model.selectedTab?.themeColor)
@@ -26,11 +42,20 @@ struct ContentToolbar: View {
     private var shown: ToolbarChrome { painted ?? targetChrome }
 
     var body: some View {
+        switch style {
+        case .content:
+            contentBody
+        case .sidebar:
+            sidebarBody
+        }
+    }
+
+    private var contentBody: some View {
         VStack(spacing: 0) {
             controls
                 .padding(.horizontal, leadingPadding)
                 .frame(height: SidebarMetrics.toolbarHeight - SidebarMetrics.progressHeight)
-            progressTrack
+            progressTrack(shown)
         }
         .frame(height: SidebarMetrics.toolbarHeight)
         .background {
@@ -67,18 +92,44 @@ struct ContentToolbar: View {
         .animation(SidebarMotion.sidebar, value: sidebarVisible)
     }
 
-    /// Distance from the card's padded leading edge to the first control, when the sidebar is hidden.
-    /// The card already starts `contentInset` points from the window edge.
-    private var trafficSpacer: CGFloat {
-        max(0, traffic.clearance - SidebarMetrics.contentInset - leadingPadding)
+    /// Sidebar placement: navigation shares the traffic-light row; the address field sits below it.
+    private var sidebarBody: some View {
+        let chrome = sidebarChrome
+        return VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                Color.clear
+                    .frame(width: max(traffic.clearance, SidebarMetrics.minimumTrafficClearance))
+                    .accessibilityHidden(true)
+                NavigationButtons(chrome: chrome)
+                Spacer(minLength: 4)
+                ToolbarIconButton(systemName: "sidebar.left", help: "Hide Sidebar", symbol: chrome.symbol) {
+                    model.toggleSidebar()
+                }
+            }
+            .padding(.trailing, 8)
+            .frame(height: SidebarMetrics.navRowHeight)
+            .padding(.top, max(0, SidebarMetrics.chromeCenterFromTop - SidebarMetrics.navRowHeight / 2))
+
+            AddressField(chrome: chrome)
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+                .padding(.bottom, 6)
+            progressTrack(chrome)
+        }
     }
 
-    private var progressTrack: some View {
+    /// The collapsed card is flush with the window, so clearance is the whole leading inset.
+    private var trafficSpacer: CGFloat {
+        let clearance = max(traffic.clearance, SidebarMetrics.minimumTrafficClearance)
+        return max(0, clearance - leadingPadding)
+    }
+
+    private func progressTrack(_ chrome: ToolbarChrome) -> some View {
         let loading = model.selectedTab?.isLoading == true
         let progress = model.selectedTab?.estimatedProgress ?? 0
         return ZStack(alignment: .bottomLeading) {
             Rectangle()
-                .fill(shown.symbol.opacity(0.22))
+                .fill(chrome.symbol.opacity(0.22))
                 .frame(height: 1)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             GeometryReader { proxy in

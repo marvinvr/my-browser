@@ -17,14 +17,22 @@ enum SidebarMetrics {
     static let toolbarControl: CGFloat = 26
     /// Hairline under the toolbar; the load progress draws in this band.
     static let progressHeight: CGFloat = 2
+    /// Vertical centre of the traffic lights and the toolbar controls, measured from the top of the window.
+    /// Shared by both address-bar positions so collapsing the sidebar does not move the lights.
+    static let chromeCenterFromTop: CGFloat = contentInset + (toolbarHeight - progressHeight) / 2
+    /// Leading room the collapsed toolbar keeps clear for the traffic lights.
+    static let minimumTrafficClearance: CGFloat = 74
 }
 
-/// Traffic-light geometry in the content view, so chrome can clear the buttons.
+/// Window coordinates of the traffic lights. `WindowConfigurator` keeps their centre on `chromeCenterFromTop`.
 struct TrafficLightAnchor: Equatable {
     var clearance: CGFloat
     var centerFromTop: CGFloat
 
-    static let fallback = TrafficLightAnchor(clearance: 78, centerFromTop: 20)
+    static let fallback = TrafficLightAnchor(
+        clearance: SidebarMetrics.minimumTrafficClearance,
+        centerFromTop: SidebarMetrics.chromeCenterFromTop
+    )
 }
 
 enum SidebarMotion {

@@ -1,15 +1,17 @@
 import SwiftUI
 
-/// Arc-style sidebar: favorites, pins, tabs, and spaces. Navigation sits in `ContentToolbar`.
+/// Arc-style sidebar: favorites, pins, tabs, and spaces.
+/// Top mode keeps only the traffic-light row here. Sidebar mode hosts the address bar as well.
 struct SidebarView: View {
     var traffic: TrafficLightAnchor = .fallback
 
     @Environment(BrowserModel.self) private var model
+    @AppStorage(AddressBarPosition.defaultsKey) private var addressBarPosition: AddressBarPosition = .top
     @State private var prompt: SidebarPrompt?
 
     var body: some View {
         VStack(spacing: 0) {
-            SidebarHeader(traffic: traffic)
+            topChrome
             SpaceSwipeContainer { spaceID in
                 spaceColumn(spaceID)
             }
@@ -18,6 +20,7 @@ struct SidebarView: View {
             SpaceSwitcher()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(SidebarMotion.sidebar, value: addressBarPosition)
         .sheet(item: $prompt) { prompt in
             NamePrompt(
                 title: prompt.title,
@@ -26,6 +29,16 @@ struct SidebarView: View {
             ) { name in
                 apply(prompt, name: name)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var topChrome: some View {
+        switch addressBarPosition {
+        case .top:
+            SidebarHeader(traffic: traffic)
+        case .sidebar:
+            ContentToolbar(traffic: traffic, sidebarVisible: true, style: .sidebar)
         }
     }
 

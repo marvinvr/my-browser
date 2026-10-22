@@ -19,9 +19,10 @@ myBrowser/
   Persistence/    LibraryStore (synced data), SessionStore (local window/tab session), JSONFileStorage
   Browser/        BrowserModel (per-window coordinator), BrowserTab (one WKWebView), ProfileManager, FaviconStore
   Views/
-    Shell/        MainWindowView: sidebar + content card, ContentToolbar above the page
-    Toolbar/      AddressField, NavigationButtons, CopyLinkButton (shared with a sidebar address bar)
+    Shell/        MainWindowView: sidebar + content card, ContentToolbar above the page or in the sidebar
+    Toolbar/      AddressField, NavigationButtons, CopyLinkButton (shared by the top bar and the sidebar address bar)
     Sidebar/      SidebarView, SpaceSwipeContainer, FavoritesGrid, PinnedTree, TabList, SpaceSwitcher, SidebarRow
+    Settings/     Settings scene: General (search engine), Appearance (address bar position)
     Web/          WebContentView (NSViewRepresentable that swaps the selected tab's WKWebView in)
     CommandBar/   CommandBarView + CommandBarModel (results)
   Resources/      Assets.xcassets
@@ -90,10 +91,13 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 ## Window / scene structure
 
 - Phase 1: one main window (`Window` scene, id `main`) with one `BrowserModel`. `LibraryStore` and `SessionStore` are app-level singletons owned by the app and injected. Multiple windows (each its own `BrowserModel` sharing the library) come later.
-- Window: hidden title bar, full-size content view, transparent title bar; the traffic lights sit over the sidebar like Arc. `WindowConfigurator` (an `NSViewRepresentable` that grabs `view.window`) applies the AppKit tweaks.
-- Layout (`MainWindowView`): full-height sidebar on the left (behind-window vibrancy), web content on the right as a rounded card inset by a few points. The sidebar can be toggled (Cmd+S, like Arc); when hidden the card fills the window.
-- Toolbar (`ContentToolbar`): a compact bar (~38pt) across the top of the content card, above the page. `NavigationButtons` (back, forward, reload/stop) and `AddressField` (with `CopyLinkButton`) read `BrowserModel` from the environment and take an optional `ToolbarChrome`, so the same controls can sit at the top of the sidebar. The resting field shows `URLDisplay`: host without scheme or `www.`, up to three path segments, no query or fragment. Clicking it (or Cmd+L) opens the command bar in edit-current mode with the full URL selected. The bar crossfades (~0.25s) to `BrowserTab.themeColor`; a transparent or neon colour keeps the window background. The field fill and label colours are derived from that tint so the text stays legible. ⌘R is handled only by `KeyMonitor` (Ctrl+R does nothing; key repeat does not reload again). ⌘⇧C copies the current URL. A thin progress line runs under the toolbar while the page loads. The sidebar's top row is only the traffic lights and a sidebar-toggle button; favorites start below it. When the sidebar is hidden, the toolbar insets its controls so they clear the traffic lights.
-- Sidebar rows use a flat highlight (soft white in light mode, a lighter fill in dark mode). They do not use `glassEffect`. Space icons share one size; the selected space is a small tinted rounded chip.
+- Settings (`Settings` scene, ⌘,): **General** — default search engine (`SearchEngine.defaultsKey`). **Appearance** — address bar position (`AddressBarPosition.defaultsKey`: `top` default, or `sidebar`). Both are `@AppStorage` over `UserDefaults`. Grouped `Form`.
+- Window: hidden title bar, full-size content view, transparent title bar; the traffic lights sit over the sidebar like Arc. `WindowConfigurator` (an `NSViewRepresentable` that grabs `view.window`) applies the AppKit tweaks and moves `standardWindowButton`s so their vertical centre matches the toolbar. It re-applies that position on resize and when leaving fullscreen (AppKit resets the buttons). While fullscreen is active the system owns the buttons.
+- Layout (`MainWindowView`): full-height sidebar on the left (behind-window vibrancy), web content on the right as a rounded card inset by a few points. The sidebar toggles with ⌘S (View menu "Hide Sidebar" / "Show Sidebar", plus a `sidebar.left` button). When hidden, the card fills the window edge to edge: no inset, no shadow, so the sidebar material does not leave a frame. Collapse and the address-bar setting share one spring (`SidebarMotion.sidebar`). The traffic-light centre stays on `SidebarMetrics.chromeCenterFromTop` in both modes, so the lights do not jump.
+- Toolbar (`ContentToolbar`): `NavigationButtons` (back, forward, reload/stop) and `AddressField` (with `CopyLinkButton`) read `BrowserModel` from the environment and take an optional `ToolbarChrome`. The resting field shows `URLDisplay`: host without scheme or `www.`, up to three path segments, no query or fragment. Clicking it (or Cmd+L) opens the command bar in edit-current mode with the full URL selected. ⌘R is handled only by `KeyMonitor` (Ctrl+R does nothing; key repeat does not reload again). ⌘⇧C copies the current URL. A thin progress line runs under the bar while the page loads.
+  - **Top** (default): the bar sits across the top of the content card and crossfades (~0.25s) to `BrowserTab.themeColor`. A transparent or neon colour keeps the window background. The field fill and label colours are derived from that tint so the text stays legible. The sidebar's top row is only the traffic lights and the sidebar-toggle button. When the sidebar is hidden, the toolbar keeps ~74pt of leading space so the controls clear the traffic lights, and a matching top spacer keeps that row on the same line as when the card was inset.
+  - **Sidebar**: the same controls sit on the traffic-light row (navigation to the right of the lights, address field below). Their chrome stays untinted, because the page colour is not painted on the sidebar. The content card has no toolbar and keeps its normal inset. When the sidebar is hidden, the content toolbar is shown anyway so the URL stays visible.
+- Sidebar rows use a flat highlight (soft white in light mode, white at about 12% in dark mode) with the system label color, so the title stays readable. They do not use `glassEffect`. Space icons share one size; the selected space is a small rounded chip tinted with the space color at about 16–18%, and the symbol is drawn in the space color.
 - Command bar: a SwiftUI overlay centred over the window (glass panel), not a separate NSPanel. It opens with a short spring (~0.18s) and closes faster.
 
 ## WebKit management
@@ -110,7 +114,7 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 - Cmd+T: new tab mode (empty field). Cmd+L: edit current URL (prefilled, selected); Enter navigates the current tab.
 - Results: "Open URL" when input looks like a URL, "Search <engine>" otherwise, plus matching open tabs / pinned sites in the current space (title or URL contains the query) → switch to them.
 - `URLInput.resolve(_:)` decides URL vs search: explicit scheme, `localhost[:port]`, IPs, or `something.tld` without spaces ⇒ URL (https assumed); everything else ⇒ search.
-- Default search engine: **Google**, user-selectable later (enum `SearchEngine`: google, duckDuckGo, kagi, bing, ecosia); stored in `UserDefaults`.
+- Default search engine: **Google** (enum `SearchEngine`: google, duckDuckGo, kagi, bing, ecosia). The choice is Settings → General, stored in `UserDefaults` under `SearchEngine.defaultsKey`.
 
 ## Keyboard shortcuts (Phase 1)
 
@@ -126,7 +130,7 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 | Cmd+[ / Cmd+] | Back / forward |
 | Cmd+R | Reload (`KeyMonitor` only; Ctrl+R does nothing) |
 | Cmd+Shift+C | Copy link |
-| Cmd+S | Toggle sidebar |
+| Cmd+S | Hide / show sidebar |
 | Cmd+D | Pin / unpin current tab |
 | Esc | Close command bar / stop loading |
 
@@ -134,9 +138,10 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 - 2026-10-22: JSON + Codable store instead of SwiftData (see Sync readiness).
 - 2026-10-22: one Profile per Space by default; model allows sharing.
 - 2026-10-22: not sandboxed.
-- 2026-10-22: default search engine Google (to be a setting).
+- 2026-10-22: default search engine Google, chosen in Settings → General.
 - 2026-10-22: page two-finger swipe = back/forward, sidebar swipe = spaces. Sidebar swipe commits past 30% of the column or on a flick, and rubber-bands on the first and last space.
 - 2026-10-22: single window in Phase 1.
-- 2026-10-22: address field and back/forward/reload live in a toolbar above the page. Tabs stay in the sidebar. Sidebar selection is a flat fill, not glass.
-- 2026-10-22: the content toolbar tints from the page theme colour and shows a formatted URL. ⌘⇧C copies the link. The same toolbar controls are reusable in the sidebar.
+- 2026-10-22: address field and back/forward/reload live in a toolbar above the page by default. Settings → Appearance can move the same controls to the top of the sidebar. Tabs stay in the sidebar. Sidebar selection is a flat fill, not glass.
+- 2026-10-22: the content toolbar tints from the page theme colour and shows a formatted URL. ⌘⇧C copies the link.
+- 2026-10-22: collapsed sidebar draws the content card edge to edge. Traffic lights stay vertically centred on the toolbar in both modes.
 - 2026-10-22: bundle id `ch.marvinvr.mybrowser`; Sparkle feed on `main`; releases via `scripts/release.sh`.

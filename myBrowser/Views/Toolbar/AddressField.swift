@@ -15,6 +15,7 @@ struct AddressField: View {
     }
 
     private var pageURL: URL? {
+        if let live = model.selectedTab?.webView?.url, BrowserTab.isPageURL(live) { return live }
         if let url = model.selectedTab?.url { return url }
         return model.selectedItemID.flatMap { model.library.item($0)?.url }
     }

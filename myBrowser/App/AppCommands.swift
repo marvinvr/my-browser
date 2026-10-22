@@ -41,8 +41,7 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(replacing: .sidebar) {
-            Button("Toggle Sidebar") { model.toggleSidebar() }
-                .keyboardShortcut("s")
+            ToggleSidebarCommand(model: model)
         }
 
         CommandGroup(after: .sidebar) {
@@ -184,10 +183,33 @@ private struct BrowserNavigationStateKey: FocusedValueKey {
     typealias Value = BrowserNavigationState
 }
 
+private struct SidebarVisibleKey: FocusedValueKey {
+    typealias Value = Bool
+}
+
 extension FocusedValues {
     var browserNavigation: BrowserNavigationState? {
         get { self[BrowserNavigationStateKey.self] }
         set { self[BrowserNavigationStateKey.self] = newValue }
+    }
+
+    var sidebarIsVisible: Bool? {
+        get { self[SidebarVisibleKey.self] }
+        set { self[SidebarVisibleKey.self] = newValue }
+    }
+}
+
+/// View menu item. The title follows the focused window so it reads Hide or Show.
+private struct ToggleSidebarCommand: View {
+    var model: BrowserModel
+    @FocusedValue(\.sidebarIsVisible) private var sidebarIsVisible
+
+    var body: some View {
+        let visible = sidebarIsVisible ?? model.session.isSidebarVisible
+        Button(visible ? "Hide Sidebar" : "Show Sidebar") {
+            model.toggleSidebar()
+        }
+        .keyboardShortcut("s")
     }
 }
 
