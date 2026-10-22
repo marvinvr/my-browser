@@ -10,6 +10,11 @@ myBrowser: native macOS browser (Swift 6, SwiftUI + AppKit, WebKit). Product + p
 - Prompts to Grok must be self-contained: Grok does not see your context. Name exact files/types, acceptance criteria, and "build with `xcodegen && xcodebuild ...` before committing".
 - Use `Grok xHigh` for harder backend tasks (sync, extension plumbing) if Grok High struggles.
 
+## Claude budget (Marvin: this project must use very little Claude)
+- Only ONE Claude lead at a time for the whole project; parallel work = several Grok agents under that one lead.
+- Keep the lead cheap: medium effort, no reading of large files or full diffs. Let a separate Grok xHigh agent do code reviews (`git diff`, build, run, screenshots) and report a short verdict; the lead reads only those summaries and `git log --stat`.
+- Use `mmux wait` in the foreground (no polling loops, no repeated status reads). Long-running waits are fine and cost nothing.
+
 ## Rules
 - XcodeGen: edit `project.yml`, never hand-edit the generated project. Run `xcodegen` after adding files.
 - Build must pass before every push: `xcodegen && xcodebuild -scheme myBrowser -destination 'platform=macOS' build`.
