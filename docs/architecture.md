@@ -20,7 +20,7 @@ myBrowser/
   Browser/        BrowserModel (per-window coordinator), BrowserTab (one WKWebView), ProfileManager, FaviconStore
   Views/
     Shell/        MainWindowView: sidebar + content card layout
-    Sidebar/      SidebarView, FavoritesGrid, PinnedTree, TabList, SpaceSwitcher, SidebarRow
+    Sidebar/      SidebarView, SpaceSwipeContainer, FavoritesGrid, PinnedTree, TabList, SpaceSwitcher, SidebarRow
     Web/          WebContentView (NSViewRepresentable that swaps the selected tab's WKWebView in)
     CommandBar/   CommandBarView + CommandBarModel (results)
   Resources/      Assets.xcassets
@@ -99,7 +99,7 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 - `WebContentView` is an `NSViewRepresentable` around a plain container `NSView`; when the selected tab changes it removes the old `WKWebView` and adds the new one as a subview (pinned to edges). Web views are never recreated on selection changes, so page state is kept.
 - Space switching swaps the sidebar contents and selects that space's last selected item; live tabs of other spaces stay loaded (memory pressure handling / tab unloading is Phase 2+).
 - `target=_blank` / `window.open` / Cmd-click: `WKUIDelegate.createWebView` → new `.tabs` item in the same space (Phase 1 opens in a new tab and selects it; Cmd-click opens in background).
-- Back/forward: `allowsBackForwardNavigationGestures = true` (Safari-style two-finger swipe on the page). Decision: **page swipe = back/forward; swipes on the sidebar switch spaces** (Phase 2 implements the sidebar swipe).
+- Back/forward: `allowsBackForwardNavigationGestures = true` (Safari-style two-finger swipe on the page). Decision: **page swipe = back/forward; swipes on the sidebar switch spaces**. `SpaceSwipeContainer` claims a horizontal trackpad swipe on the space column only (`SpaceSwipeTracker`); vertical list scrolling and the web view are left alone.
 - Favicons: `FaviconStore` downloads `/favicon.ico` or the page's `<link rel=icon>` (via JS after load) and caches PNGs per host in `Favicons/`. Not synced.
 
 ## Command bar
@@ -131,5 +131,5 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 - 2026-10-22: one Profile per Space by default; model allows sharing.
 - 2026-10-22: not sandboxed.
 - 2026-10-22: default search engine Google (to be a setting).
-- 2026-10-22: page two-finger swipe = back/forward, sidebar swipe = spaces.
+- 2026-10-22: page two-finger swipe = back/forward, sidebar swipe = spaces. Sidebar swipe commits past 30% of the column or on a flick, and rubber-bands on the first and last space.
 - 2026-10-22: single window in Phase 1.

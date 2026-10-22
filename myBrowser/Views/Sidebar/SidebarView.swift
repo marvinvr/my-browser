@@ -7,16 +7,12 @@ struct SidebarView: View {
     @Environment(BrowserModel.self) private var model
     @Namespace private var selectionNamespace
     @State private var prompt: SidebarPrompt?
-    @State private var shownSpaceID: UUID?
-    @State private var slidesForward = true
 
     var body: some View {
         VStack(spacing: 0) {
             SidebarToolbar(traffic: traffic)
-            ZStack {
-                spaceColumn(displayedSpaceID)
-                    .id(displayedSpaceID)
-                    .transition(spaceTransition)
+            SpaceSwipeContainer { spaceID in
+                spaceColumn(spaceID)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
@@ -32,30 +28,6 @@ struct SidebarView: View {
                 apply(prompt, name: name)
             }
         }
-        .onChange(of: model.selectedSpaceID, initial: true) { old, new in
-            // The initial callback reports the current id as both values; don't slide on appear.
-            if shownSpaceID == nil || old == new {
-                shownSpaceID = new
-            } else {
-                slidesForward = spaceIndex(new) >= spaceIndex(old)
-                withAnimation(SidebarMotion.space) {
-                    shownSpaceID = new
-                }
-            }
-        }
-    }
-
-    private var displayedSpaceID: UUID {
-        shownSpaceID ?? model.selectedSpaceID
-    }
-
-    private var spaceTransition: AnyTransition {
-        let insertionX: CGFloat = slidesForward ? 26 : -26
-        let removalX: CGFloat = slidesForward ? -16 : 16
-        return .asymmetric(
-            insertion: .offset(x: insertionX).combined(with: .opacity),
-            removal: .offset(x: removalX).combined(with: .opacity)
-        )
     }
 
     private func spaceColumn(_ spaceID: UUID) -> some View {
@@ -102,10 +74,6 @@ struct SidebarView: View {
         .padding(.horizontal, 6)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
-    }
-
-    private func spaceIndex(_ id: UUID) -> Int {
-        model.library.orderedSpaces.firstIndex { $0.id == id } ?? 0
     }
 
     private func askRename(_ item: SidebarItem) {
