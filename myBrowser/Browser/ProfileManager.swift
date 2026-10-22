@@ -11,10 +11,22 @@ final class ProfileManager {
         return store
     }
 
+    /// A fresh configuration sharing the profile's data store. Create one per web view;
+    /// WebKit does not allow a configuration to be mutated after a web view owns it.
     func configuration(for profileID: UUID) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore(for: profileID)
-        // TODO(worker B): preferences (fullscreen, PiP, developer extras), user agent.
+        configuration.preferences.isElementFullscreenEnabled = true
+        // AirPlay defaults to allowed; set it explicitly so a future default change can't turn it off.
+        // Picture-in-Picture has no macOS configuration flag (the iOS property is unavailable here) and stays at the system default, which allows it.
+        configuration.allowsAirPlayForMediaPlayback = true
+        // Private preference. Turning it on is what makes the Develop menu / Web Inspector available.
+        configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        // Appended to WebKit's default UA so sites see a Safari-shaped token instead of a bare WebKit shell.
+        configuration.applicationNameForUserAgent = Self.safariApplicationName
         return configuration
     }
+
+    /// Safari-like application token for macOS 26. `applicationNameForUserAgent` is appended to the stock WebKit UA.
+    static let safariApplicationName = "Version/26.0 Safari/605.1.15"
 }

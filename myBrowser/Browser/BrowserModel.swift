@@ -12,11 +12,14 @@ final class BrowserModel {
         case editCurrent
     }
 
+    private static let closedTabLimit = 50
+
     let library: LibraryStore
     let session: SessionStore
     @ObservationIgnored let profiles = ProfileManager()
+    @ObservationIgnored let favicons: FaviconStore
 
-    /// Live tabs by item id.
+    /// Live tabs by item id. Missing means the item is not loaded.
     private(set) var tabs: [UUID: BrowserTab] = [:]
     private(set) var selectedSpaceID: UUID
     /// `nil` = command bar hidden.
@@ -25,8 +28,16 @@ final class BrowserModel {
     init(library: LibraryStore, session: SessionStore) {
         self.library = library
         self.session = session
+        favicons = FaviconStore(directory: library.directory)
         let fallback = library.ensureDefaultSpace().id
-        selectedSpaceID = session.selectedSpaceID.flatMap { library.space($0)?.id } ?? fallback
+        let resolved = session.selectedSpaceID.flatMap { library.space($0)?.id } ?? fallback
+        selectedSpaceID = resolved
+        if session.selectedSpaceID != resolved {
+            session.selectedSpaceID = resolved
+        }
+        if let itemID = session.selectedItemBySpace[resolved] {
+            select(itemID)
+        }
     }
 
     // MARK: Derived
@@ -35,48 +46,224 @@ final class BrowserModel {
     var selectedItemID: UUID? { session.selectedItemBySpace[selectedSpaceID] }
     var selectedTab: BrowserTab? { selectedItemID.flatMap { tabs[$0] } }
 
-    /// Items in sidebar order for the current space: favorites, pinned (depth-first, only expanded folders' children), tabs. Sites only.
+    /// Sites in sidebar order for the current space: favorites, pinned (depth-first, expanded folders only), tabs.
     var navigableItems: [SidebarItem] {
-        // TODO(worker B)
-        []
+        navigableItems(in: selectedSpaceID)
     }
 
     // MARK: Spaces
 
-    func selectSpace(_ id: UUID) {}
-    func selectNextSpace() {}
-    func selectPreviousSpace() {}
-    @discardableResult func createSpace(name: String, symbol: String, color: SpaceColor) -> Space { library.createSpace(name: name, symbol: symbol, color: color) }
-    func renameSpace(_ id: UUID, to name: String) {}
-    func deleteSpace(_ id: UUID) {}
+    func selectSpace(_ id: UUID) {
+        guard library.space(id) != nil else { return }
+        if selectedSpaceID != id { selectedSpaceID = id }
+        if session.selectedSpaceID != id { session.selectedSpaceID = id }
+        if let itemID = session.selectedItemBySpace[id] {
+            select(itemID)
+        }
+    }
+
+    func selectNextSpace() { moveSpace(by: 1) }
+    func selectPreviousSpace() { moveSpace(by: -1) }
+
+    @discardableResult
+    func createSpace(name: String, symbol: String, color: SpaceColor) -> Space {
+        let space = library.createSpace(name: name, symbol: symbol, color: color)
+        selectSpace(space.id)
+        return space
+    }
+
+    func renameSpace(_ id: UUID, to name: String) {
+        guard library.space(id) != nil else { return }
+        library.updateSpace(id) { $0.name = name }
+    }
+
+    /// Refuses to delete the last remaining space. Selects the neighbour (next, else previous) and unloads the space's tabs.
+    func deleteSpace(_ id: UUID) {
+        let spaces = library.orderedSpaces
+        guard spaces.count > 1, let index = spaces.firstIndex(where: { $0.id == id }) else { return }
+        let neighbour = spaces[index + 1 < spaces.count ? index + 1 : index - 1]
+        let wasSelected = selectedSpaceID == id
+        unloadTabs(in: id)
+        session.selectedItemBySpace[id] = nil
+        library.deleteSpace(id)
+        if wasSelected {
+            selectSpace(neighbour.id)
+        }
+    }
 
     // MARK: Tabs
 
-    /// Selects an item: creates/loads its tab if needed.
-    func select(_ itemID: UUID) {}
-    /// Opens `url` in a new `.tabs` item of the current space (top of the list, Arc-style) and selects it unless in background.
-    func openInNewTab(_ url: URL, inBackground: Bool = false) {}
-    /// Loads `url` in the selected tab, or a new tab if none is selected.
-    func openInCurrentTab(_ url: URL) {}
+    /// Selects an item and creates its live tab if needed. The web view itself is created by `BrowserTab.loadIfNeeded`.
+    func select(_ itemID: UUID) {
+        guard let item = library.item(itemID), item.kind == .site else { return }
+        if selectedSpaceID != item.spaceID {
+            selectedSpaceID = item.spaceID
+            if session.selectedSpaceID != item.spaceID {
+                session.selectedSpaceID = item.spaceID
+            }
+        }
+        if session.selectedItemBySpace[item.spaceID] != itemID {
+            session.selectedItemBySpace[item.spaceID] = itemID
+        }
+        ensureTab(for: item).loadIfNeeded(using: profiles)
+    }
+
+    /// Opens `url` in a new `.tabs` item at the top of the current space. Background leaves the selection alone.
+    func openInNewTab(_ url: URL, inBackground: Bool = false) {
+        guard let spaceID = selectedSpace?.id else { return }
+        openInNewTab(url, spaceID: spaceID, inBackground: inBackground)
+    }
+
+    /// Loads `url` in the selected tab, or a new tab when nothing is selected.
+    func openInCurrentTab(_ url: URL) {
+        if let id = selectedItemID, library.item(id)?.kind == .site {
+            select(id)
+            tabs[id]?.load(url)
+        } else {
+            openInNewTab(url)
+        }
+    }
+
     /// Cmd+W.
-    func closeSelectedTab() {}
-    func close(_ itemID: UUID) {}
-    /// Cmd+Shift+T.
-    func reopenClosedTab() {}
-    /// Cmd+1…8 (index 0…7); Cmd+9 passes `nil` = last.
-    func selectItem(atIndex index: Int?) {}
-    func selectNextTab() {}
-    func selectPreviousTab() {}
+    func closeSelectedTab() {
+        guard let id = selectedItemID else { return }
+        close(id)
+    }
+
+    func close(_ itemID: UUID) {
+        guard let item = library.item(itemID), item.kind == .site else { return }
+        let spaceID = item.spaceID
+        let wasSelected = session.selectedItemBySpace[spaceID] == itemID
+        let order = navigableItems(in: spaceID)
+        let index = order.firstIndex { $0.id == itemID }
+        let state = capturedState(for: itemID)
+
+        if item.section == .tabs {
+            var snapshot = item
+            if let tab = tabs[itemID] {
+                if let liveURL = tab.url { snapshot.url = liveURL }
+                if !tab.title.isEmpty { snapshot.title = tab.title }
+            }
+            session.closedTabs.append(SessionStore.ClosedTab(item: snapshot, interactionState: state))
+            if session.closedTabs.count > Self.closedTabLimit {
+                session.closedTabs.removeFirst(session.closedTabs.count - Self.closedTabLimit)
+            }
+            session.interactionStates[itemID] = nil
+            library.deleteItem(itemID)
+        } else if let state {
+            session.interactionStates[itemID] = state
+        }
+        unloadTab(itemID)
+
+        guard wasSelected else { return }
+        if let index, let neighbour = neighbourID(in: order, closing: index) {
+            select(neighbour)
+        } else {
+            session.selectedItemBySpace[spaceID] = nil
+        }
+    }
+
+    /// Cmd+Shift+T. Restores the item at the top of `.tabs` with its back/forward history and selects it.
+    func reopenClosedTab() {
+        while let closed = session.closedTabs.last {
+            session.closedTabs.removeLast()
+            guard library.space(closed.item.spaceID) != nil else { continue }
+            let item = library.restoreItem(closed.item, at: .start)
+            if let state = closed.interactionState {
+                session.interactionStates[item.id] = state
+            }
+            if selectedSpaceID != item.spaceID {
+                selectedSpaceID = item.spaceID
+                if session.selectedSpaceID != item.spaceID {
+                    session.selectedSpaceID = item.spaceID
+                }
+            }
+            select(item.id)
+            return
+        }
+    }
+
+    /// Cmd+1…8 (index 0…7). Cmd+9 passes `nil`, which selects the last navigable item.
+    func selectItem(atIndex index: Int?) {
+        let items = navigableItems
+        guard !items.isEmpty else { return }
+        if let index {
+            guard items.indices.contains(index) else { return }
+            select(items[index].id)
+        } else {
+            select(items[items.count - 1].id)
+        }
+    }
+
+    func selectNextTab() { moveSelection(by: 1) }
+    func selectPreviousTab() { moveSelection(by: -1) }
 
     // MARK: Pinning / folders
 
-    func pin(_ itemID: UUID) {}
-    func unpin(_ itemID: UUID) {}
-    func addToFavorites(_ itemID: UUID) {}
-    func togglePinSelected() {}
-    @discardableResult func createFolder(named name: String, parentID: UUID?) -> SidebarItem? { nil }
-    func rename(_ itemID: UUID, to title: String) {}
-    func toggleExpanded(_ folderID: UUID) {}
+    /// Moves a `.tabs` item to the end of `.pinned`. The URL stays the page that's open.
+    func pin(_ itemID: UUID) {
+        guard let item = library.item(itemID), item.section == .tabs, item.kind == .site else { return }
+        let url = tabs[itemID]?.url ?? item.url
+        library.moveItem(itemID, to: .pinned, parentID: nil, at: .end)
+        if let url, library.item(itemID)?.url != url {
+            library.updateItem(itemID) { $0.url = url }
+        }
+    }
+
+    /// Moves a pinned or favorite site to the top of `.tabs`.
+    func unpin(_ itemID: UUID) {
+        guard let item = library.item(itemID), item.kind == .site, item.section != .tabs else { return }
+        library.moveItem(itemID, to: .tabs, parentID: nil, at: .start)
+    }
+
+    func addToFavorites(_ itemID: UUID) {
+        guard let item = library.item(itemID), item.kind == .site, item.section != .favorites else { return }
+        // A tab's URL is wherever it has navigated; a pin already has a home URL and we keep that.
+        let url = item.section == .tabs ? (tabs[itemID]?.url ?? item.url) : item.url
+        library.moveItem(itemID, to: .favorites, parentID: nil, at: .end)
+        if let url, library.item(itemID)?.url != url {
+            library.updateItem(itemID) { $0.url = url }
+        }
+    }
+
+    /// Cmd+D. Pins the selected tab, or unpins a pinned/favorite site back to tabs.
+    func togglePinSelected() {
+        guard let id = selectedItemID, let item = library.item(id), item.kind == .site else { return }
+        if item.section == .tabs {
+            pin(id)
+        } else {
+            unpin(id)
+        }
+    }
+
+    @discardableResult
+    func createFolder(named name: String, parentID: UUID?) -> SidebarItem? {
+        guard let spaceID = selectedSpace?.id else { return nil }
+        if let parentID {
+            guard let parent = library.item(parentID),
+                  parent.spaceID == spaceID,
+                  parent.section == .pinned,
+                  parent.kind == .folder else { return nil }
+        }
+        return library.addItem(
+            spaceID: spaceID,
+            section: .pinned,
+            kind: .folder,
+            parentID: parentID,
+            title: name,
+            at: .end
+        )
+    }
+
+    func rename(_ itemID: UUID, to title: String) {
+        guard library.item(itemID) != nil else { return }
+        library.updateItem(itemID) { $0.title = title }
+    }
+
+    func toggleExpanded(_ folderID: UUID) {
+        guard let item = library.item(folderID), item.kind == .folder else { return }
+        library.updateItem(folderID) { $0.isExpanded.toggle() }
+    }
 
     // MARK: Sidebar / command bar
 
@@ -86,7 +273,149 @@ final class BrowserModel {
 
     /// Persist tab interaction states and flush stores (app termination).
     func saveState() {
+        for (id, tab) in tabs where tab.isLoaded {
+            if let state = tab.interactionState {
+                session.interactionStates[id] = state
+            }
+        }
         library.flush()
         session.flush()
+    }
+
+    // MARK: Private
+
+    private func openInNewTab(_ url: URL, spaceID: UUID, inBackground: Bool) {
+        guard library.space(spaceID) != nil else { return }
+        let item = library.addItem(
+            spaceID: spaceID,
+            section: .tabs,
+            kind: .site,
+            title: Self.fallbackTitle(for: url),
+            url: url,
+            at: .start
+        )
+        guard !inBackground else { return }
+        if selectedSpaceID != spaceID {
+            selectedSpaceID = spaceID
+            if session.selectedSpaceID != spaceID {
+                session.selectedSpaceID = spaceID
+            }
+        }
+        select(item.id)
+    }
+
+    private func ensureTab(for item: SidebarItem) -> BrowserTab {
+        if let existing = tabs[item.id] { return existing }
+        let profileID = library.space(item.spaceID)?.profileID ?? item.spaceID
+        let tab = BrowserTab(
+            id: item.id,
+            profileID: profileID,
+            url: item.url,
+            title: item.title,
+            interactionState: session.interactionStates[item.id]
+        )
+        tab.faviconStore = favicons
+        tab.useCachedFavicon()
+        let spaceID = item.spaceID
+        tab.onOpenInNewTab = { [weak self] url, inBackground in
+            self?.openInNewTab(url, spaceID: spaceID, inBackground: inBackground)
+        }
+        tab.onStateChange = { [weak self] tab in
+            self?.mirror(tab)
+        }
+        tabs[item.id] = tab
+        return tab
+    }
+
+    /// Tabs mirror the live URL and title. Pinned and favorite items keep the title and URL the user saved.
+    private func mirror(_ tab: BrowserTab) {
+        guard let item = library.item(tab.id), item.section == .tabs else { return }
+        let title = tab.title.isEmpty ? item.title : tab.title
+        let url = tab.url ?? item.url
+        guard title != item.title || url != item.url else { return }
+        library.updateItem(tab.id) {
+            $0.title = title
+            $0.url = url
+        }
+    }
+
+    private func capturedState(for itemID: UUID) -> Data? {
+        if let tab = tabs[itemID], tab.isLoaded {
+            return tab.interactionState ?? session.interactionStates[itemID]
+        }
+        return session.interactionStates[itemID]
+    }
+
+    private func unloadTab(_ id: UUID) {
+        tabs[id]?.unload()
+        tabs[id] = nil
+    }
+
+    private func unloadTabs(in spaceID: UUID) {
+        let ids = library.items.values.filter { $0.spaceID == spaceID }.map(\.id)
+        for id in ids {
+            unloadTab(id)
+            session.interactionStates[id] = nil
+        }
+    }
+
+    private func navigableItems(in spaceID: UUID) -> [SidebarItem] {
+        guard library.space(spaceID) != nil else { return [] }
+        var items: [SidebarItem] = []
+        items.append(contentsOf: library.children(of: nil, section: .favorites, in: spaceID).filter { $0.kind == .site })
+        var visited: Set<UUID> = []
+        items.append(contentsOf: pinnedSites(in: spaceID, parentID: nil, visited: &visited))
+        items.append(contentsOf: library.children(of: nil, section: .tabs, in: spaceID).filter { $0.kind == .site })
+        return items
+    }
+
+    private func pinnedSites(in spaceID: UUID, parentID: UUID?, visited: inout Set<UUID>) -> [SidebarItem] {
+        var result: [SidebarItem] = []
+        for child in library.children(of: parentID, section: .pinned, in: spaceID) {
+            guard visited.insert(child.id).inserted else { continue }
+            switch child.kind {
+            case .site:
+                result.append(child)
+            case .folder where child.isExpanded:
+                result.append(contentsOf: pinnedSites(in: spaceID, parentID: child.id, visited: &visited))
+            case .folder:
+                break
+            }
+        }
+        return result
+    }
+
+    /// Next item below, else the one above. `index` is the position in the pre-close list.
+    private func neighbourID(in items: [SidebarItem], closing index: Int) -> UUID? {
+        if index + 1 < items.count { return items[index + 1].id }
+        if index > 0 { return items[index - 1].id }
+        return nil
+    }
+
+    private func moveSelection(by delta: Int) {
+        let items = navigableItems
+        guard !items.isEmpty else { return }
+        let current = selectedItemID.flatMap { id in items.firstIndex { $0.id == id } }
+        let next: Int
+        if let current {
+            next = (current + delta + items.count) % items.count
+        } else {
+            next = delta > 0 ? 0 : items.count - 1
+        }
+        select(items[next].id)
+    }
+
+    private func moveSpace(by delta: Int) {
+        let spaces = library.orderedSpaces
+        guard !spaces.isEmpty else { return }
+        let index = spaces.firstIndex { $0.id == selectedSpaceID } ?? 0
+        let next = (index + delta + spaces.count) % spaces.count
+        selectSpace(spaces[next].id)
+    }
+
+    private static func fallbackTitle(for url: URL) -> String {
+        if let host = url.host(), !host.isEmpty { return host }
+        let absolute = url.absoluteString
+        return absolute.isEmpty ? "New Tab" : absolute
     }
 }

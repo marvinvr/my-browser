@@ -20,11 +20,17 @@ final class BrowserTab: Identifiable {
 
     /// Called when the page wants a new tab (target=_blank, window.open, Cmd-click). `inBackground` for Cmd-click.
     @ObservationIgnored var onOpenInNewTab: ((URL, _ inBackground: Bool) -> Void)?
-    /// Called when title/url change, so the model can mirror them into the sidebar item.
+    /// Called when title or URL change, so the model can mirror them into the sidebar item.
     @ObservationIgnored var onStateChange: ((BrowserTab) -> Void)?
+    @ObservationIgnored var faviconStore: FaviconStore?
 
     @ObservationIgnored private let initialURL: URL?
-    @ObservationIgnored private let initialInteractionState: Data?
+    @ObservationIgnored private var storedInteractionState: Data?
+    /// Set when `load` happens before the web view exists, so it wins over restored history.
+    @ObservationIgnored private var pendingURL: URL?
+    @ObservationIgnored private var observations: [NSKeyValueObservation] = []
+    @ObservationIgnored private var downloads: [ObjectIdentifier: WKDownload] = [:]
+    @ObservationIgnored private var webDelegate: TabWebDelegate?
 
     init(id: UUID, profileID: UUID, url: URL?, title: String, interactionState: Data?) {
         self.id = id
@@ -32,29 +38,172 @@ final class BrowserTab: Identifiable {
         self.url = url
         self.title = title
         self.initialURL = url
-        self.initialInteractionState = interactionState
+        self.storedInteractionState = interactionState
     }
 
     var isLoaded: Bool { webView != nil }
 
     /// Creates the web view (restoring `interactionState` or loading the initial URL) if needed.
     func loadIfNeeded(using profiles: ProfileManager) {
-        // TODO(worker B)
+        guard webView == nil else { return }
+
+        let webView = WKWebView(frame: .zero, configuration: profiles.configuration(for: profileID))
+        webView.allowsBackForwardNavigationGestures = true
+        webView.allowsMagnification = true
+        webView.isInspectable = true
+        let webDelegate = TabWebDelegate(tab: self)
+        self.webDelegate = webDelegate
+        webView.navigationDelegate = webDelegate
+        webView.uiDelegate = webDelegate
+        observe(webView)
+        self.webView = webView
+
+        if let pendingURL {
+            self.pendingURL = nil
+            webView.load(URLRequest(url: pendingURL))
+        } else if let storedInteractionState {
+            webView.interactionState = storedInteractionState
+        } else if let initialURL {
+            webView.load(URLRequest(url: initialURL))
+        }
+
+        useCachedFavicon()
+    }
+
+    /// Shows a previously cached icon immediately, before the page finishes loading.
+    func useCachedFavicon() {
+        guard favicon == nil, let url else { return }
+        favicon = faviconStore?.cachedFavicon(for: url)
     }
 
     /// Destroys the web view (pinned tab "closed"). State can be captured first via `interactionState`.
     func unload() {
+        observations.forEach { $0.invalidate() }
+        observations.removeAll()
+        downloads.removeAll()
+        webView?.stopLoading()
+        webView?.navigationDelegate = nil
+        webView?.uiDelegate = nil
+        webDelegate?.tab = nil
+        webDelegate = nil
+        webView?.removeFromSuperview()
         webView = nil
+        isLoading = false
     }
 
+    /// `WKWebView.interactionState` as `Data`, for the session store.
     var interactionState: Data? {
-        // TODO(worker B)
-        nil
+        webView?.interactionState as? Data
     }
 
-    func load(_ url: URL) {}
-    func goBack() {}
-    func goForward() {}
-    func reload() {}
-    func stopLoading() {}
+    func load(_ url: URL) {
+        pendingURL = url
+        storedInteractionState = nil
+        if self.url != url {
+            self.url = url
+            onStateChange?(self)
+        }
+        guard let webView else { return }
+        pendingURL = nil
+        webView.load(URLRequest(url: url))
+    }
+
+    func goBack() { webView?.goBack() }
+    func goForward() { webView?.goForward() }
+    func reload() { webView?.reload() }
+    func stopLoading() { webView?.stopLoading() }
+
+    // MARK: Observation
+
+    private func observe(_ webView: WKWebView) {
+        observations = [
+            bind(webView, \.title) { tab, view in tab.noteTitle(view.title) },
+            bind(webView, \.url) { tab, view in tab.noteURL(view.url) },
+            bind(webView, \.isLoading) { tab, view in tab.noteLoading(view.isLoading) },
+            bind(webView, \.estimatedProgress) { tab, view in tab.noteProgress(view.estimatedProgress) },
+            bind(webView, \.canGoBack) { tab, view in tab.noteCanGoBack(view.canGoBack) },
+            bind(webView, \.canGoForward) { tab, view in tab.noteCanGoForward(view.canGoForward) },
+        ]
+    }
+
+    /// KVO callbacks are `@Sendable`. WebKit delivers them on the main thread; hop back onto the actor there.
+    private func bind<Value>(
+        _ webView: WKWebView,
+        _ keyPath: KeyPath<WKWebView, Value>,
+        apply: @escaping @MainActor (BrowserTab, WKWebView) -> Void
+    ) -> NSKeyValueObservation {
+        webView.observe(keyPath, options: [.initial, .new]) { [weak self] view, _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                apply(self, view)
+            }
+        }
+    }
+
+    private func noteTitle(_ raw: String?) {
+        let next = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !next.isEmpty, next != title else { return }
+        title = next
+        onStateChange?(self)
+    }
+
+    private func noteURL(_ newURL: URL?) {
+        guard let newURL, Self.isPageURL(newURL), newURL != url else { return }
+        let previousHost = url?.host()?.lowercased()
+        url = newURL
+        if previousHost != newURL.host()?.lowercased() {
+            favicon = faviconStore?.cachedFavicon(for: newURL)
+        }
+        onStateChange?(self)
+    }
+
+    private func noteLoading(_ loading: Bool) {
+        guard isLoading != loading else { return }
+        isLoading = loading
+    }
+
+    private func noteProgress(_ progress: Double) {
+        guard estimatedProgress != progress else { return }
+        estimatedProgress = progress
+    }
+
+    private func noteCanGoBack(_ value: Bool) {
+        guard canGoBack != value else { return }
+        canGoBack = value
+    }
+
+    private func noteCanGoForward(_ value: Bool) {
+        guard canGoForward != value else { return }
+        canGoForward = value
+    }
+
+    static func isPageURL(_ url: URL) -> Bool {
+        switch url.scheme?.lowercased() {
+        case "http", "https", "file": true
+        default: false
+        }
+    }
+
+    func open(url: URL?, inBackground: Bool) {
+        guard let url, Self.isPageURL(url) else { return }
+        onOpenInNewTab?(url, inBackground)
+    }
+
+    func beginDownload(_ download: WKDownload) {
+        downloads[ObjectIdentifier(download)] = download
+    }
+
+    func endDownload(_ download: WKDownload) {
+        downloads[ObjectIdentifier(download)] = nil
+    }
+
+    func fetchFaviconIfNeeded() {
+        guard let pageURL = webView?.url ?? url, let webView, let faviconStore else { return }
+        Task { [weak self] in
+            let image = await faviconStore.favicon(for: pageURL, webView: webView)
+            if let image {
+                self?.favicon = image
+            }
+        }
+    }
 }

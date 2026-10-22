@@ -119,6 +119,21 @@ final class LibraryStore {
         // TODO(worker A): move descendants' section along with a folder.
     }
 
+    /// Puts a hard-deleted `.tabs` item back (closed-tab reopen). The id is kept; the sort key is replaced.
+    @discardableResult
+    func restoreItem(_ item: SidebarItem, at position: Position = .start) -> SidebarItem {
+        var restored = item
+        restored.deletedAt = nil
+        restored.section = .tabs
+        restored.kind = .site
+        restored.parentID = nil
+        restored.sortKey = sortKey(for: position, parentID: nil, section: .tabs, spaceID: item.spaceID, excluding: item.id)
+        restored.modifiedAt = .now
+        items[restored.id] = restored
+        didChange()
+        return restored
+    }
+
     /// Synced items get a tombstone (folders: recursively); `.tabs` items are removed.
     func deleteItem(_ id: UUID) {
         guard let item = items[id] else { return }
