@@ -9,18 +9,38 @@ struct SettingsView: View {
             AppearanceSettingsView()
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
         }
-        .frame(width: 460, height: 280)
+        .frame(width: 460, height: 300)
     }
 }
 
 private struct GeneralSettingsView: View {
     @AppStorage(SearchEngine.defaultsKey) private var searchEngine: SearchEngine = .google
+    @AppStorage(SyncController.enabledDefaultsKey) private var iCloudSyncEnabled = false
+
+    private var iCloudSync: Binding<Bool> {
+        Binding(
+            get: { SyncController.isContainerConfigured && iCloudSyncEnabled },
+            set: { newValue in
+                guard SyncController.isContainerConfigured else { return }
+                iCloudSyncEnabled = newValue
+            }
+        )
+    }
 
     var body: some View {
         Form {
             Picker("Default search engine", selection: $searchEngine) {
                 ForEach(SearchEngine.allCases, id: \.self) { engine in
                     Text(engine.displayName).tag(engine)
+                }
+            }
+
+            Section {
+                Toggle("iCloud Sync (beta)", isOn: iCloudSync)
+                    .disabled(!SyncController.isContainerConfigured)
+            } footer: {
+                if !SyncController.isContainerConfigured {
+                    Text("Requires iCloud container — coming soon")
                 }
             }
         }

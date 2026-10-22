@@ -11,9 +11,9 @@ final class LibraryStore {
         case after(UUID)
     }
 
-    private(set) var profiles: [UUID: Profile] = [:]
-    private(set) var spaces: [UUID: Space] = [:]
-    private(set) var items: [UUID: SidebarItem] = [:]
+    var profiles: [UUID: Profile] = [:]
+    var spaces: [UUID: Space] = [:]
+    var items: [UUID: SidebarItem] = [:]
 
     /// `nil` = in-memory only (tests, previews). Never reads or writes disk.
     let directory: URL?
@@ -311,7 +311,7 @@ final class LibraryStore {
         scheduleSave()
     }
 
-    private func scheduleSave() {
+    func scheduleSave() {
         guard directory != nil else { return }
         isDirty = true
         saveTask?.cancel()

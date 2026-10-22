@@ -42,6 +42,28 @@ struct SortKeyTests {
         #expect(afterSame > "a2")
     }
 
+    @Test func invalidKeysDoNotTrap() {
+        let first = SortKey.between(nil, nil)
+        let second = SortKey.between(first, nil)
+        let badKeys = ["", "M", "nope", "!!!", String(repeating: "A", count: 1) + String(repeating: "0", count: 26)]
+        for bad in badKeys {
+            #expect(!SortKey.isValid(bad))
+            #expect(SortKey.between(bad, nil) == first)
+            #expect(SortKey.between(nil, bad) == first)
+            #expect(SortKey.between(bad, "???") == first)
+            let afterLower = SortKey.between(second, bad)
+            #expect(SortKey.isValid(afterLower))
+            #expect(afterLower == SortKey.between(second, nil))
+            let beforeUpper = SortKey.between(bad, second)
+            #expect(SortKey.isValid(beforeUpper))
+            #expect(beforeUpper == SortKey.between(nil, second))
+            #expect(beforeUpper < second)
+        }
+        #expect(SortKey.isValid(first))
+        #expect(SortKey.isValid("b00"))
+        #expect(!SortKey.isValid("a00"))
+    }
+
     @Test func betweenIsStrictAndOpenEnded() {
         let keys = SortKey.sequence(count: 20)
         for key in keys {
