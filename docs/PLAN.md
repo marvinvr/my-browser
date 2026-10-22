@@ -25,7 +25,7 @@ Opinionated macOS browser, Arc-style. Open source, public GitHub repo. iPhone la
 - Signing: ad-hoc/local first. Developer ID, iCloud container entitlements and notarization are a later step (Tim Apple).
 
 ## Orchestration (Marvin's rules, binding for every agent)
-- **All code is written by Grok High agents. Only Grok High: no Grok xHigh, no Codex, no Claude coding.**
+- **All code is written by Grok High agents. Grok xHigh only for really complex tasks where Grok High clearly fails. No Codex, no Claude coding.**
 - **One Claude lead for the whole project, orchestration only**: plans, writes task prompts, spawns Grok High agents via mmux, waits, hands reviews to another Grok High, reads only short verdicts. It never writes code or project files. Claude usage must stay minimal.
 - Molty: high-level phases, keeps the single Claude lead on track, reports to Marvin.
 - Parallel work = several Grok High agents (own worktrees when files overlap); direct push to main after a Grok High review.
