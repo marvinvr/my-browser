@@ -24,14 +24,16 @@ Opinionated macOS browser, Arc-style. Open source, public GitHub repo. iPhone la
 - Model: SwiftData (local) with a sync layer on CKSyncEngine; or a plain Codable store + CKSyncEngine. Phase 1 lead decides and writes it down in `docs/architecture.md`.
 - Signing: ad-hoc/local first. Developer ID, iCloud container entitlements and notarization are a later step (Tim Apple).
 
-## Orchestration
-- Molty: high-level phases, spawns one Claude (Opus) lead per phase/workstream, reviews results, reports to Marvin.
-- Claude leads: plan their workstream, split it into small clear tasks, delegate the coding to **Grok High** agents via mmux (`mmux new agent "Grok High" --prompt ...`, `mmux wait`), review diffs, integrate, verify (build, run, screenshots). Claude codes itself only for glue/UI taste or when Grok fails twice.
-- Each lead works in its own worktree when running in parallel; merges to main itself after review (direct push to main is fine for this repo).
+## Orchestration (Marvin's rules, binding for every agent)
+- **All code is written by Grok High agents. Only Grok High: no Grok xHigh, no Codex, no Claude coding.**
+- **One Claude lead for the whole project, orchestration only**: plans, writes task prompts, spawns Grok High agents via mmux, waits, hands reviews to another Grok High, reads only short verdicts. It never writes code or project files. Claude usage must stay minimal.
+- Molty: high-level phases, keeps the single Claude lead on track, reports to Marvin.
+- Parallel work = several Grok High agents (own worktrees when files overlap); direct push to main after a Grok High review.
+- Details: AGENTS.md.
 
 ## Phases
 1. **Foundation** (one lead, serial): repo scaffold, XcodeGen, architecture doc, data model (Space, Profile, SidebarItem tree: pinned icon / folder / site / tab), window shell with sidebar + WKWebView tabs, tab switching, Spaces with separate data stores, command bar, basic persistence. Runs and is usable for daily browsing basics.
-2. **Parallel workstreams** (after Phase 1, each its own lead + worktree):
+2. **Parallel workstreams** (after Phase 1, same single Claude lead, each workstream done by Grok High agents in its own worktree):
    - A. Sidebar UX & feel: pinned icon grid, nested folders, drag & drop, context menus, animations, swipe gestures for tabs/spaces, app icon.
    - B. Importers: Chrome/Chromium bookmarks, Arc full import (spaces, pins, folders) with a nice import flow.
    - C. Extensions: WKWebExtension support: install from the Chrome Web Store (download + unpack .crx), from .xpi/.zip/folder, and installed Safari extensions where possible; toolbar buttons in the sidebar, popups, permissions, per-profile enable.
