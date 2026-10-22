@@ -17,8 +17,9 @@ enum DebugSnapshot {
         for name in ["ch.marvinvr.mybrowser.debug.snapshot", "ch.marvinvr.mybrowser.debug.capture"] {
             relays.append(observe(name) { note in
                 let path = note.userInfo?["path"] as? String
+                let window = note.userInfo?["window"] as? String
                 Task { @MainActor in
-                    await DebugSnapshot.capture(to: path)
+                    await DebugSnapshot.capture(to: path, preferring: window)
                 }
             })
         }
@@ -48,6 +49,13 @@ enum DebugSnapshot {
         relays.append(observe("ch.marvinvr.mybrowser.debug.copy") { _ in
             Task { @MainActor in
                 attachedModel?.copyCurrentLink()
+            }
+        })
+        relays.append(observe("ch.marvinvr.mybrowser.debug.addressBar") { note in
+            let raw = (note.userInfo?["position"] as? String)?.lowercased()
+            Task { @MainActor in
+                guard let raw, AddressBarPosition(rawValue: raw) != nil else { return }
+                UserDefaults.standard.set(raw, forKey: AddressBarPosition.defaultsKey)
             }
         })
         relays.append(observe("ch.marvinvr.mybrowser.debug.command") { note in
@@ -80,9 +88,9 @@ enum DebugSnapshot {
     }
 
     @MainActor
-    private static func capture(to path: String?) async {
+    private static func capture(to path: String?, preferring titleHint: String? = nil) async {
         guard let path, path.hasPrefix("/") else { return }
-        guard let window = mainWindow(), let content = window.contentView, content.bounds.width > 1, content.bounds.height > 1 else {
+        guard let window = targetWindow(preferring: titleHint), let content = window.contentView, content.bounds.width > 1, content.bounds.height > 1 else {
             return
         }
         content.layoutSubtreeIfNeeded()
@@ -109,13 +117,19 @@ enum DebugSnapshot {
             return
         }
         content.cacheDisplay(in: bounds, to: cache)
+        // One sidebar image, and only when the window cache left that column blank.
+        // Painting it on top of a cache that already has the column stacks translucent fills.
+        let sidebarLimit = sidebarMaxX(in: content)
+        let sidebar = sidebarRegionHasInk(cache, maxX: sidebarLimit, viewSize: bounds.size)
+            ? []
+            : sidebarImages(in: content, maxX: sidebarLimit)
         for item in savedEffects {
             item.view.material = item.material
             item.view.blendingMode = item.blending
         }
 
         var page: (NSImage, NSRect)?
-        if let webView = model?.selectedTab?.webView, webView.window != nil, webView.bounds.width > 1 {
+        if let webView = model?.selectedTab?.webView, webView.window === window, webView.bounds.width > 1 {
             let configuration = WKSnapshotConfiguration()
             if let shot = try? await webView.takeSnapshot(configuration: configuration) {
                 let frame = webView.convert(webView.bounds, to: content)
@@ -164,7 +178,7 @@ enum DebugSnapshot {
         background.setFill()
         NSRect(origin: .zero, size: bounds.size).fill()
         chrome.draw(in: NSRect(origin: .zero, size: bounds.size), from: .zero, operation: .sourceOver, fraction: 1)
-        for (image, frame) in sidebarCaches(in: content) {
+        for (image, frame) in sidebar {
             image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
         }
         if let (shot, frame) = page {
@@ -204,24 +218,122 @@ enum DebugSnapshot {
         )
     }
 
-    /// Per-view caches of the sidebar column. The root cache leaves that column blank,
-    /// and the toolbar buttons are too small to be caught by a column-sized walk.
-    private static func sidebarCaches(in root: NSView) -> [(NSImage, NSRect)] {
+    /// True when the window cache already drew the sidebar, so a second pass would stack washes.
+    private static func sidebarRegionHasInk(_ rep: NSBitmapImageRep, maxX: CGFloat, viewSize: NSSize) -> Bool {
+        guard viewSize.width > 1, viewSize.height > 1, rep.pixelsWide > 8, rep.pixelsHigh > 8 else { return false }
+        let scaleX = CGFloat(rep.pixelsWide) / viewSize.width
+        let maxPixelX = max(4, min(rep.pixelsWide - 1, Int(maxX * scaleX)))
+        var seen: Set<UInt32> = []
+        let stepX = max(2, maxPixelX / 24)
+        let stepY = max(2, rep.pixelsHigh / 36)
+        for y in stride(from: stepY, to: rep.pixelsHigh, by: stepY) {
+            for x in stride(from: 2, to: maxPixelX, by: stepX) {
+                guard let color = rep.colorAt(x: x, y: y), color.alphaComponent > 0.2 else { continue }
+                let key = (UInt32(color.redComponent * 16) << 8)
+                    | (UInt32(color.greenComponent * 16) << 4)
+                    | UInt32(color.blueComponent * 16)
+                seen.insert(key)
+                if seen.count >= 6 { return true }
+            }
+        }
+        return false
+    }
+
+    /// One image of the sidebar column when that cache has real pixels.
+    /// Otherwise each leaf is drawn once. Ancestors are not also drawn, so a
+    /// translucent fill is not stacked into a solid chip.
+    private static func sidebarImages(in root: NSView, maxX limit: CGFloat) -> [(NSImage, NSRect)] {
+        var best: (image: NSImage, frame: NSRect, area: CGFloat)?
+        for column in sidebarColumns(in: root, maxX: limit) {
+            guard let cached = cacheImage(of: column), visibleFraction(cached.rep) >= 0.08 else { continue }
+            let frame = column.convert(column.bounds, to: root)
+            let area = frame.width * frame.height
+            if best == nil || area > best!.area {
+                best = (cached.image, imageRect(for: frame, in: root), area)
+            }
+        }
+        if let best { return [(best.image, best.frame)] }
+        return sidebarLeaves(in: root, maxX: limit)
+    }
+
+    /// Left edge of the page. Sidebar views sit strictly to the left of it.
+    /// Collapsed, the page starts at the window edge, so the hidden sidebar is skipped.
+    private static func sidebarMaxX(in root: NSView) -> CGFloat {
+        var cardMinX = root.bounds.width
+        func walk(_ view: NSView) {
+            if view is WKWebView {
+                let frame = view.convert(view.bounds, to: root)
+                if frame.width > 200, frame.minX >= 0 {
+                    cardMinX = min(cardMinX, frame.minX)
+                }
+            }
+            for subview in view.subviews { walk(subview) }
+        }
+        walk(root)
+        if cardMinX < root.bounds.width - 80 { return cardMinX - 1 }
+        return min(420, root.bounds.width)
+    }
+
+    /// Tall views that fill the sidebar column and nothing to the right of the page.
+    private static func sidebarColumns(in root: NSView, maxX limit: CGFloat) -> [NSView] {
+        var found: [NSView] = []
+        func walk(_ view: NSView) {
+            if view.isHidden || view.alphaValue <= 0.01 || view is NSVisualEffectView {
+                for subview in view.subviews { walk(subview) }
+                return
+            }
+            let frame = view.convert(view.bounds, to: root)
+            let column = frame.minX < 16 && frame.maxX <= limit + 4
+                && frame.width >= 140 && frame.height > root.bounds.height * 0.7
+            if column { found.append(view) }
+            for subview in view.subviews { walk(subview) }
+        }
+        walk(root)
+        return found
+    }
+
+    /// Leaf caches only. A parent that also draws its children is not included.
+    private static func sidebarLeaves(in root: NSView, maxX limit: CGFloat) -> [(NSImage, NSRect)] {
         var images: [(NSImage, NSRect)] = []
         func walk(_ view: NSView) {
-            let frame = view.convert(view.bounds, to: root)
-            let inSidebar = frame.minX < 420 && frame.maxX < 460 && frame.width > 1
-            if inSidebar, view.bounds.width >= 12, view.bounds.height >= 12, !(view is NSVisualEffectView),
-               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-                view.cacheDisplay(in: view.bounds, to: rep)
-                let image = NSImage(size: view.bounds.size)
-                image.addRepresentation(rep)
-                images.append((image, imageRect(for: frame, in: root)))
+            if view.isHidden || view.alphaValue <= 0.01 { return }
+            if view is NSVisualEffectView {
+                for subview in view.subviews { walk(subview) }
+                return
+            }
+            if view.subviews.isEmpty {
+                let frame = view.convert(view.bounds, to: root)
+                let inSidebar = frame.width >= 4 && frame.height >= 4
+                    && frame.minX >= -2 && frame.maxX <= limit + 1 && frame.minX < limit
+                if inSidebar, let cached = cacheImage(of: view), visibleFraction(cached.rep) >= 0.02 {
+                    images.append((cached.image, imageRect(for: frame, in: root)))
+                }
+                return
             }
             for subview in view.subviews { walk(subview) }
         }
         walk(root)
         return images
+    }
+
+    /// Share of samples that are more than a hairline opaque. A 12% wash counts; clear glass does not.
+    private static func visibleFraction(_ rep: NSBitmapImageRep) -> Double {
+        let width = rep.pixelsWide
+        let height = rep.pixelsHigh
+        if width < 2 || height < 2 { return 0 }
+        var hit = 0
+        var samples = 0
+        let stepX = max(1, width / 32)
+        let stepY = max(1, height / 32)
+        for y in stride(from: 0, to: height, by: stepY) {
+            for x in stride(from: 0, to: width, by: stepX) {
+                samples += 1
+                guard let color = rep.colorAt(x: x, y: y) else { continue }
+                if color.alphaComponent >= 0.04 { hit += 1 }
+            }
+        }
+        guard samples > 0 else { return 0 }
+        return Double(hit) / Double(samples)
     }
 
     private struct OverlayCapture {
@@ -317,8 +429,25 @@ enum DebugSnapshot {
         return found
     }
 
-    private static func mainWindow() -> NSWindow? {
+    private static func targetWindow(preferring titleHint: String?) -> NSWindow? {
         let candidates = NSApp.windows.filter { $0.isVisible && $0.contentView != nil && $0.frame.width > 200 }
+        if let hint = titleHint?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !hint.isEmpty {
+            if let match = candidates.first(where: { window in
+                window.title.lowercased().contains(hint)
+                    || window.identifier?.rawValue.lowercased().contains(hint) == true
+            }) {
+                return match
+            }
+            if hint == "settings" {
+                let settings = candidates.filter { window in
+                    let area = window.frame.width * window.frame.height
+                    return window.frame.width < 700 && window.frame.height < 600 && area > 40_000
+                }
+                if let match = settings.min(by: { $0.frame.width < $1.frame.width }) {
+                    return match
+                }
+            }
+        }
         if let key = NSApp.keyWindow, candidates.contains(where: { $0 === key }) { return key }
         return candidates.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
     }
