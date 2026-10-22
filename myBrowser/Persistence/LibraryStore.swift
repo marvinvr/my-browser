@@ -209,7 +209,7 @@ final class LibraryStore {
 
     // MARK: Private
 
-    private func sortKey(for position: Position, parentID: UUID?, section: SidebarItem.Section, spaceID: UUID, excluding: UUID? = nil) -> String {
+    func sortKey(for position: Position, parentID: UUID?, section: SidebarItem.Section, spaceID: UUID, excluding: UUID? = nil) -> String {
         renormalizeSiblings(parentID: parentID, section: section, spaceID: spaceID, excluding: excluding)
         let siblings = children(of: parentID, section: section, in: spaceID).filter { $0.id != excluding }
         switch position {
@@ -253,7 +253,7 @@ final class LibraryStore {
         }
     }
 
-    private func descendantIDs(of root: UUID, spaceID: UUID) -> [UUID] {
+    func descendantIDs(of root: UUID, spaceID: UUID) -> [UUID] {
         var byParent: [UUID: [UUID]] = [:]
         for item in items.values where item.spaceID == spaceID {
             if let parentID = item.parentID {
@@ -285,7 +285,7 @@ final class LibraryStore {
         didChange([profileID])
     }
 
-    private func performBatch(_ body: () -> Void) {
+    func performBatch(_ body: () -> Void) {
         if batchedChangeIDs != nil {
             body()
             return

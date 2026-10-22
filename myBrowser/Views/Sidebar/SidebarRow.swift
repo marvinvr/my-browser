@@ -10,14 +10,17 @@ struct SidebarRow: View {
     var onNewFolderInside: () -> Void = {}
 
     @Environment(BrowserModel.self) private var model
+    @Environment(SidebarInteraction.self) private var interaction
     @State private var hovering = false
 
     var body: some View {
         let tab = model.tabs[item.id]
         let title = SidebarTitle.text(for: item, tab: tab)
-        let isSelected = model.selectedItemID == item.id
+        let isSelected = model.selectedItemID == item.id && !folderHoldsFocus
+        let isEditing = interaction.editingID == item.id && item.section != .tabs
         let isLoaded = tab?.isLoaded == true
         let icon = tab?.favicon ?? (item.url ?? tab?.url).flatMap { model.favicons.cachedFavicon(for: $0) }
+        let leading = SidebarDropGeometry.rowLeading + CGFloat(depth) * SidebarDropGeometry.indent
 
         HStack(spacing: 0) {
             Button {
@@ -26,16 +29,24 @@ struct SidebarRow: View {
                 HStack(spacing: 8) {
                     FaviconView(image: icon, url: item.url ?? tab?.url, title: title, size: 16)
                         .opacity(isLoaded || isSelected ? 1 : 0.78)
-                    FlatLabel(text: title)
+                    if isEditing {
+                        SidebarInlineField(itemID: item.id, title: item.title)
+                    } else {
+                        FlatLabel(text: title)
+                    }
                     Spacer(minLength: 0)
                 }
-                .padding(.leading, 6 + CGFloat(depth) * 14)
+                .padding(.leading, leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                guard item.section != .tabs else { return }
+                interaction.editingID = item.id
+            })
 
-            if hovering {
+            if hovering, !isEditing {
                 Button {
                     model.close(item.id)
                 } label: {
@@ -66,10 +77,17 @@ struct SidebarRow: View {
                 hovering = false
             }
         }
-        .animation(SidebarMotion.selection, value: hovering)
+        .animation(SidebarMotion.row, value: hovering)
+        .sidebarDragRow(item: item, depth: depth)
         .modifier(SidebarItemMenu(item: item, onRename: onRename, onNewFolderInside: onNewFolderInside))
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    /// The open tab keeps its loaded wash. The selection chip moves to a focused folder.
+    private var folderHoldsFocus: Bool {
+        guard let focus = model.sidebarFocusID else { return false }
+        return model.library.item(focus)?.isFolder == true
     }
 }
 

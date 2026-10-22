@@ -4,9 +4,11 @@ import SwiftUI
 struct TabList: View {
     var spaceID: UUID
     var onRename: (SidebarItem) -> Void
+    var onNewFolder: () -> Void
 
     @Environment(BrowserModel.self) private var model
     @State private var hoveringNewTab = false
+    @State private var newTabToken = UUID()
 
     var body: some View {
         let items = model.library.children(of: nil, section: .tabs, in: spaceID)
@@ -37,17 +39,19 @@ struct TabList: View {
             .onContinuousHover { phase in
                 hoveringNewTab = if case .active = phase { true } else { false }
             }
-            .animation(SidebarMotion.selection, value: hoveringNewTab)
+            .animation(SidebarMotion.row, value: hoveringNewTab)
+            .sidebarDropTarget(.head(spaceID: spaceID, section: .tabs, token: newTabToken))
 
             ForEach(items) { item in
                 SidebarRow(
                     item: item,
                     showsLoadedState: false,
-                    onRename: { onRename(item) }
+                    onRename: { onRename(item) },
+                    onNewFolderInside: onNewFolder
                 )
                 .transition(.opacity.combined(with: .offset(y: -4)))
             }
         }
-        .animation(SidebarMotion.list, value: items.map(\.id))
+        .animation(SidebarMotion.row, value: items.map(\.id))
     }
 }

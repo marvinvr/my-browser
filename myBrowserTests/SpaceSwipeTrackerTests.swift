@@ -175,6 +175,29 @@ struct SpaceSwipeTrackerTests {
         #expect(outside == .tracking(offset: 42))
     }
 
+    @Test func newTouchOutsideWhileTrackingSettles() {
+        var short = tracker(width: 200)
+        #expect(feed(&short, .changed, x: 40, y: 0, time: 0) == .tracking(offset: 40))
+        #expect(feed(&short, .began, time: 1, inside: false) == .settle(offset: 0, action: .none))
+
+        var far = tracker(width: 200)
+        #expect(feed(&far, .changed, x: 80, y: 0, time: 0) == .tracking(offset: 80))
+        #expect(feed(&far, .began, time: 1, inside: false) == .settle(offset: 200, action: .selectPrevious))
+    }
+
+    @Test func interruptWhileTrackingSettles() {
+        var short = tracker(width: 200)
+        _ = feed(&short, .changed, x: 40, y: 0, time: 0)
+        #expect(short.interrupt() == .settle(offset: 0, action: .none))
+
+        var far = tracker(width: 200)
+        _ = feed(&far, .changed, x: 80, y: 0, time: 0)
+        #expect(far.interrupt() == .settle(offset: 200, action: .selectPrevious))
+
+        var idle = tracker()
+        #expect(idle.interrupt() == .passthrough)
+    }
+
     @Test func nextAndPreviousKeepTheirDirectionAcrossAWrap() throws {
         let library = LibraryStore(directory: nil)
         let session = SessionStore(directory: nil)

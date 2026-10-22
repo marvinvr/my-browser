@@ -59,7 +59,8 @@ struct SpaceSwitcher: View {
         .help(space.name)
         .accessibilityLabel(space.name)
         .accessibilityAddTraits(selected ? .isSelected : [])
-        .animation(SidebarMotion.selection, value: selected)
+        .animation(SidebarMotion.row, value: selected)
+        .sidebarDropTarget(.space(space.id))
         .contextMenu {
             Button("Edit…") { editorMode = .edit(space) }
             Button("Delete", role: .destructive) { model.deleteSpace(space.id) }

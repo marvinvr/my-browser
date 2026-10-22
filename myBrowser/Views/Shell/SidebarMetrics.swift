@@ -36,8 +36,10 @@ struct TrafficLightAnchor: Equatable {
 }
 
 enum SidebarMotion {
+    /// One spring for sidebar rows: hover, selection, reorder, and folder expand.
+    static let row = Animation.spring(response: 0.32, dampingFraction: 0.86)
     static let sidebar = Animation.spring(response: 0.38, dampingFraction: 0.88)
     static let space = Animation.spring(response: 0.34, dampingFraction: 0.9)
-    static let selection = Animation.spring(response: 0.28, dampingFraction: 0.82)
-    static let list = Animation.spring(response: 0.32, dampingFraction: 0.86)
+    static let selection = row
+    static let list = row
 }

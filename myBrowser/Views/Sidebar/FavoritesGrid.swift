@@ -5,14 +5,20 @@ import SwiftUI
 struct FavoritesGrid: View {
     var spaceID: UUID
     var onRename: (SidebarItem) -> Void
+    var onNewFolder: () -> Void
 
     @Environment(BrowserModel.self) private var model
+    @State private var emptyToken = UUID()
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 4)
 
     var body: some View {
         let items = model.library.children(of: nil, section: .favorites, in: spaceID)
-        if !items.isEmpty {
+        if items.isEmpty {
+            Color.clear
+                .frame(height: 12)
+                .sidebarDropTarget(.tail(spaceID: spaceID, section: .favorites, token: emptyToken))
+        } else {
             LazyVGrid(columns: columns, spacing: 6) {
                 ForEach(items) { item in
                     tile(item)
@@ -20,7 +26,7 @@ struct FavoritesGrid: View {
             }
             .padding(.top, 4)
             .padding(.bottom, 2)
-            .animation(SidebarMotion.list, value: items.map(\.id))
+            .animation(SidebarMotion.row, value: items.map(\.id))
         }
     }
 
@@ -36,7 +42,8 @@ struct FavoritesGrid: View {
             favicon: icon,
             isSelected: isSelected,
             isLoaded: isLoaded,
-            onRename: { onRename(item) }
+            onRename: { onRename(item) },
+            onNewFolder: onNewFolder
         )
     }
 }
@@ -48,17 +55,26 @@ private struct FavoriteTile: View {
     var isSelected: Bool
     var isLoaded: Bool
     var onRename: () -> Void
+    var onNewFolder: () -> Void
 
     @State private var hovering = false
 
     @Environment(BrowserModel.self) private var model
+    @Environment(SidebarInteraction.self) private var interaction
 
     var body: some View {
         Button {
             model.select(item.id)
         } label: {
-            FaviconView(image: favicon, url: item.url, title: title, size: 18)
-                .opacity(isLoaded || isSelected ? 1 : 0.72)
+            Group {
+                if interaction.editingID == item.id {
+                    SidebarInlineField(itemID: item.id, title: item.title)
+                        .padding(.horizontal, 4)
+                } else {
+                    FaviconView(image: favicon, url: item.url, title: title, size: 18)
+                        .opacity(isLoaded || isSelected ? 1 : 0.72)
+                }
+            }
                 .frame(maxWidth: .infinity)
                 .frame(height: 36)
                 .background {
@@ -73,6 +89,9 @@ private struct FavoriteTile: View {
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture(count: 2).onEnded {
+            interaction.editingID = item.id
+        })
         .help(title)
         .onContinuousHover { phase in
             if case .active = phase {
@@ -81,7 +100,8 @@ private struct FavoriteTile: View {
                 hovering = false
             }
         }
-        .modifier(SidebarItemMenu(item: item, onRename: onRename, onNewFolderInside: {}))
+        .sidebarDragRow(item: item, depth: 0, axis: .horizontal)
+        .modifier(SidebarItemMenu(item: item, onRename: onRename, onNewFolderInside: onNewFolder))
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
