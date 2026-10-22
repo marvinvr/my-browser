@@ -79,14 +79,17 @@ struct MainWindowView: View {
     }
 
     private var contentCard: some View {
-        WebContentView()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: SidebarMetrics.cardCornerRadius, style: .continuous))
-            .shadow(color: Color.black.opacity(0.16), radius: 5, y: 1)
-            .padding(.top, SidebarMetrics.contentInset)
-            .padding(.bottom, SidebarMetrics.contentInset)
-            .padding(.trailing, SidebarMetrics.contentInset)
+        VStack(spacing: 0) {
+            ContentToolbar(traffic: traffic, sidebarVisible: model.session.isSidebarVisible)
+            WebContentView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: SidebarMetrics.cardCornerRadius, style: .continuous))
+        .shadow(color: Color.black.opacity(0.16), radius: 5, y: 1)
+        .padding(.top, SidebarMetrics.contentInset)
+        .padding(.bottom, SidebarMetrics.contentInset)
+        .padding(.trailing, SidebarMetrics.contentInset)
     }
 
     private func resize(translation: CGFloat, ended: Bool) {

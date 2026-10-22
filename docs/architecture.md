@@ -19,7 +19,7 @@ myBrowser/
   Persistence/    LibraryStore (synced data), SessionStore (local window/tab session), JSONFileStorage
   Browser/        BrowserModel (per-window coordinator), BrowserTab (one WKWebView), ProfileManager, FaviconStore
   Views/
-    Shell/        MainWindowView: sidebar + content card layout
+    Shell/        MainWindowView: sidebar + content card, ContentToolbar above the page
     Sidebar/      SidebarView, FavoritesGrid, PinnedTree, TabList, SpaceSwitcher, SidebarRow
     Web/          WebContentView (NSViewRepresentable that swaps the selected tab's WKWebView in)
     CommandBar/   CommandBarView + CommandBarModel (results)
@@ -90,8 +90,10 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 
 - Phase 1: one main window (`Window` scene, id `main`) with one `BrowserModel`. `LibraryStore` and `SessionStore` are app-level singletons owned by the app and injected. Multiple windows (each its own `BrowserModel` sharing the library) come later.
 - Window: hidden title bar, full-size content view, transparent title bar; the traffic lights sit over the sidebar like Arc. `WindowConfigurator` (an `NSViewRepresentable` that grabs `view.window`) applies the AppKit tweaks.
-- Layout (`MainWindowView`): full-height sidebar on the left (behind-window vibrancy / Liquid Glass), web content on the right as a rounded card inset by a few points. The sidebar can be toggled (Cmd+S, like Arc); when hidden the card fills the window.
-- Command bar: a SwiftUI overlay centred over the window (glass panel), not a separate NSPanel.
+- Layout (`MainWindowView`): full-height sidebar on the left (behind-window vibrancy), web content on the right as a rounded card inset by a few points. The sidebar can be toggled (Cmd+S, like Arc); when hidden the card fills the window.
+- Toolbar (`ContentToolbar`): a compact bar (~38pt) across the top of the content card, above the page. It holds back, forward, and reload/stop, plus a Liquid Glass capsule address field that shows the page host. Clicking the field (or Cmd+L) opens the command bar in edit-current mode. A thin progress line runs under the toolbar while the page loads. The sidebar's top row is only the traffic lights and a sidebar-toggle button; favorites start below it. When the sidebar is hidden, the toolbar insets its controls so they clear the traffic lights.
+- Sidebar rows use a flat highlight (soft white in light mode, a lighter fill in dark mode). They do not use `glassEffect`. Space icons share one size; the selected space is a small tinted rounded chip.
+- Command bar: a SwiftUI overlay centred over the window (glass panel), not a separate NSPanel. It opens with a short spring (~0.18s) and closes faster.
 
 ## WebKit management
 
@@ -133,3 +135,4 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 - 2026-10-22: default search engine Google (to be a setting).
 - 2026-10-22: page two-finger swipe = back/forward, sidebar swipe = spaces.
 - 2026-10-22: single window in Phase 1.
+- 2026-10-22: address field and back/forward/reload live in a toolbar above the page. Tabs stay in the sidebar. Sidebar selection is a flat fill, not glass.

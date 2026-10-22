@@ -4,7 +4,6 @@ import SwiftUI
 /// Favorites for one space, four rounded tiles per row.
 struct FavoritesGrid: View {
     var spaceID: UUID
-    var namespace: Namespace.ID
     var onRename: (SidebarItem) -> Void
 
     @Environment(BrowserModel.self) private var model
@@ -37,7 +36,6 @@ struct FavoritesGrid: View {
             favicon: icon,
             isSelected: isSelected,
             isLoaded: isLoaded,
-            namespace: namespace,
             onRename: { onRename(item) }
         )
     }
@@ -49,7 +47,6 @@ private struct FavoriteTile: View {
     var favicon: NSImage?
     var isSelected: Bool
     var isLoaded: Bool
-    var namespace: Namespace.ID
     var onRename: () -> Void
 
     @State private var hovering = false
@@ -69,10 +66,8 @@ private struct FavoriteTile: View {
                         isSelected: isSelected,
                         isHovering: hovering,
                         isLoaded: isLoaded,
-                        namespace: namespace,
                         baseOpacity: 0.04,
-                        loadedOpacity: 0.12,
-                        hoverOpacity: 0.09
+                        loadedOpacity: 0.12
                     )
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))

@@ -11,10 +11,15 @@ enum SidebarMetrics {
     static let spaceTintOpacity: Double = 0.08
     static let navRowHeight: CGFloat = 28
     static let rowHeight: CGFloat = 30
-    static let selectionGlassID = "sidebar-selection"
+    /// Back/forward/address bar above the page, including the progress line.
+    static let toolbarHeight: CGFloat = 38
+    /// Glass capsules inside the toolbar (navigation cluster and address field).
+    static let toolbarControl: CGFloat = 26
+    /// Hairline under the toolbar; the load progress draws in this band.
+    static let progressHeight: CGFloat = 2
 }
 
-/// Traffic-light geometry in the content view, so the toolbar row can share their line.
+/// Traffic-light geometry in the content view, so chrome can clear the buttons.
 struct TrafficLightAnchor: Equatable {
     var clearance: CGFloat
     var centerFromTop: CGFloat
