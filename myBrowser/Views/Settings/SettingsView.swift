@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings scene (⌘,). General holds the search engine; Appearance holds the address bar.
+/// Settings scene (⌘,). General holds the search engine; Appearance holds the address bar and Dock icon.
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -30,6 +30,7 @@ private struct GeneralSettingsView: View {
 
 private struct AppearanceSettingsView: View {
     @AppStorage(AddressBarPosition.defaultsKey) private var addressBarPosition: AddressBarPosition = .top
+    @AppStorage(AppIconVariant.defaultsKey) private var appIcon: AppIconVariant = .light
 
     var body: some View {
         Form {
@@ -39,7 +40,17 @@ private struct AppearanceSettingsView: View {
                 }
             }
             .pickerStyle(.radioGroup)
+
+            Picker("App icon", selection: $appIcon) {
+                ForEach(AppIconVariant.allCases) { variant in
+                    Text(variant.label).tag(variant)
+                }
+            }
+            .pickerStyle(.radioGroup)
         }
         .formStyle(.grouped)
+        .onChange(of: appIcon) { _, variant in
+            AppIconApplier.apply(variant)
+        }
     }
 }

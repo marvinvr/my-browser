@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppIconApplier.apply()
         updater.start()
         #if DEBUG
         applyDebugAppearance()

@@ -22,7 +22,7 @@ myBrowser/
     Shell/        MainWindowView: sidebar + content card, ContentToolbar above the page or in the sidebar
     Toolbar/      AddressField, NavigationButtons, CopyLinkButton (shared by the top bar and the sidebar address bar)
     Sidebar/      SidebarView, SpaceSwipeContainer, FavoritesGrid, PinnedTree, TabList, SpaceSwitcher, SidebarRow
-    Settings/     Settings scene: General (search engine), Appearance (address bar position)
+    Settings/     Settings scene: General (search engine), Appearance (address bar position, Dock icon)
     Web/          WebContentView (NSViewRepresentable that swaps the selected tab's WKWebView in)
     CommandBar/   CommandBarView + CommandBarModel (results)
   Resources/      Assets.xcassets
@@ -91,7 +91,7 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 ## Window / scene structure
 
 - Phase 1: one main window (`Window` scene, id `main`) with one `BrowserModel`. `LibraryStore` and `SessionStore` are app-level singletons owned by the app and injected. Multiple windows (each its own `BrowserModel` sharing the library) come later.
-- Settings (`Settings` scene, ⌘,): **General** — default search engine (`SearchEngine.defaultsKey`). **Appearance** — address bar position (`AddressBarPosition.defaultsKey`: `top` default, or `sidebar`). Both are `@AppStorage` over `UserDefaults`. Grouped `Form`.
+- Settings (`Settings` scene, ⌘,): **General** — default search engine (`SearchEngine.defaultsKey`). **Appearance** — address bar position (`AddressBarPosition.defaultsKey`: `top` default, or `sidebar`) and the Dock icon (`AppIconVariant.defaultsKey`: `light` default, or `dark`). Each is `@AppStorage` over `UserDefaults`. Grouped `Form`.
 - Window: hidden title bar, full-size content view, transparent title bar; the traffic lights sit over the sidebar like Arc. `WindowConfigurator` (an `NSViewRepresentable` that grabs `view.window`) applies the AppKit tweaks and moves `standardWindowButton`s so their vertical centre matches the toolbar. It re-applies that position on resize and when leaving fullscreen (AppKit resets the buttons). While fullscreen is active the system owns the buttons.
 - Layout (`MainWindowView`): full-height sidebar on the left (behind-window vibrancy), web content on the right as a rounded card inset by a few points. The sidebar toggles with ⌘S (View menu "Hide Sidebar" / "Show Sidebar", plus a `sidebar.left` button). When hidden, the card fills the window edge to edge: no inset, no shadow, so the sidebar material does not leave a frame. Collapse and the address-bar setting share one spring (`SidebarMotion.sidebar`). The traffic-light centre stays on `SidebarMetrics.chromeCenterFromTop` in both modes, so the lights do not jump.
 - Toolbar (`ContentToolbar`): `NavigationButtons` (back, forward, reload/stop) and `AddressField` (with `CopyLinkButton`) read `BrowserModel` from the environment and take an optional `ToolbarChrome`. The resting field shows `URLDisplay`: host without scheme or `www.`, up to three path segments, no query or fragment. Clicking it (or Cmd+L) opens the command bar in edit-current mode with the full URL selected. ⌘R is handled only by `KeyMonitor` (Ctrl+R does nothing; key repeat does not reload again). ⌘⇧C copies the current URL. A thin progress line runs under the bar while the page loads.
@@ -145,3 +145,4 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 - 2026-10-22: the content toolbar tints from the page theme colour and shows a formatted URL. ⌘⇧C copies the link.
 - 2026-10-22: collapsed sidebar draws the content card edge to edge. Traffic lights stay vertically centred on the toolbar in both modes.
 - 2026-10-22: bundle id `ch.marvinvr.mybrowser`; Sparkle feed on `main`; releases via `scripts/release.sh`.
+- 2026-10-23: Dock icon is the light AppIcon unless Settings → Appearance picks dark. Applied at launch and on change with `NSApp.applicationIconImage` only. `NSWorkspace.setIcon` is not used; it modifies the signed bundle and breaks the code signature and Sparkle updates.

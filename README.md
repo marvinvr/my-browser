@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="design/icon/mybrowser-icon-light-1024.png" alt="myBrowser" width="128">
+</p>
+
 # myBrowser
 
 An opinionated, native macOS browser built on WebKit. Vertical sidebar with pinned sites, nested folders and Spaces (each with its own profile), iCloud sync, Safari web extensions, and import from Chrome and Arc.
