@@ -15,6 +15,9 @@ myBrowser: native macOS browser (Swift 6, SwiftUI + AppKit, WebKit). Product + p
 - Keep the lead cheap: medium effort, no reading of large files or full diffs. Let a separate Grok High agent do code reviews (`git diff`, build, run, screenshots) and report a short verdict; the lead reads only those summaries and `git log --stat`.
 - Use `mmux wait` in the foreground (no polling loops, no repeated status reads). Long-running waits are fine and cost nothing.
 
+## Cleanup
+- Keep mmux tidy at natural points (after each merge, not mid-work): close finished Grok agents (`mmux close sX`), remove their worktrees (`mmux worktree rm <branch>`), delete merged branches.
+
 ## Rules
 - XcodeGen: edit `project.yml`, never hand-edit the generated project. Run `xcodegen` after adding files.
 - Build must pass before every push: `xcodegen && xcodebuild -scheme myBrowser -destination 'platform=macOS' build`.
