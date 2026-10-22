@@ -12,10 +12,53 @@ enum DebugSnapshot {
     static func install(model: BrowserModel) {
         attachedModel = model
         guard relays.isEmpty else { return }
-        relays.append(observe("ch.marvinvr.mybrowser.debug.snapshot") { note in
-            let path = note.userInfo?["path"] as? String
+        // `.capture` is the same shot as `.snapshot`. Snapshot scripts can use it when another
+        // debug build is already listening for `.snapshot`.
+        for name in ["ch.marvinvr.mybrowser.debug.snapshot", "ch.marvinvr.mybrowser.debug.capture"] {
+            relays.append(observe(name) { note in
+                let path = note.userInfo?["path"] as? String
+                Task { @MainActor in
+                    await DebugSnapshot.capture(to: path)
+                }
+            })
+        }
+        relays.append(observe("ch.marvinvr.mybrowser.debug.open") { note in
+            let raw = note.userInfo?["url"] as? String
             Task { @MainActor in
-                await DebugSnapshot.capture(to: path)
+                guard let raw, let url = URL(string: raw) else { return }
+                attachedModel?.openInCurrentTab(url)
+            }
+        })
+        relays.append(observe("ch.marvinvr.mybrowser.debug.reload") { _ in
+            Task { @MainActor in
+                attachedModel?.selectedTab?.reload()
+            }
+        })
+        relays.append(observe("ch.marvinvr.mybrowser.debug.appearance") { note in
+            let mode = (note.userInfo?["mode"] as? String)?.lowercased()
+            Task { @MainActor in
+                switch mode {
+                case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+                case "light": NSApp.appearance = NSAppearance(named: .aqua)
+                default: break
+                }
+                attachedModel?.selectedTab?.refreshThemeColor()
+            }
+        })
+        relays.append(observe("ch.marvinvr.mybrowser.debug.copy") { _ in
+            Task { @MainActor in
+                attachedModel?.copyCurrentLink()
+            }
+        })
+        relays.append(observe("ch.marvinvr.mybrowser.debug.command") { note in
+            let mode = note.userInfo?["mode"] as? String
+            Task { @MainActor in
+                guard let model = attachedModel else { return }
+                switch mode {
+                case "new": model.showCommandBar(.newTab)
+                case "hide": model.hideCommandBar()
+                default: model.showCommandBar(.editCurrent)
+                }
             }
         })
     }

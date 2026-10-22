@@ -60,6 +60,8 @@ final class BrowserModel {
     private(set) var canGoBack = false
     private(set) var canGoForward = false
     private(set) var canReload = false
+    /// Bumped when the current page URL is copied, so address fields can flash a checkmark.
+    private(set) var linkCopyGeneration = 0
 
     /// Sites in sidebar order for the current space: favorites, pinned (depth-first, expanded folders only), tabs.
     var navigableItems: [SidebarItem] {
@@ -307,6 +309,13 @@ final class BrowserModel {
     func toggleSidebar() { session.isSidebarVisible.toggle() }
     func showCommandBar(_ mode: CommandBarMode) { commandBarMode = mode }
     func hideCommandBar() { commandBarMode = nil }
+
+    /// Copies the selected tab's real URL. No-op when there is nothing to copy.
+    func copyCurrentLink() {
+        guard let url = selectedTab?.url, BrowserTab.isPageURL(url) else { return }
+        SidebarClipboard.copy(url)
+        linkCopyGeneration &+= 1
+    }
 
     /// window.open / target=_blank. The new web view uses `configuration` unchanged, is inserted at the top of `.tabs`, and is selected.
     @discardableResult
