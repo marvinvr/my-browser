@@ -20,10 +20,14 @@ final class BrowserTab: Identifiable {
     private(set) var isLoaded = false
     @ObservationIgnored private(set) var webView: WKWebView?
 
-    /// Called when the page wants a new tab (target=_blank, window.open, Cmd-click). `inBackground` for Cmd-click.
+    /// Called when the page wants a new tab (Cmd-click). `inBackground` is true.
     @ObservationIgnored var onOpenInNewTab: ((URL, _ inBackground: Bool) -> Void)?
+    /// window.open / target=_blank. Return a web view created with the passed configuration.
+    @ObservationIgnored var onCreateWebView: ((WKWebViewConfiguration, URL?) -> WKWebView?)?
     /// Called when title or URL change, so the model can mirror them into the sidebar item.
     @ObservationIgnored var onStateChange: ((BrowserTab) -> Void)?
+    /// Called when back/forward availability changes, so menus can track the selected tab.
+    @ObservationIgnored var onNavigationChange: ((BrowserTab) -> Void)?
     @ObservationIgnored var faviconStore: FaviconStore?
 
     @ObservationIgnored private let initialURL: URL?
@@ -43,21 +47,23 @@ final class BrowserTab: Identifiable {
         self.storedInteractionState = interactionState
     }
 
+    /// Owns a web view WebKit already created (window.open / target=_blank). Does not load `url`.
+    init(id: UUID, profileID: UUID, title: String, url: URL?, adopting webView: WKWebView) {
+        self.id = id
+        self.profileID = profileID
+        self.url = url
+        self.title = title
+        self.initialURL = nil
+        self.storedInteractionState = nil
+        attach(webView)
+    }
+
     /// Creates the web view (restoring `interactionState` or loading the initial URL) if needed.
     func loadIfNeeded(using profiles: ProfileManager) {
         guard webView == nil else { return }
 
         let webView = WKWebView(frame: .zero, configuration: profiles.configuration(for: profileID))
-        webView.allowsBackForwardNavigationGestures = true
-        webView.allowsMagnification = true
-        webView.isInspectable = true
-        let webDelegate = TabWebDelegate(tab: self)
-        self.webDelegate = webDelegate
-        webView.navigationDelegate = webDelegate
-        webView.uiDelegate = webDelegate
-        observe(webView)
-        self.webView = webView
-        isLoaded = true
+        attach(webView)
 
         if let pendingURL {
             self.pendingURL = nil
@@ -69,6 +75,19 @@ final class BrowserTab: Identifiable {
         }
 
         useCachedFavicon()
+    }
+
+    private func attach(_ webView: WKWebView) {
+        webView.allowsBackForwardNavigationGestures = true
+        webView.allowsMagnification = true
+        webView.isInspectable = true
+        let webDelegate = TabWebDelegate(tab: self)
+        self.webDelegate = webDelegate
+        webView.navigationDelegate = webDelegate
+        webView.uiDelegate = webDelegate
+        observe(webView)
+        self.webView = webView
+        isLoaded = true
     }
 
     /// Shows a previously cached icon immediately, before the page finishes loading.
@@ -119,26 +138,39 @@ final class BrowserTab: Identifiable {
 
     private func observe(_ webView: WKWebView) {
         observations = [
-            bind(webView, \.title) { tab, view in tab.noteTitle(view.title) },
-            bind(webView, \.url) { tab, view in tab.noteURL(view.url) },
-            bind(webView, \.isLoading) { tab, view in tab.noteLoading(view.isLoading) },
-            bind(webView, \.estimatedProgress) { tab, view in tab.noteProgress(view.estimatedProgress) },
-            bind(webView, \.canGoBack) { tab, view in tab.noteCanGoBack(view.canGoBack) },
-            bind(webView, \.canGoForward) { tab, view in tab.noteCanGoForward(view.canGoForward) },
+            bind(webView, \.title) { .title($0) },
+            bind(webView, \.url) { .url($0) },
+            bind(webView, \.isLoading) { .loading($0) },
+            bind(webView, \.estimatedProgress) { .progress($0) },
+            bind(webView, \.canGoBack) { .back($0) },
+            bind(webView, \.canGoForward) { .forward($0) },
         ]
     }
 
-    /// KVO callbacks are `@Sendable`. WebKit delivers them on the main thread; hop back onto the actor there.
-    private func bind<Value>(
+    /// KVO's callback is `@Sendable` and is not guaranteed to be on the main actor. Copy the value, then hop.
+    private func bind<Value: Sendable>(
         _ webView: WKWebView,
         _ keyPath: KeyPath<WKWebView, Value>,
-        apply: @escaping @MainActor (BrowserTab, WKWebView) -> Void
+        map: @escaping @Sendable (Value) -> Observed
     ) -> NSKeyValueObservation {
-        webView.observe(keyPath, options: [.initial, .new]) { [weak self] view, _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                apply(self, view)
+        let box = TabBox(self)
+        return webView.observe(keyPath, options: [.initial, .new]) { _, change in
+            guard let value = change.newValue else { return }
+            let observed = map(value)
+            Task { @MainActor in
+                box.tab?.apply(observed)
             }
+        }
+    }
+
+    private func apply(_ observed: Observed) {
+        switch observed {
+        case .title(let value): noteTitle(value)
+        case .url(let value): noteURL(value)
+        case .loading(let value): noteLoading(value)
+        case .progress(let value): noteProgress(value)
+        case .back(let value): noteCanGoBack(value)
+        case .forward(let value): noteCanGoForward(value)
         }
     }
 
@@ -172,11 +204,13 @@ final class BrowserTab: Identifiable {
     private func noteCanGoBack(_ value: Bool) {
         guard canGoBack != value else { return }
         canGoBack = value
+        onNavigationChange?(self)
     }
 
     private func noteCanGoForward(_ value: Bool) {
         guard canGoForward != value else { return }
         canGoForward = value
+        onNavigationChange?(self)
     }
 
     static func isPageURL(_ url: URL) -> Bool {
@@ -189,6 +223,11 @@ final class BrowserTab: Identifiable {
     func open(url: URL?, inBackground: Bool) {
         guard let url, Self.isPageURL(url) else { return }
         onOpenInNewTab?(url, inBackground)
+    }
+
+    /// WebKit calls this synchronously. The returned view must be built with `configuration`.
+    func createWebView(configuration: WKWebViewConfiguration, url: URL?) -> WKWebView? {
+        onCreateWebView?(configuration, url)
     }
 
     func beginDownload(_ download: WKDownload) {
@@ -208,4 +247,19 @@ final class BrowserTab: Identifiable {
             }
         }
     }
+}
+
+/// Sendable stand-in for `weak self` inside the KVO callback.
+private final class TabBox: @unchecked Sendable {
+    weak var tab: BrowserTab?
+    init(_ tab: BrowserTab) { self.tab = tab }
+}
+
+private enum Observed: Sendable {
+    case title(String?)
+    case url(URL?)
+    case loading(Bool)
+    case progress(Double)
+    case back(Bool)
+    case forward(Bool)
 }

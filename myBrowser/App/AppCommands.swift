@@ -35,14 +35,11 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(after: .sidebar) {
-            Button("Reload") { model.selectedTab?.reload() }
-                .keyboardShortcut("r")
-            Button("Back") { model.selectedTab?.goBack() }
-                .keyboardShortcut("[")
-                .disabled(model.selectedTab?.canGoBack != true)
-            Button("Forward") { model.selectedTab?.goForward() }
-                .keyboardShortcut("]")
-                .disabled(model.selectedTab?.canGoForward != true)
+            // `Commands` does not refresh when a tab's flags change. Each item is a view
+            // that reads the focused scene value, which does invalidate menu items.
+            ReloadCommand(model: model)
+            BackCommand(model: model)
+            ForwardCommand(model: model)
         }
 
         CommandMenu("Tabs") {
@@ -66,5 +63,152 @@ struct AppCommands: Commands {
             Button("Previous Space") { model.selectPreviousSpace() }
                 .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
         }
+    }
+}
+
+/// SwiftUI builds Back/Forward/Reload once. `menu.update()` then writes that stale
+/// `disabled` flag back onto the items. Re-apply after SwiftUI, including in `menuWillOpen`.
+@MainActor
+enum NavigationCommands {
+    static func apply(_ model: BrowserModel) {
+        guard let menu = NSApp.mainMenu else { return }
+        func walk(_ menu: NSMenu) {
+            var ownsNavigation = false
+            for item in menu.items {
+                switch item.title {
+                case "Reload":
+                    item.isEnabled = model.canReload
+                    ownsNavigation = true
+                case "Back":
+                    item.isEnabled = model.canGoBack
+                    ownsNavigation = true
+                case "Forward":
+                    item.isEnabled = model.canGoForward
+                    ownsNavigation = true
+                default:
+                    break
+                }
+                if let submenu = item.submenu {
+                    walk(submenu)
+                }
+            }
+            if ownsNavigation {
+                NavigationMenuFixer.shared.install(on: menu, model: model)
+            }
+        }
+        walk(menu)
+    }
+}
+
+@MainActor
+final class NavigationMenuFixer: NSObject, NSMenuDelegate {
+    static let shared = NavigationMenuFixer()
+    private var prior: NSMenuDelegate?
+    private weak var model: BrowserModel?
+
+    func install(on menu: NSMenu, model: BrowserModel) {
+        self.model = model
+        guard menu.delegate !== self else { return }
+        prior = menu.delegate
+        menu.delegate = self
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        prior?.menuNeedsUpdate?(menu)
+        reapply(menu)
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        prior?.menuWillOpen?(menu)
+        reapply(menu)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        prior?.menuDidClose?(menu)
+    }
+
+    /// `menu.update()` validates each item against its target and puts SwiftUI's stale
+    /// disabled flag back. Owning the target makes that validation read the model,
+    /// so shortcuts work without opening the menu.
+    @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.title {
+        case "Reload": return model?.canReload == true
+        case "Back": return model?.canGoBack == true
+        case "Forward": return model?.canGoForward == true
+        default: return true
+        }
+    }
+
+    @objc func performItem(_ item: NSMenuItem) {
+        switch item.title {
+        case "Reload": model?.selectedTab?.reload()
+        case "Back": model?.selectedTab?.goBack()
+        case "Forward": model?.selectedTab?.goForward()
+        default: break
+        }
+    }
+
+    private func reapply(_ menu: NSMenu) {
+        guard let model else { return }
+        for item in menu.items {
+            switch item.title {
+            case "Reload": item.isEnabled = model.canReload
+            case "Back": item.isEnabled = model.canGoBack
+            case "Forward": item.isEnabled = model.canGoForward
+            default: continue
+            }
+            item.target = self
+            item.action = #selector(performItem(_:))
+        }
+    }
+}
+
+struct BrowserNavigationState: Equatable {
+    var canGoBack: Bool
+    var canGoForward: Bool
+    var canReload: Bool
+}
+
+private struct BrowserNavigationStateKey: FocusedValueKey {
+    typealias Value = BrowserNavigationState
+}
+
+extension FocusedValues {
+    var browserNavigation: BrowserNavigationState? {
+        get { self[BrowserNavigationStateKey.self] }
+        set { self[BrowserNavigationStateKey.self] = newValue }
+    }
+}
+
+private struct ReloadCommand: View {
+    var model: BrowserModel
+    @FocusedValue(\.browserNavigation) private var navigation
+
+    var body: some View {
+        Button("Reload") { model.selectedTab?.reload() }
+            .keyboardShortcut("r")
+            .disabled(navigation?.canReload != true)
+    }
+}
+
+private struct BackCommand: View {
+    var model: BrowserModel
+    @FocusedValue(\.browserNavigation) private var navigation
+
+    var body: some View {
+        Button("Back") { model.selectedTab?.goBack() }
+            .keyboardShortcut("[")
+            .disabled(navigation?.canGoBack != true)
+    }
+}
+
+private struct ForwardCommand: View {
+    var model: BrowserModel
+    @FocusedValue(\.browserNavigation) private var navigation
+
+    var body: some View {
+        Button("Forward") { model.selectedTab?.goForward() }
+            .keyboardShortcut("]")
+            .disabled(navigation?.canGoForward != true)
     }
 }

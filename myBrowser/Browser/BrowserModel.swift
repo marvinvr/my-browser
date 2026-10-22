@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import WebKit
 
 /// Per-window coordinator: selected space and tab, live tabs, and every user action
 /// (menus, shortcuts, sidebar, command bar call into this).
@@ -46,6 +47,12 @@ final class BrowserModel {
     var selectedItemID: UUID? { session.selectedItemBySpace[selectedSpaceID] }
     var selectedTab: BrowserTab? { selectedItemID.flatMap { tabs[$0] } }
 
+    /// Menu enablement for the selected tab. Stored here so command items observe this model,
+    /// not a nested tab that `Commands` does not track.
+    private(set) var canGoBack = false
+    private(set) var canGoForward = false
+    private(set) var canReload = false
+
     /// Sites in sidebar order for the current space: favorites, pinned (depth-first, expanded folders only), tabs.
     var navigableItems: [SidebarItem] {
         navigableItems(in: selectedSpaceID)
@@ -59,6 +66,8 @@ final class BrowserModel {
         if session.selectedSpaceID != id { session.selectedSpaceID = id }
         if let itemID = session.selectedItemBySpace[id] {
             select(itemID)
+        } else {
+            refreshNavigationState()
         }
     }
 
@@ -106,6 +115,7 @@ final class BrowserModel {
             session.selectedItemBySpace[item.spaceID] = itemID
         }
         ensureTab(for: item).loadIfNeeded(using: profiles)
+        refreshNavigationState()
     }
 
     /// Opens `url` in a new `.tabs` item at the top of the current space. Background leaves the selection alone.
@@ -160,6 +170,7 @@ final class BrowserModel {
             select(neighbour)
         } else {
             session.selectedItemBySpace[spaceID] = nil
+            if spaceID == selectedSpaceID { refreshNavigationState() }
         }
     }
 
@@ -184,6 +195,7 @@ final class BrowserModel {
             select(replacement)
         } else {
             session.selectedItemBySpace[spaceID] = nil
+            if spaceID == selectedSpaceID { refreshNavigationState() }
         }
     }
 
@@ -295,6 +307,35 @@ final class BrowserModel {
     func showCommandBar(_ mode: CommandBarMode) { commandBarMode = mode }
     func hideCommandBar() { commandBarMode = nil }
 
+    /// window.open / target=_blank. The new web view uses `configuration` unchanged, is inserted at the top of `.tabs`, and is selected.
+    @discardableResult
+    func presentPopup(configuration: WKWebViewConfiguration, url: URL?, spaceID: UUID) -> WKWebView? {
+        guard library.space(spaceID) != nil else { return nil }
+        let pageURL = url.flatMap { BrowserTab.isPageURL($0) ? $0 : nil }
+        let title = pageURL.map { Self.fallbackTitle(for: $0) } ?? "New Tab"
+        let item = library.addItem(
+            spaceID: spaceID,
+            section: .tabs,
+            kind: .site,
+            title: title,
+            url: pageURL,
+            at: .start
+        )
+        let profileID = library.space(spaceID)?.profileID ?? spaceID
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let tab = BrowserTab(id: item.id, profileID: profileID, title: title, url: pageURL, adopting: webView)
+        wire(tab, spaceID: spaceID)
+        tabs[item.id] = tab
+        if selectedSpaceID != spaceID {
+            selectedSpaceID = spaceID
+            if session.selectedSpaceID != spaceID {
+                session.selectedSpaceID = spaceID
+            }
+        }
+        select(item.id)
+        return tab.webView
+    }
+
     /// Persist tab interaction states and flush stores (app termination).
     func saveState() {
         for (id, tab) in tabs where tab.isLoaded {
@@ -338,17 +379,38 @@ final class BrowserModel {
             title: item.title,
             interactionState: session.interactionStates[item.id]
         )
+        wire(tab, spaceID: item.spaceID)
+        tabs[item.id] = tab
+        return tab
+    }
+
+    private func wire(_ tab: BrowserTab, spaceID: UUID) {
         tab.faviconStore = favicons
         tab.useCachedFavicon()
-        let spaceID = item.spaceID
         tab.onOpenInNewTab = { [weak self] url, inBackground in
             self?.openInNewTab(url, spaceID: spaceID, inBackground: inBackground)
+        }
+        tab.onCreateWebView = { [weak self] configuration, url in
+            self?.presentPopup(configuration: configuration, url: url, spaceID: spaceID)
         }
         tab.onStateChange = { [weak self] tab in
             self?.mirror(tab)
         }
-        tabs[item.id] = tab
-        return tab
+        tab.onNavigationChange = { [weak self] tab in
+            guard tab.id == self?.selectedItemID else { return }
+            self?.refreshNavigationState()
+        }
+    }
+
+    private func refreshNavigationState() {
+        let tab = selectedTab
+        let back = tab?.canGoBack == true
+        let forward = tab?.canGoForward == true
+        let reload = tab != nil
+        if canGoBack != back { canGoBack = back }
+        if canGoForward != forward { canGoForward = forward }
+        if canReload != reload { canReload = reload }
+        NavigationCommands.apply(self)
     }
 
     /// Tabs mirror the live URL and title. Pinned and favorite items keep the title and URL the user saved.

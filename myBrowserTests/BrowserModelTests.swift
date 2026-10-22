@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import WebKit
 @testable import myBrowser
 
 @MainActor
@@ -195,5 +196,32 @@ struct BrowserModelTests {
         model.deleteSpace(work.id)
         #expect(library.space(work.id) != nil)
         #expect(model.selectedSpaceID == work.id)
+    }
+
+    @Test func popupWebViewIsASelectedTab() throws {
+        let (model, library, _) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        #expect(model.canReload == false)
+
+        let configuration = WKWebViewConfiguration()
+        let webView = model.presentPopup(
+            configuration: configuration,
+            url: URL(string: "https://example.com/oauth"),
+            spaceID: spaceID
+        )
+        let item = try #require(library.children(of: nil, section: .tabs, in: spaceID).first)
+        #expect(webView != nil)
+        #expect(model.selectedItemID == item.id)
+        #expect(model.tabs[item.id]?.webView === webView)
+        #expect(item.url?.host == "example.com")
+        #expect(model.canReload == true)
+        #expect(model.canGoBack == false)
+
+        let blank = model.presentPopup(configuration: WKWebViewConfiguration(), url: nil, spaceID: spaceID)
+        #expect(blank != nil)
+        #expect(model.selectedTab?.webView === blank)
+        #expect(model.selectedTab?.url == nil)
+        #expect(library.item(model.selectedItemID ?? UUID())?.title == "New Tab")
+        #expect(library.children(of: nil, section: .tabs, in: spaceID).count == 2)
     }
 }

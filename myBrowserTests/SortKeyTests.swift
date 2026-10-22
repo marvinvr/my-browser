@@ -31,6 +31,17 @@ struct SortKeyTests {
         #expect(SortKey.between(nil, prefixed[62]) == "az")
     }
 
+    @Test func equalOrOutOfOrderKeysDoNotTrap() {
+        let lower = SortKey.between(nil, nil)
+        let upper = SortKey.between(lower, nil)
+        let afterEqual = SortKey.between(lower, lower)
+        #expect(afterEqual > lower)
+        let afterReversed = SortKey.between(upper, lower)
+        #expect(afterReversed > upper)
+        let afterSame = SortKey.between("a2", "a2")
+        #expect(afterSame > "a2")
+    }
+
     @Test func betweenIsStrictAndOpenEnded() {
         let keys = SortKey.sequence(count: 20)
         for key in keys {

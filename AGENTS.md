@@ -23,6 +23,7 @@ myBrowser: native macOS browser (Swift 6, SwiftUI + AppKit, WebKit). Product + p
 - Build must pass before every push: `xcodegen && xcodebuild -scheme myBrowser -destination 'platform=macOS' build`.
 - Direct pushes to `main` are fine. `git fetch && git rebase` before pushing; check staged files (several agents share the repo).
 - UI: native macOS look, Liquid Glass, subtle, minimal. Smooth spring animations. Verify UI changes with screenshots before pushing (run the app, `screencapture`). Nothing over the top.
+- Agents verify UI with `scripts/snapshot.sh`.
 - Never commit personal data. Marvin's real Arc data (`~/Library/Application Support/Arc/StorableSidebar.json`) may be READ locally to test the importer, but tests use small anonymised fixtures.
 - No signing/notarization/App Store work: local builds only (Developer ID + iCloud entitlements come later).
 - Commits: short imperative subject, no Co-Authored-By trailers.

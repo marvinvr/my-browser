@@ -32,6 +32,11 @@ struct MainWindowView: View {
             WindowConfigurator(anchor: $traffic)
         }
         .overlay { CommandBarOverlay() }
+        .focusedSceneValue(\.browserNavigation, BrowserNavigationState(
+            canGoBack: model.canGoBack,
+            canGoForward: model.canGoForward,
+            canReload: model.canReload
+        ))
         .onAppear {
             let clamped = min(SidebarMetrics.maxWidth, max(SidebarMetrics.minWidth, storedSidebarWidth))
             if clamped != storedSidebarWidth {

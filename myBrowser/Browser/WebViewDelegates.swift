@@ -16,10 +16,9 @@ final class TabWebDelegate: NSObject, WKUIDelegate, WKNavigationDelegate, WKDown
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        // Returning nil and opening the URL ourselves keeps the new page on our tab model.
-        let inBackground = navigationAction.modifierFlags.contains(.command)
-        tab?.open(url: navigationAction.request.url, inBackground: inBackground)
-        return nil
+        // Cmd-click is cancelled in decidePolicy. This is window.open / target=_blank:
+        // hand WebKit a view created with the configuration it passed, so window.opener works.
+        tab?.createWebView(configuration: configuration, url: navigationAction.request.url)
     }
 
     func webView(

@@ -210,6 +210,7 @@ final class LibraryStore {
     // MARK: Private
 
     private func sortKey(for position: Position, parentID: UUID?, section: SidebarItem.Section, spaceID: UUID, excluding: UUID? = nil) -> String {
+        renormalizeSiblings(parentID: parentID, section: section, spaceID: spaceID, excluding: excluding)
         let siblings = children(of: parentID, section: section, in: spaceID).filter { $0.id != excluding }
         switch position {
         case .start:
@@ -222,6 +223,19 @@ final class LibraryStore {
         case .after(let id):
             guard let index = siblings.firstIndex(where: { $0.id == id }) else { return SortKey.between(siblings.last?.sortKey, nil) }
             return SortKey.between(siblings[index].sortKey, index + 1 < siblings.count ? siblings[index + 1].sortKey : nil)
+        }
+    }
+
+    /// Rewrites a sibling run whose keys collide or run backwards, in current display order.
+    /// `children` stays a pure read; only this insert path mutates.
+    private func renormalizeSiblings(parentID: UUID?, section: SidebarItem.Section, spaceID: UUID, excluding: UUID?) {
+        let siblings = children(of: parentID, section: section, in: spaceID).filter { $0.id != excluding }
+        let keys = siblings.map(\.sortKey)
+        let strictlyIncreasing = zip(keys, keys.dropFirst()).allSatisfy { $0 < $1 }
+        guard !strictlyIncreasing else { return }
+        let fresh = SortKey.sequence(count: siblings.count)
+        for (item, key) in zip(siblings, fresh) where item.sortKey != key {
+            updateItem(item.id) { $0.sortKey = key }
         }
     }
 

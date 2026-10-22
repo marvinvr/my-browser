@@ -30,6 +30,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         super.init()
     }
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        DebugSnapshot.install(model: model)
+        #endif
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         model.saveState()
     }

@@ -13,20 +13,45 @@ final class KeyMonitor {
     func install(model: BrowserModel) {
         self.model = model
         guard monitor == nil else { return }
+        // The monitor has to return synchronously. Consume the shortcuts here without touching
+        // the model; the action hops to the main actor and must not use assumeIsolated.
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let keyCode = event.keyCode
             let rawFlags = event.modifierFlags.rawValue
-            let consume = MainActor.assumeIsolated {
-                KeyMonitor.shared.handle(keyCode: keyCode, rawFlags: rawFlags)
+            let consume = Self.shouldConsume(keyCode: keyCode, rawFlags: rawFlags)
+            if consume || Self.isPlainEscape(keyCode: keyCode, rawFlags: rawFlags) {
+                Task { @MainActor in
+                    KeyMonitor.shared.handle(keyCode: keyCode, rawFlags: rawFlags)
+                }
             }
             return consume ? nil : event
         }
     }
 
+    /// Shortcuts that are always eaten, including while a field editor is focused.
+    /// Escape is not eaten: pages and the command-bar field need it. The hop still closes the bar or stops the load.
+    nonisolated private static func shouldConsume(keyCode: UInt16, rawFlags: UInt) -> Bool {
+        let flags = modifiers(rawFlags)
+        if keyCode == tabKey {
+            return flags == .control || flags == [.control, .shift]
+        }
+        if keyCode == tKey, flags == [.command, .shift] { return true }
+        if keyCode == wKey, flags == [.command, .shift] { return true }
+        return false
+    }
+
+    nonisolated private static func isPlainEscape(keyCode: UInt16, rawFlags: UInt) -> Bool {
+        keyCode == escapeKey && modifiers(rawFlags).isEmpty
+    }
+
+    nonisolated private static func modifiers(_ rawFlags: UInt) -> NSEvent.ModifierFlags {
+        NSEvent.ModifierFlags(rawValue: rawFlags).intersection([.command, .control, .option, .shift])
+    }
+
     /// Returns true when the event was handled and should not be delivered.
     private func handle(keyCode: UInt16, rawFlags: UInt) -> Bool {
         guard let model else { return false }
-        let flags = NSEvent.ModifierFlags(rawValue: rawFlags).intersection([.command, .control, .option, .shift])
+        let flags = Self.modifiers(rawFlags)
 
         if keyCode == Self.tabKey {
             if flags == .control {
@@ -62,8 +87,8 @@ final class KeyMonitor {
         return false
     }
 
-    private static let tabKey: UInt16 = 48
-    private static let escapeKey: UInt16 = 53
-    private static let tKey: UInt16 = 17
-    private static let wKey: UInt16 = 13
+    nonisolated private static let tabKey: UInt16 = 48
+    nonisolated private static let escapeKey: UInt16 = 53
+    nonisolated private static let tKey: UInt16 = 17
+    nonisolated private static let wKey: UInt16 = 13
 }

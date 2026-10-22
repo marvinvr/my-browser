@@ -30,6 +30,25 @@ struct LibraryStoreTests {
         #expect(added[1].sortKey < added[2].sortKey)
     }
 
+    @Test func collidingSiblingKeysAreRenormalizedBeforeInsert() {
+        let store = LibraryStore(directory: nil)
+        let space = store.createSpace(name: "Personal")
+        let first = store.addItem(spaceID: space.id, section: .tabs, title: "One", at: .end)
+        let second = store.addItem(spaceID: space.id, section: .tabs, title: "Two", at: .end)
+        store.updateItem(second.id) { $0.sortKey = first.sortKey }
+
+        let before = store.children(of: nil, section: .tabs, in: space.id).map(\.id)
+        #expect(before.count == 2)
+        #expect(store.item(first.id)?.sortKey == store.item(second.id)?.sortKey)
+
+        let third = store.addItem(spaceID: space.id, section: .tabs, title: "Three", at: .end)
+        let after = store.children(of: nil, section: .tabs, in: space.id)
+        #expect(after.dropLast().map(\.id) == before)
+        #expect(after.last?.id == third.id)
+        let keys = after.map(\.sortKey)
+        #expect(zip(keys, keys.dropFirst()).allSatisfy { $0 < $1 })
+    }
+
     @Test func deleteItemTombstonesPinnedAndHardDeletesTabs() {
         let store = LibraryStore(directory: nil)
         let space = store.createSpace(name: "Personal")

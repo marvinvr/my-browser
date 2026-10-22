@@ -20,12 +20,12 @@ nonisolated enum SortKey {
     private static let smallestInteger: String = String(intDigits[0]) + String(repeating: digits[0], count: intDigits.count / 2)
 
     /// A key strictly between `a` and `b`. `nil` means open-ended (start / end).
-    /// Precondition: `a < b` when both are given, and both keys are valid order keys.
+    /// Both keys must be valid. Equal or out-of-order bounds do not trap: the result is a key after `a`.
     static func between(_ a: String?, _ b: String?) -> String {
         if let a { validate(a) }
         if let b { validate(b) }
-        if let a, let b {
-            precondition(a < b, "SortKey.between requires a < b")
+        if let a, let b, a >= b {
+            return key(after: a)
         }
 
         guard let a else {
