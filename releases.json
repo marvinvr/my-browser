@@ -1,0 +1,32 @@
+{
+  "releases": [
+    {
+      "version": "0.1.0",
+      "build": "2",
+      "commit": "f68593499b2ee76dacbdb10e97192b4f3f5d402b",
+      "date": "2026-10-22T22:41:05Z",
+      "url": "https://github.com/marvinvr/my-browser/releases/download/v0.1.0/myBrowser-0.1.0-2.dmg",
+      "length": 3269742,
+      "edSignature": "SWAHSYBzfAR3cX9AaHLl4STtYwlbkMPr+iWjVjlv0fR2ZIWnVHrRZf8AGGjPoLG2zxE72UNFfiEVk4yfak3aBA==",
+      "minimumSystemVersion": "26.0",
+      "notes": [
+        "Restore back/forward history once the web view is on screen",
+        "Add app icon with light/dark option",
+        "Render each snapshot layer once",
+        "Add tinted toolbar, clean URL display and copy link",
+        "Add address bar position setting and fix collapsed sidebar",
+        "Honor MYBROWSER_APPEARANCE and even out space icons",
+        "Move toolbar above content and fix sidebar selection",
+        "Add two-finger swipe to switch spaces",
+        "Add Sparkle updates and release script",
+        "Toolbar above content, sidebar swipe for spaces, v0.1 release; screenshot rule",
+        "Fix navigation menus, sort keys, popups, and snapshots",
+        "Agent guide: cleanup rule",
+        "Fix tab load state, delete, and shifted shortcuts",
+        "Add command bar and keyboard shortcuts",
+        "Add window shell and sidebar"
+      ],
+      "page": "https://github.com/marvinvr/my-browser/releases/tag/v0.1.0"
+    }
+  ]
+}
