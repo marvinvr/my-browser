@@ -224,4 +224,74 @@ struct BrowserModelTests {
         #expect(library.item(model.selectedItemID ?? UUID())?.title == "New Tab")
         #expect(library.children(of: nil, section: .tabs, in: spaceID).count == 2)
     }
+
+    @Test func sameSpaceMoveKeepsTheLiveTab() throws {
+        let (model, library, _) = makeModel()
+        let origin = try #require(model.selectedSpace?.id)
+        let moving = site(library, spaceID: origin, title: "Moving", section: .tabs)
+        let other = site(library, spaceID: origin, title: "Other", section: .tabs)
+        model.select(moving.id)
+        let tab = try #require(model.tabs[moving.id])
+        #expect(tab.isLoaded)
+
+        model.moveItem(moving.id, toSpace: origin, section: .tabs, position: .before(other.id))
+
+        #expect(model.tabs[moving.id] === tab)
+        #expect(tab.isLoaded)
+        #expect(model.selectedSpaceID == origin)
+        #expect(library.children(of: nil, section: .tabs, in: origin).map(\.id) == [moving.id, other.id])
+    }
+
+    @Test func crossSpaceMoveUnloadsAndKeepsTheURL() throws {
+        let (model, library, session) = makeModel()
+        let origin = try #require(model.selectedSpace?.id)
+        let work = model.createSpace(name: "Work", symbol: "briefcase.fill", color: .orange)
+        model.selectSpace(origin)
+
+        let keeper = site(library, spaceID: origin, title: "Keeper", section: .tabs)
+        let moving = site(library, spaceID: origin, title: "Moving", section: .tabs)
+        model.select(moving.id)
+        let live = URL(string: "https://moved.example/page")!
+        model.tabs[moving.id]?.load(live)
+        session.interactionStates[moving.id] = Data([1, 2, 3])
+
+        model.moveItem(moving.id, toSpace: work.id, section: .tabs, position: .end)
+
+        #expect(model.selectedSpaceID == origin)
+        #expect(model.tabs[moving.id] == nil)
+        #expect(session.interactionStates[moving.id] == nil)
+        #expect(library.item(moving.id)?.url == live)
+        #expect(library.item(moving.id)?.spaceID == work.id)
+        #expect(library.item(moving.id)?.section == .tabs)
+        #expect(model.selectedItemID == keeper.id)
+
+        model.select(moving.id)
+        #expect(model.selectedSpaceID == work.id)
+        #expect(model.tabs[moving.id]?.isLoaded == true)
+        #expect(model.tabs[moving.id]?.profileID == work.profileID)
+        #expect(model.tabs[moving.id]?.url == live)
+    }
+
+    @Test func movingAFolderUnloadsItsLoadedChild() throws {
+        let (model, library, _) = makeModel()
+        let origin = try #require(model.selectedSpace?.id)
+        let work = model.createSpace(name: "Work", symbol: "briefcase.fill", color: .blue)
+        model.selectSpace(origin)
+
+        let keeper = site(library, spaceID: origin, title: "Keeper", section: .tabs)
+        let folder = library.addItem(spaceID: origin, section: .pinned, kind: .folder, title: "Folder", at: .end)
+        let child = site(library, spaceID: origin, title: "Child", section: .pinned, parentID: folder.id)
+        model.select(child.id)
+        #expect(model.tabs[child.id]?.isLoaded == true)
+
+        model.moveItem(folder.id, toSpace: work.id, section: .pinned, parentID: nil, position: .end)
+
+        #expect(model.selectedSpaceID == origin)
+        #expect(model.tabs[child.id] == nil)
+        #expect(model.selectedItemID == keeper.id)
+        #expect(library.item(child.id)?.parentID == folder.id)
+        #expect(library.item(child.id)?.spaceID == work.id)
+        #expect(library.item(folder.id)?.section == .pinned)
+        #expect(library.item(child.id)?.section == .pinned)
+    }
 }

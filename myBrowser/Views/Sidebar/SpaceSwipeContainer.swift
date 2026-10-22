@@ -254,6 +254,16 @@ nonisolated final class SpaceSwipeRelay: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// The app or the window lost focus while a drag was still down.
+    func interrupt() {
+        lock.lock()
+        let update = tracker.interrupt()
+        let handler = handler
+        lock.unlock()
+        guard update != .passthrough, update != .consume else { return }
+        handler?(update)
+    }
+
     /// `true` when the sidebar owns the event and the caller should swallow it.
     func ingest(
         windowNumber: Int,
@@ -339,6 +349,7 @@ private struct SpaceSwipeMonitor: NSViewRepresentable {
 private final class SpaceSwipeMonitorView: NSView {
     private let relay: SpaceSwipeRelay
     private let monitors = MonitorBox()
+    private let observers = ObserverBox()
 
     init(relay: SpaceSwipeRelay) {
         self.relay = relay
@@ -354,9 +365,11 @@ private final class SpaceSwipeMonitorView: NSView {
         super.viewDidMoveToWindow()
         guard window != nil else {
             monitors.clear()
+            observers.clear()
             relay.setHitBox(windowNumber: 0, frameInWindow: .zero)
             return
         }
+        installLifecycleObservers()
         let relay = relay
         monitors.install { event in
             let consumed = relay.ingest(
@@ -388,8 +401,53 @@ private final class SpaceSwipeMonitorView: NSView {
         relay.setHitBox(windowNumber: window.windowNumber, frameInWindow: visible)
     }
 
+    private func installLifecycleObservers() {
+        observers.clear()
+        guard let window else { return }
+        let relay = relay
+        let resignKey = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: window,
+            queue: .main
+        ) { _ in
+            relay.interrupt()
+        }
+        let resignActive = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            relay.interrupt()
+        }
+        observers.store(resignKey)
+        observers.store(resignActive)
+    }
+
     deinit {
         monitors.clear()
+        observers.clear()
+    }
+}
+
+/// Notification tokens for resign-key and resign-active, removed with the monitor view.
+nonisolated private final class ObserverBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tokens: [NSObjectProtocol] = []
+
+    func store(_ token: NSObjectProtocol) {
+        lock.lock()
+        tokens.append(token)
+        lock.unlock()
+    }
+
+    func clear() {
+        lock.lock()
+        let installed = tokens
+        tokens.removeAll()
+        lock.unlock()
+        for token in installed {
+            NotificationCenter.default.removeObserver(token)
+        }
     }
 }
 

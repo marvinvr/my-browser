@@ -54,6 +54,8 @@ final class BrowserModel {
     var selectedSpace: Space? { library.space(selectedSpaceID) }
     var selectedItemID: UUID? { session.selectedItemBySpace[selectedSpaceID] }
     var selectedTab: BrowserTab? { selectedItemID.flatMap { tabs[$0] } }
+    /// Row the keyboard acts on. A folder can be focused while the open tab stays loaded.
+    var sidebarFocusID: UUID?
 
     /// Menu enablement for the selected tab. Stored here so command items observe this model,
     /// not a nested tab that `Commands` does not track.
@@ -114,6 +116,7 @@ final class BrowserModel {
     /// Selects an item and creates its live tab if needed. The web view itself is created by `BrowserTab.loadIfNeeded`.
     func select(_ itemID: UUID) {
         guard let item = library.item(itemID), item.kind == .site else { return }
+        sidebarFocusID = itemID
         if selectedSpaceID != item.spaceID {
             adoptSpace(item.spaceID)
         }
@@ -170,6 +173,7 @@ final class BrowserModel {
             session.interactionStates[itemID] = state
         }
         unloadTab(itemID)
+        if sidebarFocusID == itemID { sidebarFocusID = nil }
 
         guard wasSelected else { return }
         if let index, let neighbour = neighbourID(in: order, closing: index) {
@@ -193,6 +197,9 @@ final class BrowserModel {
         for id in removed {
             session.interactionStates[id] = nil
             unloadTab(id)
+        }
+        if sidebarFocusID == itemID || sidebarFocusID.map(removed.contains) == true {
+            sidebarFocusID = nil
         }
         library.deleteItem(itemID)
 
@@ -302,6 +309,113 @@ final class BrowserModel {
     func toggleExpanded(_ folderID: UUID) {
         guard let item = library.item(folderID), item.kind == .folder else { return }
         library.updateItem(folderID) { $0.isExpanded.toggle() }
+    }
+
+    /// Focuses a folder without unloading the open page. A site goes through `select`.
+    func focusSidebarItem(_ id: UUID) {
+        guard let item = library.item(id) else { return }
+        if item.kind == .site {
+            select(id)
+            return
+        }
+        if item.spaceID != selectedSpaceID {
+            adoptSpace(item.spaceID)
+        }
+        sidebarFocusID = id
+    }
+
+    /// Moves an item, and a folder's subtree with it.
+    /// A live tab that changes space is unloaded so the next load uses the destination profile.
+    /// Its URL is kept on the item. Selection in the space it left moves to a neighbour.
+    func moveItem(
+        _ id: UUID,
+        toSpace spaceID: UUID,
+        section: SidebarItem.Section,
+        parentID: UUID? = nil,
+        position: LibraryStore.Position = .end
+    ) {
+        guard let root = library.item(id) else { return }
+        guard library.canDrop(id, toSpace: spaceID, section: section, parentID: parentID) else { return }
+
+        let origin = root.spaceID
+        let movingIDs = [id] + (root.isFolder ? library.descendantIDs(of: id, spaceID: origin) : [])
+        let movedSites = Set(movingIDs.filter { library.item($0)?.kind == .site })
+        let spaceChanges = origin != spaceID
+        let order = navigableItems(in: origin)
+        let selected = session.selectedItemBySpace[origin]
+        let pinsOpenPage = root.kind == .site && root.section == .tabs && section != .tabs
+
+        if spaceChanges || pinsOpenPage {
+            for siteID in movedSites {
+                guard let site = library.item(siteID) else { continue }
+                let adoptsLiveURL = spaceChanges || site.section == .tabs
+                guard adoptsLiveURL, let live = tabs[siteID]?.url, site.url != live else { continue }
+                library.updateItem(siteID) { $0.url = live }
+            }
+        }
+
+        library.move(id, toSpace: spaceID, section: section, parentID: parentID, position: position)
+
+        if spaceChanges {
+            for siteID in movedSites {
+                session.interactionStates[siteID] = nil
+                unloadTab(siteID)
+            }
+            if let selected, movedSites.contains(selected) {
+                let replacement = nextSelection(afterRemoving: movedSites, selected: selected, order: order)
+                if origin == selectedSpaceID {
+                    if let replacement {
+                        select(replacement)
+                    } else {
+                        session.selectedItemBySpace[origin] = nil
+                        if sidebarFocusID == id || sidebarFocusID.map(movedSites.contains) == true {
+                            sidebarFocusID = nil
+                        }
+                        refreshNavigationState()
+                    }
+                } else {
+                    session.selectedItemBySpace[origin] = replacement
+                }
+            }
+        }
+
+        if let focus = sidebarFocusID, library.item(focus)?.spaceID != selectedSpaceID {
+            sidebarFocusID = nil
+        }
+    }
+
+    /// A link dropped from a page or another app. Tabs opened in the current space are selected.
+    func insertDroppedURL(
+        _ url: URL,
+        toSpace spaceID: UUID,
+        section: SidebarItem.Section,
+        parentID: UUID? = nil,
+        position: LibraryStore.Position = .end
+    ) {
+        guard library.space(spaceID) != nil else { return }
+        let resolvedParent: UUID?
+        if section == .pinned,
+           let parentID,
+           let parent = library.item(parentID),
+           parent.isFolder,
+           parent.spaceID == spaceID,
+           parent.section == .pinned {
+            resolvedParent = parentID
+        } else {
+            resolvedParent = nil
+        }
+        let title = SidebarTitle.host(of: url) ?? "New Tab"
+        let item = library.addItem(
+            spaceID: spaceID,
+            section: section,
+            kind: .site,
+            parentID: section == .pinned ? resolvedParent : nil,
+            title: title,
+            url: url,
+            at: position
+        )
+        guard spaceID == selectedSpaceID, item.section == .tabs else { return }
+        select(item.id)
     }
 
     // MARK: Sidebar / command bar

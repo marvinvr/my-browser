@@ -11,13 +11,16 @@ struct SidebarItemMenu: ViewModifier {
     func body(content: Content) -> some View {
         content.contextMenu {
             if item.isFolder {
-                Button("Rename…") { onRename() }
-                Button("New Folder inside") { onNewFolderInside() }
+                Button("Rename") { onRename() }
+                Button("New Folder") { onNewFolderInside() }
+                moveMenu
                 Divider()
                 Button("Delete", role: .destructive) { model.delete(item.id) }
             } else if item.section == .tabs {
                 Button("Pin") { model.pin(item.id) }
                 Button("Add to Favorites") { model.addToFavorites(item.id) }
+                Button("New Folder") { onNewFolderInside() }
+                moveMenu
                 if let url = link {
                     Button("Copy Link") { SidebarClipboard.copy(url) }
                 }
@@ -25,13 +28,27 @@ struct SidebarItemMenu: ViewModifier {
                 Button("Close") { model.close(item.id) }
             } else {
                 Button("Unpin") { model.unpin(item.id) }
-                Button("Rename…") { onRename() }
+                Button("Rename") { onRename() }
+                Button("New Folder") { onNewFolderInside() }
+                moveMenu
                 if let url = link {
                     Button("Copy Link") { SidebarClipboard.copy(url) }
                 }
                 Button("Close") { model.close(item.id) }
                 Divider()
                 Button("Delete", role: .destructive) { model.delete(item.id) }
+            }
+        }
+    }
+
+    private var moveMenu: some View {
+        Menu("Move to Space") {
+            ForEach(model.library.orderedSpaces) { space in
+                Button(space.name) {
+                    let section = model.library.sectionForSpaceDrop(item)
+                    model.moveItem(item.id, toSpace: space.id, section: section, parentID: nil, position: .end)
+                }
+                .disabled(space.id == item.spaceID)
             }
         }
     }

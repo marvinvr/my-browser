@@ -122,7 +122,7 @@ nonisolated struct SpaceSwipeTracker: Sendable {
     }
 
     mutating func handle(_ sample: SpaceSwipeSample) -> SpaceSwipeUpdate {
-        if shouldIgnore(sample) { return .passthrough }
+        if let ignored = ignoredUpdate(sample) { return ignored }
 
         switch sample.phase {
         case .other:
@@ -143,33 +143,56 @@ nonisolated struct SpaceSwipeTracker: Sendable {
         }
     }
 
+    /// App deactivation or the window resigning key. A finger that is still down settles
+    /// (commit or spring back) instead of leaving the column where it was.
+    mutating func interrupt() -> SpaceSwipeUpdate {
+        switch mode {
+        case .tracking:
+            return decide()
+        case .deciding, .rejected:
+            let stuck = offset != 0
+            goIdle()
+            return stuck ? .settle(offset: 0, action: .none) : .passthrough
+        case .coasting:
+            return .consume
+        case .idle:
+            return .passthrough
+        }
+    }
+
     /// Events outside the sidebar never start a gesture. An active drag still tracks if the
-    /// pointer slides off the column. A new touch outside ends a coast so the page can swipe.
-    private mutating func shouldIgnore(_ sample: SpaceSwipeSample) -> Bool {
-        guard !sample.inside else { return false }
+    /// pointer slides off the column. A new touch outside settles a drag in progress, so the
+    /// column cannot stay parked at the last offset. A new touch outside ends a coast so the page can swipe.
+    private mutating func ignoredUpdate(_ sample: SpaceSwipeSample) -> SpaceSwipeUpdate? {
+        guard !sample.inside else { return nil }
         switch mode {
         case .idle:
-            return true
-        case .tracking, .deciding:
+            return .passthrough
+        case .tracking:
+            if case .began = sample.phase {
+                return decide()
+            }
+            return nil
+        case .deciding:
             if case .began = sample.phase {
                 goIdle()
-                return true
+                return .passthrough
             }
-            return false
+            return nil
         case .coasting:
             switch sample.phase {
             case .momentum, .ended, .cancelled:
-                return false
+                return nil
             default:
                 goIdle()
-                return true
+                return .passthrough
             }
         case .rejected:
             if case .began = sample.phase {
                 goIdle()
-                return true
+                return .passthrough
             }
-            return false
+            return nil
         }
     }
 
