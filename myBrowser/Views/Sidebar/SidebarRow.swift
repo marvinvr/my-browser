@@ -5,7 +5,6 @@ struct SidebarRow: View {
     var item: SidebarItem
     var depth: Int = 0
     var showsLoadedState: Bool = false
-    var namespace: Namespace.ID
     var onRename: () -> Void
     var onNewFolderInside: () -> Void = {}
 
@@ -60,8 +59,7 @@ struct SidebarRow: View {
             SidebarSelectionBackground(
                 isSelected: isSelected,
                 isHovering: hovering,
-                isLoaded: showsLoadedState && isLoaded,
-                namespace: namespace
+                isLoaded: showsLoadedState && isLoaded
             )
         }
         .onContinuousHover { phase in

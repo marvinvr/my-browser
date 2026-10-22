@@ -1,18 +1,17 @@
 import SwiftUI
 
-/// Arc-style sidebar: navigation, favorites, pins, tabs, and spaces.
+/// Arc-style sidebar: favorites, pins, tabs, and spaces. Navigation sits in `ContentToolbar`.
 struct SidebarView: View {
     var traffic: TrafficLightAnchor = .fallback
 
     @Environment(BrowserModel.self) private var model
-    @Namespace private var selectionNamespace
     @State private var prompt: SidebarPrompt?
     @State private var shownSpaceID: UUID?
     @State private var slidesForward = true
 
     var body: some View {
         VStack(spacing: 0) {
-            SidebarToolbar(traffic: traffic)
+            SidebarHeader(traffic: traffic)
             ZStack {
                 spaceColumn(displayedSpaceID)
                     .id(displayedSpaceID)
@@ -61,16 +60,14 @@ struct SidebarView: View {
     private func spaceColumn(_ spaceID: UUID) -> some View {
         GeometryReader { proxy in
             ScrollView {
-                GlassEffectContainer(spacing: 10) {
-                    scrollColumn(spaceID, minHeight: proxy.size.height)
-                }
+                scrollColumn(spaceID, minHeight: proxy.size.height)
             }
         }
     }
 
     private func scrollColumn(_ spaceID: UUID, minHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            FavoritesGrid(spaceID: spaceID, namespace: selectionNamespace, onRename: askRename)
+            FavoritesGrid(spaceID: spaceID, onRename: askRename)
             if let name = model.library.space(spaceID)?.name {
                 Text(name)
                     .font(.system(size: 11, weight: .semibold))
@@ -82,7 +79,6 @@ struct SidebarView: View {
             }
             PinnedTree(
                 spaceID: spaceID,
-                namespace: selectionNamespace,
                 onRename: askRename,
                 onNewFolder: askNewFolder
             )
@@ -91,7 +87,7 @@ struct SidebarView: View {
                 .frame(height: 1)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-            TabList(spaceID: spaceID, namespace: selectionNamespace, onRename: askRename)
+            TabList(spaceID: spaceID, onRename: askRename)
             Color.clear
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())

@@ -14,7 +14,6 @@ struct WebContentView: View {
             }
         }
         .animation(.spring(duration: 0.35, bounce: 0.2), value: model.selectedTab == nil)
-        .overlay(alignment: .top) { progressBar }
         .background(Color(nsColor: .windowBackgroundColor))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -29,22 +28,6 @@ struct WebContentView: View {
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
-    }
-
-    private var progressBar: some View {
-        let loading = model.selectedTab?.isLoading == true
-        let progress = model.selectedTab?.estimatedProgress ?? 0
-        return GeometryReader { proxy in
-            Rectangle()
-                .fill(Color.accentColor)
-                .frame(width: proxy.size.width * min(max(progress, 0), 1), height: 2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .animation(.spring(duration: 0.35, bounce: 0), value: progress)
-        }
-        .frame(height: 2)
-        .opacity(loading ? 1 : 0)
-        .animation(.easeOut(duration: 0.25), value: loading)
-        .allowsHitTesting(false)
     }
 }
 

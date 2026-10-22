@@ -3,7 +3,6 @@ import SwiftUI
 /// "New Tab" plus the current space's unpinned tabs.
 struct TabList: View {
     var spaceID: UUID
-    var namespace: Namespace.ID
     var onRename: (SidebarItem) -> Void
 
     @Environment(BrowserModel.self) private var model
@@ -44,7 +43,6 @@ struct TabList: View {
                 SidebarRow(
                     item: item,
                     showsLoadedState: false,
-                    namespace: namespace,
                     onRename: { onRename(item) }
                 )
                 .transition(.opacity.combined(with: .offset(y: -4)))

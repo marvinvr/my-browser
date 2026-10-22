@@ -12,8 +12,17 @@ struct CommandBarOverlay: View {
                     .transition(.scale(scale: 0.96).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: browser.commandBarMode)
+        .animation(commandBarAnimation, value: browser.commandBarMode)
         .allowsHitTesting(browser.commandBarMode != nil)
+    }
+
+    /// Open lands in about 0.18s. Close is shorter.
+    private var commandBarAnimation: Animation {
+        if browser.commandBarMode == nil {
+            .spring(duration: 0.09, bounce: 0)
+        } else {
+            .spring(duration: 0.18, bounce: 0.08)
+        }
     }
 }
 

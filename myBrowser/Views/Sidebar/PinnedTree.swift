@@ -5,7 +5,6 @@ struct PinnedTree: View {
     var spaceID: UUID
     var parentID: UUID? = nil
     var depth: Int = 0
-    var namespace: Namespace.ID
     var onRename: (SidebarItem) -> Void
     var onNewFolder: (UUID?) -> Void
 
@@ -22,7 +21,6 @@ struct PinnedTree: View {
                         item: item,
                         depth: depth,
                         showsLoadedState: true,
-                        namespace: namespace,
                         onRename: { onRename(item) },
                         onNewFolderInside: { onNewFolder(item.id) }
                     )
@@ -41,7 +39,6 @@ struct PinnedTree: View {
                     spaceID: spaceID,
                     parentID: item.id,
                     depth: depth + 1,
-                    namespace: namespace,
                     onRename: onRename,
                     onNewFolder: onNewFolder
                 )
