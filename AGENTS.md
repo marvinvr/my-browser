@@ -27,4 +27,5 @@ myBrowser: native macOS browser (Swift 6, SwiftUI + AppKit, WebKit). Product + p
 - Agents verify UI with `scripts/snapshot.sh`. Debug builds honor `MYBROWSER_APPEARANCE=dark|light` at launch so snapshots can switch appearance without System Events.
 - Never commit personal data. Marvin's real Arc data (`~/Library/Application Support/Arc/StorableSidebar.json`) may be READ locally to test the importer, but tests use small anonymised fixtures.
 - Releases go through `scripts/release.sh` (Developer ID, notarization, DMG, Sparkle). Local Debug builds stay ad-hoc. Do not publish a release unless asked.
+- iCloud sync ships off. Do not point `project.yml` at `myBrowser/myBrowser-iCloud.entitlements` or set Info.plist `MBCloudKitContainer` until the container `iCloud.ch.marvinvr.mybrowser` and a Developer ID profile exist. Switch-on steps are in `docs/architecture.md` (Sync → Enabling the container).
 - Commits: short imperative subject, no Co-Authored-By trailers.

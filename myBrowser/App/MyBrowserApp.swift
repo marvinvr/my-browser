@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let library: LibraryStore
     let session: SessionStore
     let model: BrowserModel
+    let sync: SyncController
     let updater = Updater()
 
     override init() {
@@ -32,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         library = LibraryStore(directory: directory)
         session = SessionStore(directory: directory)
         model = BrowserModel(library: library, session: session)
+        sync = SyncController(library: library)
         super.init()
         #if DEBUG
         applyDebugAppearance()

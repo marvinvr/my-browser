@@ -17,6 +17,7 @@ myBrowser/
   App/            MyBrowserApp (scene), AppCommands (menu + shortcuts), WindowConfigurator (NSWindow tweaks)
   Model/          Value types: Profile, Space, SidebarItem, SpaceColor, SortKey, SearchEngine, URLInput, URLDisplay
   Persistence/    LibraryStore (synced data), SessionStore (local window/tab session), JSONFileStorage
+  Sync/           CKSyncEngine wrapper, record mapping, sync-state.json. Idle unless iCloud Sync is enabled.
   Browser/        BrowserModel (per-window coordinator), BrowserTab (one WKWebView), ProfileManager, FaviconStore
   Views/
     Shell/        MainWindowView: sidebar + content card, ContentToolbar above the page or in the sidebar
@@ -83,6 +84,7 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 - `modifiedAt` per record for last-writer-wins; finer field-level merge can come later.
 - `.tabs` items are excluded from sync.
 - Phase 2 adds a separate `sync-state.json` (CKSyncEngine state serialization + encoded system fields per record). `LibraryStore` emits change notifications (`onChange(ids)`) that the sync layer will turn into pending record zone changes.
+- The sync layer is in the tree and stays idle until iCloud Sync is turned on. See [Sync](#sync).
 - Decision: **plain Codable + JSON file, not SwiftData.** The data set is small (hundreds of records), JSON is easy to inspect/import/export, and CKSyncEngine wants explicit control over records and change tracking, which SwiftData hides.
 
 ### Persistence
@@ -134,6 +136,86 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 | Cmd+D | Pin / unpin current tab |
 | Esc | Close command bar / stop loading |
 
+## Sync
+
+iCloud sync uses `CKSyncEngine` on the private database, custom zone `Library` (`CKRecordZone.ID(zoneName: "Library")`). It is off unless every gate below passes. Until then the app does not create a `CKContainer` or a `CKSyncEngine`.
+
+`SyncController` (`AppDelegate` owns one) starts the engine only when all of these are true:
+
+1. `UserDefaults` `iCloudSyncEnabled` is true. The default is false. Settings → General shows **iCloud Sync (beta)**.
+2. Info.plist contains a non-empty `MBCloudKitContainer` (the container id, `iCloud.ch.marvinvr.mybrowser`). That key is absent until the container exists, and the toggle stays disabled with the caption "Requires iCloud container — coming soon".
+3. `FileManager.default.ubiquityIdentityToken != nil` (an iCloud account is signed in).
+
+The flag is checked first. A false flag returns before the account token is read.
+
+### Records
+
+| Model | Record type | Record name |
+|---|---|---|
+| `Profile` | `Profile` | `id.uuidString` |
+| `Space` | `Space` | `id.uuidString` |
+| `SidebarItem` | `SidebarItem` | `id.uuidString` |
+
+`CKRecord.ID(recordName:zoneID:)` uses the zone above. `RecordMapper` is a pure value transform (no network). `CKRecord` values are strings, dates, and numbers.
+
+- **Profile:** `name`, `modifiedAt`, `deletedAt?`
+- **Space:** `name`, `symbol`, `color` (raw value), `profileID`, `sortKey`, `modifiedAt`, `deletedAt?`
+- **SidebarItem:** `spaceID`, `section`, `kind`, `parentID?`, `title`, `url?` (absolute string), `sortKey`, `isExpanded` (0/1), `createdAt`, `modifiedAt`, `deletedAt?`
+
+`.tabs` items are not mapped and are not uploaded. A fetched `.tabs` record is ignored. A remote deletion whose local row is a tab is ignored.
+
+Synced rows are profiles, spaces, favorites, and pinned items (including folder trees). Tabs, `session.json`, favicons, and extensions stay on this Mac.
+
+### Local edits to the engine
+
+`LibraryStore.onChange` reports the ids a mutation touched. `SyncEngine` turns those into `CKSyncEngine.state.add(pendingRecordZoneChanges:)`. A live synced row is `.saveRecord`. A tombstone is `.deleteRecord`. Unknown ids (a hard-deleted tab) produce nothing. The first sync, when no engine serialization is stored yet, saves the `Library` zone and uploads every synced row. Fetched rows merge by id.
+
+### Remote edits into the store
+
+`LibraryStore.applyRemote(upserts:deletions:)` writes the tables directly and clears `onChange` for that call (the `applyingRemote` suppression), then schedules the normal debounced save. Remote `modifiedAt` / `deletedAt` are stored as received. A remote record deletion hard-deletes the local profile, space, or synced item. Tombstone fields on a record (`deletedAt`) stay as tombstones so last-writer-wins can still see them.
+
+### Conflicts
+
+Per record, last writer wins. The stamp is the later of `modifiedAt` and `deletedAt`.
+
+- A strictly newer stamp wins, including a newer tombstone over an older edit and a newer edit over an older tombstone.
+- Equal stamps: a tombstone beats a live edit. If both sides are live or both are tombstones, the server record wins so its system fields stay authoritative.
+- `serverRecordChanged`: compare `modifiedAt` / `deletedAt`, keep the winner, and persist the server record's encoded system fields. A local win is uploaded again on a record built from those system fields (the change tag has to be the server's). A server win is applied with `applyRemote`.
+- A save that fails with `unknownItem` because the server record is gone: if the local edit is newer than the `modificationDate` stored in the last system fields, the record is created again. Otherwise the local row is removed. A local tombstone is treated as already deleted and may be purged once it is old enough.
+- Fetched record deletions have no timestamp. They hard-delete the local row.
+
+### Tombstones
+
+A local delete of a synced row sets `deletedAt` and pushes a record deletion. A remote record deletion hard-deletes the local row. `purgeAcknowledgedTombstones(sent:)` removes a tombstone only when its id is in the sent set and `deletedAt` is older than the cutoff (30 days). `SyncState.markDeletionSent` records that set in `sync-state.json` after the engine reports the delete (or `unknownItem` on a delete, which means the server already dropped it). The unguarded `purgeTombstones` is unchanged and is still not called on its own.
+
+### sync-state.json
+
+Same Application Support directory as `library.json`, via `JSONFileStorage` (schema 1).
+
+- `engineState`: JSON-encoded `CKSyncEngine.State.Serialization` from each `stateUpdate` event. Passed back into the next `CKSyncEngine.Configuration`.
+- `systemFields`: `[recordName: Data]` from `CKRecord.encodeSystemFields`.
+- `acknowledgedDeletions`: record ids whose delete has been accepted.
+- `awaitingAccountChoice`: an account switch is waiting for an answer.
+
+### Account and zone
+
+- **Sign out:** keep the library, reset sync state, drop the engine.
+- **Switch account:** ask. "Sync" resets sync state, uploads this library, and merges fetched rows by id. "Turn Off" resets sync state and sets `iCloudSyncEnabled` to false. The library stays either way.
+- **Zone deleted, purged, or encrypted-data reset** (`fetchedDatabaseChanges`), and **zoneNotFound / userDeletedZone** on a zone fetch: drop stored system fields (their change tags belonged to the old zone) and upload the library again.
+- **Ordering:** `orderedSpaces` and `children` sort by `(sortKey, id.uuidString)`. Two devices inserting at the same spot keep both rows; the uuid string breaks the tie.
+
+### Enabling the container
+
+`myBrowser/myBrowser-iCloud.entitlements` is **not** referenced by `project.yml`. Debug and Release keep building and shipping without iCloud. When the container and a Developer ID provisioning profile exist, switch these on together:
+
+1. Apple Developer: on the App ID `ch.marvinvr.mybrowser`, create the iCloud container `iCloud.ch.marvinvr.mybrowser` and enable CloudKit and Push Notifications. `CKSyncEngine` uses silent pushes, so the release entitlements include `com.apple.developer.aps-environment` = `production`.
+2. Create a Developer ID provisioning profile for that App ID that includes the container, CloudKit, and Push. Download it.
+3. `project.yml`, Release only: set `CODE_SIGN_ENTITLEMENTS` to `myBrowser/myBrowser-iCloud.entitlements`. That file replaces `myBrowser/myBrowser.entitlements` and already includes `com.apple.security.cs.allow-jit`. Leave Debug ad-hoc, with no iCloud entitlements.
+4. `project.yml` `info.properties`: add `MBCloudKitContainer: iCloud.ch.marvinvr.mybrowser`. Without this key the toggle stays disabled and `SyncController` does not start.
+5. `scripts/release.sh`: sign the app with `myBrowser/myBrowser-iCloud.entitlements` (the `sign_sparkle` `codesign` line). Embed the Developer ID profile at `Contents/embedded.provisionprofile`. The export fallback that treats "No profiles for" as success has to require this profile instead. Keep rejecting `get-task-allow`. Keep requiring `allow-jit`.
+
+Do not flip those switches before the container and the profile exist. A Release build signed with the iCloud entitlements and no matching profile fails to launch.
+
 ## Decisions log
 - 2026-10-22: JSON + Codable store instead of SwiftData (see Sync readiness).
 - 2026-10-22: one Profile per Space by default; model allows sharing.
@@ -146,3 +228,4 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 - 2026-10-22: collapsed sidebar draws the content card edge to edge. Traffic lights stay vertically centred on the toolbar in both modes.
 - 2026-10-22: bundle id `ch.marvinvr.mybrowser`; Sparkle feed on `main`; releases via `scripts/release.sh`.
 - 2026-10-23: Dock icon is the light AppIcon unless Settings → Appearance picks dark. Applied at launch and on change with `NSApp.applicationIconImage` only. `NSWorkspace.setIcon` is not used; it modifies the signed bundle and breaks the code signature and Sparkle updates.
+- 2026-10-23: CloudKit sync (`CKSyncEngine`, private zone `Library`) is in the app and off by default. It starts only when `iCloudSyncEnabled`, Info.plist `MBCloudKitContainer`, and an iCloud account are all present. The container and the iCloud entitlements file are not wired into the build yet.

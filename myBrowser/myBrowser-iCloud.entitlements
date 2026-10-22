@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Not referenced by project.yml. Switching Release to this file replaces
+	     myBrowser.entitlements, so the JIT exception has to stay here.
+	     aps-environment is production because CKSyncEngine listens for pushes
+	     and this file is the Developer ID release set. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.developer.icloud-container-identifiers</key>
+	<array>
+		<string>iCloud.ch.marvinvr.mybrowser</string>
+	</array>
+	<key>com.apple.developer.icloud-services</key>
+	<array>
+		<string>CloudKit</string>
+	</array>
+	<key>com.apple.developer.aps-environment</key>
+	<string>production</string>
+</dict>
+</plist>
