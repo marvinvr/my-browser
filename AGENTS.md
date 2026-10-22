@@ -26,5 +26,5 @@ myBrowser: native macOS browser (Swift 6, SwiftUI + AppKit, WebKit). Product + p
 - Screenshots: every Grok worker that changes anything visible runs the app and takes screenshots of the app window (light + dark mode, key states: pinned icons, folders, selected/hovered rows, command bar open) before committing, and lists the paths in its report. Use `scripts/snapshot.sh <out.png>` (DEBUG in-app snapshot; this terminal has no Screen Recording permission, glass effects don't render in it). The Grok High reviewer checks them for anything off (alignment, spacing, clipping, ugly defaults, non-native look) and sends work back if needed.
 - Agents verify UI with `scripts/snapshot.sh`.
 - Never commit personal data. Marvin's real Arc data (`~/Library/Application Support/Arc/StorableSidebar.json`) may be READ locally to test the importer, but tests use small anonymised fixtures.
-- No signing/notarization/App Store work: local builds only (Developer ID + iCloud entitlements come later).
+- Releases go through `scripts/release.sh` (Developer ID, notarization, DMG, Sparkle). Local Debug builds stay ad-hoc. Do not publish a release unless asked.
 - Commits: short imperative subject, no Co-Authored-By trailers.

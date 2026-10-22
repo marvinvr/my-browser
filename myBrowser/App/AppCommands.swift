@@ -4,13 +4,19 @@ import SwiftUI
 /// Menu bar commands and their shortcuts. ⌘W closes the tab; ⇧⌘W closes the window.
 struct AppCommands: Commands {
     let model: BrowserModel
+    let updater: Updater
 
-    init(model: BrowserModel) {
+    init(model: BrowserModel, updater: Updater) {
         self.model = model
+        self.updater = updater
         KeyMonitor.shared.install(model: model)
     }
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") { updater.checkForUpdates() }
+        }
+
         CommandGroup(replacing: .newItem) {
             Button("New Tab") { model.showCommandBar(.newTab) }
                 .keyboardShortcut("t")

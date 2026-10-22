@@ -12,7 +12,7 @@ struct MyBrowserApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
-        .commands { AppCommands(model: appDelegate.model) }
+        .commands { AppCommands(model: appDelegate.model, updater: appDelegate.updater) }
     }
 }
 
@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let library: LibraryStore
     let session: SessionStore
     let model: BrowserModel
+    let updater = Updater()
 
     override init() {
         let directory = LibraryStore.defaultDirectory()
@@ -31,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        updater.start()
         #if DEBUG
         DebugSnapshot.install(model: model)
         #endif

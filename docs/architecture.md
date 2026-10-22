@@ -7,8 +7,8 @@ Living document. Update it when you change structure, the data model or a decisi
 - macOS 26+, Swift 6 language mode, SwiftUI for views, AppKit where SwiftUI can't (NSWindow tweaks, WKWebView hosting, event monitors).
 - Default actor isolation is **MainActor** for the app target (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, approachable concurrency). Everything UI/WebKit/store related is main-actor. Only pure value types (models, `SortKey`, URL parsing) are `nonisolated`/`Sendable`.
 - XcodeGen (`project.yml`). The `.xcodeproj` is generated and git-ignored. Folders are globbed, so adding a file only needs `xcodegen`.
-- No third-party dependencies in Phase 1.
-- Not sandboxed (a browser needs downloads anywhere, Arc/Chrome import reads `~/Library`). Ad-hoc signed locally (`CODE_SIGN_IDENTITY = -`). Developer ID + iCloud entitlements later.
+- Sparkle 2.10.0 (Swift package) ships updates. The feed is `appcast.xml` on `main`.
+- Not sandboxed (a browser needs downloads anywhere, Arc/Chrome import reads `~/Library`). Local Debug builds are ad-hoc signed (`CODE_SIGN_IDENTITY = -`). Developer ID releases go through `scripts/release.sh`. Bundle id `ch.marvinvr.mybrowser`. Library files stay in `~/Library/Application Support/myBrowser/` (not the bundle id).
 
 ## Folder layout
 
@@ -133,3 +133,4 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 - 2026-10-22: default search engine Google (to be a setting).
 - 2026-10-22: page two-finger swipe = back/forward, sidebar swipe = spaces.
 - 2026-10-22: single window in Phase 1.
+- 2026-10-22: bundle id `ch.marvinvr.mybrowser`; Sparkle feed on `main`; releases via `scripts/release.sh`.
