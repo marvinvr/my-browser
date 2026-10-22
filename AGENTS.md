@@ -22,7 +22,8 @@ myBrowser: native macOS browser (Swift 6, SwiftUI + AppKit, WebKit). Product + p
 - XcodeGen: edit `project.yml`, never hand-edit the generated project. Run `xcodegen` after adding files.
 - Build must pass before every push: `xcodegen && xcodebuild -scheme myBrowser -destination 'platform=macOS' build`.
 - Direct pushes to `main` are fine. `git fetch && git rebase` before pushing; check staged files (several agents share the repo).
-- UI: native macOS look, Liquid Glass, subtle, minimal. Smooth spring animations. Verify UI changes with screenshots before pushing (run the app, `screencapture`). Nothing over the top.
+- UI: native macOS look, Liquid Glass, subtle, minimal. Smooth spring animations. Nothing over the top.
+- Screenshots: every Grok worker that changes anything visible runs the app and takes screenshots of the app window (light + dark mode, key states: pinned icons, folders, selected/hovered rows, command bar open) before committing, and lists the paths in its report. Use `scripts/snapshot.sh <out.png>` (DEBUG in-app snapshot; this terminal has no Screen Recording permission, glass effects don't render in it). The Grok High reviewer checks them for anything off (alignment, spacing, clipping, ugly defaults, non-native look) and sends work back if needed.
 - Agents verify UI with `scripts/snapshot.sh`.
 - Never commit personal data. Marvin's real Arc data (`~/Library/Application Support/Arc/StorableSidebar.json`) may be READ locally to test the importer, but tests use small anonymised fixtures.
 - No signing/notarization/App Store work: local builds only (Developer ID + iCloud entitlements come later).

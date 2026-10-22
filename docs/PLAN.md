@@ -9,7 +9,8 @@ Opinionated macOS browser, Arc-style. Open source, public GitHub repo. iPhone la
   - Below: pinned folders and sites, nested folders, drag & drop.
   - Below that: today's tabs (unpinned), cleaned up automatically like Arc (later, optional).
 - Spaces: each Space has its own profile (own cookies/storage via `WKWebsiteDataStore(forIdentifier:)`), own pinned items, own color/icon. Switching Spaces by two-finger horizontal swipe on the sidebar + shortcuts.
-- Horizontal two-finger swipe on the page/sidebar switches tabs (and back/forward stays on the page edge-swipe as in Safari; decide in Phase 1).
+- Two-finger horizontal swipe on the sidebar switches Spaces (content follows the finger, springs to next/previous Space, rubber-bands at the ends, like Arc). On the web page, horizontal swipe stays back/forward as in Safari.
+- Address bar + back/forward/reload live in a slim native toolbar on top of the web content area (full width of the content area), not in the sidebar. Tabs stay vertical in the sidebar.
 - iCloud sync of the sidebar (spaces, pinned items, folders) via CloudKit (`CKSyncEngine`), private database. Tabs/history not synced at first.
 - Extensions: they just have to work, the source doesn't matter (Marvin 22.10.). Plan: WebKit's `WKWebExtensionController` (macOS 15.4+), which loads standard WebExtensions (MV2/MV3) from a folder or zip, so besides Safari extensions also unpacked Chrome Web Store (.crx) and Firefox (.xpi) extensions can be installed. Install/enable per profile. uBlock Origin bundling: later, not now.
 - Import:
@@ -32,7 +33,7 @@ Opinionated macOS browser, Arc-style. Open source, public GitHub repo. iPhone la
 - Details: AGENTS.md.
 
 ## Phases
-1. **Foundation** (one lead, serial): repo scaffold, XcodeGen, architecture doc, data model (Space, Profile, SidebarItem tree: pinned icon / folder / site / tab), window shell with sidebar + WKWebView tabs, tab switching, Spaces with separate data stores, command bar, basic persistence. Runs and is usable for daily browsing basics.
+1. **Foundation** (one lead, serial): repo scaffold, XcodeGen, architecture doc, data model (Space, Profile, SidebarItem tree: pinned icon / folder / site / tab), window shell with sidebar + WKWebView tabs, tab switching, Spaces with separate data stores, command bar, basic persistence. Runs and is usable for daily browsing basics. Ends with a v0.1.0 GitHub release: Sparkle 2 auto-updates, Developer ID signed + notarized DMG, bundle id `ch.marvinvr.mybrowser`.
 2. **Parallel workstreams** (after Phase 1, same single Claude lead, each workstream done by Grok High agents in its own worktree):
    - A. Sidebar UX & feel: pinned icon grid, nested folders, drag & drop, context menus, animations, swipe gestures for tabs/spaces, app icon.
    - B. Importers: Chrome/Chromium bookmarks, Arc full import (spaces, pins, folders) with a nice import flow.
