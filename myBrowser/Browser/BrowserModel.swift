@@ -22,7 +22,15 @@ final class BrowserModel {
 
     /// Live tabs by item id. Missing means the item is not loaded.
     private(set) var tabs: [UUID: BrowserTab] = [:]
+    enum SpaceSwitchDirection: Equatable {
+        case previous
+        case next
+    }
+
     private(set) var selectedSpaceID: UUID
+    /// Direction of the last space change. Steps from `selectNextSpace` / `selectPreviousSpace`
+    /// keep their command direction, so a wrap off the last space still slides forward.
+    private(set) var lastSpaceSwitchDirection: SpaceSwitchDirection = .next
     /// `nil` = command bar hidden.
     var commandBarMode: CommandBarMode?
 
@@ -62,8 +70,7 @@ final class BrowserModel {
 
     func selectSpace(_ id: UUID) {
         guard library.space(id) != nil else { return }
-        if selectedSpaceID != id { selectedSpaceID = id }
-        if session.selectedSpaceID != id { session.selectedSpaceID = id }
+        adoptSpace(id)
         if let itemID = session.selectedItemBySpace[id] {
             select(itemID)
         } else {
@@ -106,10 +113,7 @@ final class BrowserModel {
     func select(_ itemID: UUID) {
         guard let item = library.item(itemID), item.kind == .site else { return }
         if selectedSpaceID != item.spaceID {
-            selectedSpaceID = item.spaceID
-            if session.selectedSpaceID != item.spaceID {
-                session.selectedSpaceID = item.spaceID
-            }
+            adoptSpace(item.spaceID)
         }
         if session.selectedItemBySpace[item.spaceID] != itemID {
             session.selectedItemBySpace[item.spaceID] = itemID
@@ -209,10 +213,7 @@ final class BrowserModel {
                 session.interactionStates[item.id] = state
             }
             if selectedSpaceID != item.spaceID {
-                selectedSpaceID = item.spaceID
-                if session.selectedSpaceID != item.spaceID {
-                    session.selectedSpaceID = item.spaceID
-                }
+                adoptSpace(item.spaceID)
             }
             select(item.id)
             return
@@ -327,10 +328,7 @@ final class BrowserModel {
         wire(tab, spaceID: spaceID)
         tabs[item.id] = tab
         if selectedSpaceID != spaceID {
-            selectedSpaceID = spaceID
-            if session.selectedSpaceID != spaceID {
-                session.selectedSpaceID = spaceID
-            }
+            adoptSpace(spaceID)
         }
         select(item.id)
         return tab.webView
@@ -361,10 +359,7 @@ final class BrowserModel {
         )
         guard !inBackground else { return }
         if selectedSpaceID != spaceID {
-            selectedSpaceID = spaceID
-            if session.selectedSpaceID != spaceID {
-                session.selectedSpaceID = spaceID
-            }
+            adoptSpace(spaceID)
         }
         select(item.id)
     }
@@ -529,11 +524,33 @@ final class BrowserModel {
         select(items[next].id)
     }
 
+    /// Set while `moveSpace` applies a step, so `adoptSpace` does not replace the command direction with index order.
+    private var lockSwitchDirection = false
+
+    private func adoptSpace(_ id: UUID) {
+        if !lockSwitchDirection, id != selectedSpaceID {
+            lastSpaceSwitchDirection = inferredDirection(from: selectedSpaceID, to: id)
+        }
+        if selectedSpaceID != id { selectedSpaceID = id }
+        if session.selectedSpaceID != id { session.selectedSpaceID = id }
+    }
+
+    private func inferredDirection(from oldID: UUID, to newID: UUID) -> SpaceSwitchDirection {
+        let spaces = library.orderedSpaces
+        let oldIndex = spaces.firstIndex { $0.id == oldID } ?? 0
+        let newIndex = spaces.firstIndex { $0.id == newID } ?? oldIndex
+        return newIndex >= oldIndex ? .next : .previous
+    }
+
     private func moveSpace(by delta: Int) {
         let spaces = library.orderedSpaces
         guard !spaces.isEmpty else { return }
         let index = spaces.firstIndex { $0.id == selectedSpaceID } ?? 0
         let next = (index + delta + spaces.count) % spaces.count
+        guard next != index else { return }
+        lastSpaceSwitchDirection = delta < 0 ? .previous : .next
+        lockSwitchDirection = true
+        defer { lockSwitchDirection = false }
         selectSpace(spaces[next].id)
     }
 

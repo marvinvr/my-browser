@@ -28,13 +28,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         session = SessionStore(directory: directory)
         model = BrowserModel(library: library, session: session)
         super.init()
+        #if DEBUG
+        applyDebugAppearance()
+        #endif
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         #if DEBUG
+        applyDebugAppearance()
+        if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_COMMAND_BAR"] == "1" {
+            model.showCommandBar(.newTab)
+        }
         DebugSnapshot.install(model: model)
         #endif
     }
+
+    #if DEBUG
+    /// Snapshot-only. `defaults` and System Events cannot change this machine's appearance.
+    private func applyDebugAppearance() {
+        switch ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_APPEARANCE"]?.lowercased() {
+        case "dark":
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        case "light":
+            NSApp.appearance = NSAppearance(named: .aqua)
+        default:
+            break
+        }
+    }
+    #endif
 
     func applicationWillTerminate(_ notification: Notification) {
         model.saveState()
