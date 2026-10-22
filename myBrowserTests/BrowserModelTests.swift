@@ -90,8 +90,9 @@ struct BrowserModelTests {
         let tabs = library.children(of: nil, section: .tabs, in: spaceID)
         #expect(tabs.map(\.id).contains(closing.id))
         #expect(tabs.map(\.id).contains(keeper.id))
-        // New key at `.start`. SortKey is still a stub, so this locks the call rather than lexicographic order.
-        #expect(library.item(closing.id)?.sortKey == SortKey.between(nil, keeper.sortKey))
+        let restoredKey = library.item(closing.id)?.sortKey
+        #expect(restoredKey == SortKey.between(nil, keeper.sortKey))
+        #expect((restoredKey ?? "") < keeper.sortKey)
         #expect(model.selectedItemID == closing.id)
     }
 
@@ -123,8 +124,42 @@ struct BrowserModelTests {
         let tabs = library.children(of: nil, section: .tabs, in: spaceID)
         #expect(tabs.map(\.title).contains("Move"))
         #expect(tabs.map(\.title).contains("Other"))
-        // `.start` asks SortKey for a key before the first sibling. The stub key may tie; the requested key is what we lock.
-        #expect(library.item(moving.id)?.sortKey == SortKey.between(nil, other.sortKey))
+        let unpinnedKey = library.item(moving.id)?.sortKey
+        #expect(unpinnedKey == SortKey.between(nil, other.sortKey))
+        #expect((unpinnedKey ?? "") < other.sortKey)
+    }
+
+    @Test func deleteUnloadsTheTabAndMovesSelection() throws {
+        let (model, library, session) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let keeper = site(library, spaceID: spaceID, title: "Keeper", section: .pinned)
+        let doomed = site(library, spaceID: spaceID, title: "Doomed", section: .pinned)
+        model.select(doomed.id)
+        #expect(model.tabs[doomed.id]?.isLoaded == true)
+
+        model.delete(doomed.id)
+
+        #expect(library.item(doomed.id) == nil)
+        #expect(model.tabs[doomed.id] == nil)
+        #expect(model.selectedItemID == keeper.id)
+        #expect(session.closedTabs.isEmpty)
+    }
+
+    @Test func deleteFolderUnloadsDescendantTabs() throws {
+        let (model, library, session) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let keeper = site(library, spaceID: spaceID, title: "Keeper", section: .tabs)
+        let folder = library.addItem(spaceID: spaceID, section: .pinned, kind: .folder, title: "Folder", at: .end)
+        let child = site(library, spaceID: spaceID, title: "Child", section: .pinned, parentID: folder.id)
+        model.select(child.id)
+
+        model.delete(folder.id)
+
+        #expect(library.item(folder.id) == nil)
+        #expect(library.item(child.id) == nil)
+        #expect(model.tabs[child.id] == nil)
+        #expect(model.selectedItemID == keeper.id)
+        #expect(session.closedTabs.isEmpty)
     }
 
     @Test func spaceNextAndPreviousWrap() throws {

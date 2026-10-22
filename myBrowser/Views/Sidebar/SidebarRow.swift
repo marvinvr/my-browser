@@ -17,13 +17,14 @@ struct SidebarRow: View {
         let title = SidebarTitle.text(for: item, tab: tab)
         let isSelected = model.selectedItemID == item.id
         let isLoaded = tab?.isLoaded == true
+        let icon = tab?.favicon ?? (item.url ?? tab?.url).flatMap { model.favicons.cachedFavicon(for: $0) }
 
         HStack(spacing: 0) {
             Button {
                 model.select(item.id)
             } label: {
                 HStack(spacing: 8) {
-                    FaviconView(image: tab?.favicon, url: item.url ?? tab?.url, title: title, size: 16)
+                    FaviconView(image: icon, url: item.url ?? tab?.url, title: title, size: 16)
                         .opacity(isLoaded || isSelected ? 1 : 0.78)
                     Text(title)
                         .font(.system(size: 13))

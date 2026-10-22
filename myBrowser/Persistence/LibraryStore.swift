@@ -165,7 +165,7 @@ final class LibraryStore {
         restored.sortKey = sortKey(for: position, parentID: nil, section: .tabs, spaceID: item.spaceID, excluding: item.id)
         restored.modifiedAt = .now
         items[restored.id] = restored
-        didChange()
+        didChange([restored.id])
         return restored
     }
 

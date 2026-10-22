@@ -144,7 +144,8 @@ private struct CommandBarPanel: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 16, height: 16)
         case .tab(let item):
-            if let image = browser.tabs[item.id]?.favicon {
+            let image = browser.tabs[item.id]?.favicon ?? item.url.flatMap { browser.favicons.cachedFavicon(for: $0) }
+            if let image {
                 Image(nsImage: image)
                     .resizable()
                     .interpolation(.high)

@@ -16,6 +16,8 @@ final class BrowserTab: Identifiable {
     private(set) var estimatedProgress: Double = 0
     private(set) var canGoBack = false
     private(set) var canGoForward = false
+    /// True once `loadIfNeeded` has created the web view. Tracked on its own: `webView` is not observed.
+    private(set) var isLoaded = false
     @ObservationIgnored private(set) var webView: WKWebView?
 
     /// Called when the page wants a new tab (target=_blank, window.open, Cmd-click). `inBackground` for Cmd-click.
@@ -41,8 +43,6 @@ final class BrowserTab: Identifiable {
         self.storedInteractionState = interactionState
     }
 
-    var isLoaded: Bool { webView != nil }
-
     /// Creates the web view (restoring `interactionState` or loading the initial URL) if needed.
     func loadIfNeeded(using profiles: ProfileManager) {
         guard webView == nil else { return }
@@ -57,6 +57,7 @@ final class BrowserTab: Identifiable {
         webView.uiDelegate = webDelegate
         observe(webView)
         self.webView = webView
+        isLoaded = true
 
         if let pendingURL {
             self.pendingURL = nil
@@ -88,6 +89,7 @@ final class BrowserTab: Identifiable {
         webDelegate = nil
         webView?.removeFromSuperview()
         webView = nil
+        isLoaded = false
         isLoading = false
     }
 

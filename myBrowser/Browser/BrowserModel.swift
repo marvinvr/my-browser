@@ -163,6 +163,30 @@ final class BrowserModel {
         }
     }
 
+    /// Removes an item for good. Unloads every site tab the deletion covers, moves the selection off those tabs, then deletes.
+    /// Folders take their descendants with them. Unlike `close`, this does not remember a `.tabs` item for reopen.
+    func delete(_ itemID: UUID) {
+        guard let item = library.item(itemID) else { return }
+        let spaceID = item.spaceID
+        let removed = Set(containedSiteIDs(item))
+        let order = navigableItems(in: spaceID)
+        let selected = session.selectedItemBySpace[spaceID]
+        let replacement = nextSelection(afterRemoving: removed, selected: selected, order: order)
+
+        for id in removed {
+            session.interactionStates[id] = nil
+            unloadTab(id)
+        }
+        library.deleteItem(itemID)
+
+        guard let selected, removed.contains(selected) else { return }
+        if let replacement {
+            select(replacement)
+        } else {
+            session.selectedItemBySpace[spaceID] = nil
+        }
+    }
+
     /// Cmd+Shift+T. Restores the item at the top of `.tabs` with its back/forward history and selects it.
     func reopenClosedTab() {
         while let closed = session.closedTabs.last {
@@ -383,6 +407,44 @@ final class BrowserModel {
             }
         }
         return result
+    }
+
+    /// Site ids `delete` will remove: the item itself, or every site under a folder.
+    private func containedSiteIDs(_ root: SidebarItem) -> [UUID] {
+        if root.kind == .site { return [root.id] }
+        var byParent: [UUID: [SidebarItem]] = [:]
+        for item in library.items.values where item.deletedAt == nil && item.spaceID == root.spaceID {
+            if let parentID = item.parentID {
+                byParent[parentID, default: []].append(item)
+            }
+        }
+        var sites: [UUID] = []
+        var queue = byParent[root.id] ?? []
+        var seen: Set<UUID> = [root.id]
+        var index = 0
+        while index < queue.count {
+            let item = queue[index]
+            index += 1
+            guard seen.insert(item.id).inserted else { continue }
+            if item.kind == .site { sites.append(item.id) }
+            if let children = byParent[item.id] {
+                queue.append(contentsOf: children)
+            }
+        }
+        return sites
+    }
+
+    /// Nearest surviving navigable item when `selected` is among `removed`.
+    private func nextSelection(afterRemoving removed: Set<UUID>, selected: UUID?, order: [SidebarItem]) -> UUID? {
+        guard let selected, removed.contains(selected) else { return nil }
+        guard let index = order.firstIndex(where: { $0.id == selected }) else {
+            return order.first { !removed.contains($0.id) }?.id
+        }
+        if let next = order[(index + 1)...].first(where: { !removed.contains($0.id) }) {
+            return next.id
+        }
+        guard index > 0 else { return nil }
+        return order[..<index].last(where: { !removed.contains($0.id) })?.id
     }
 
     /// Next item below, else the one above. `index` is the position in the pre-close list.

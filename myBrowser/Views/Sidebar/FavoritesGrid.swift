@@ -30,10 +30,11 @@ struct FavoritesGrid: View {
         let title = SidebarTitle.text(for: item, tab: tab)
         let isSelected = model.selectedItemID == item.id
         let isLoaded = tab?.isLoaded == true
+        let icon = tab?.favicon ?? item.url.flatMap { model.favicons.cachedFavicon(for: $0) }
         return FavoriteTile(
             item: item,
             title: title,
-            favicon: tab?.favicon,
+            favicon: icon,
             isSelected: isSelected,
             isLoaded: isLoaded,
             namespace: namespace,

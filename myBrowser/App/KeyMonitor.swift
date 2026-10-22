@@ -5,7 +5,7 @@ import AppKit
 final class KeyMonitor {
     static let shared = KeyMonitor()
 
-    private var model: BrowserModel?
+    private weak var model: BrowserModel?
     private var monitor: Any?
 
     private init() {}
@@ -39,6 +39,16 @@ final class KeyMonitor {
             }
         }
 
+        // SwiftUI gives the unshifted ⌘T / ⌘W items these events as well, so the shifted ones are handled here.
+        if keyCode == Self.tKey, flags == [.command, .shift] {
+            model.reopenClosedTab()
+            return true
+        }
+        if keyCode == Self.wKey, flags == [.command, .shift] {
+            NSApp.keyWindow?.performClose(nil)
+            return true
+        }
+
         if keyCode == Self.escapeKey, flags.isEmpty {
             if model.commandBarMode != nil {
                 model.hideCommandBar()
@@ -54,4 +64,6 @@ final class KeyMonitor {
 
     private static let tabKey: UInt16 = 48
     private static let escapeKey: UInt16 = 53
+    private static let tKey: UInt16 = 17
+    private static let wKey: UInt16 = 13
 }

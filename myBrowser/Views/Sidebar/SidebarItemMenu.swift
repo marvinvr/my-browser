@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Context menu for a sidebar item. Delete goes through `LibraryStore` (no model method yet).
+/// Context menu for a sidebar item. Delete unloads the tab and fixes selection before the item is removed.
 struct SidebarItemMenu: ViewModifier {
     var item: SidebarItem
     var onRename: () -> Void
@@ -14,7 +14,7 @@ struct SidebarItemMenu: ViewModifier {
                 Button("Rename…") { onRename() }
                 Button("New Folder inside") { onNewFolderInside() }
                 Divider()
-                Button("Delete", role: .destructive) { model.library.deleteItem(item.id) }
+                Button("Delete", role: .destructive) { model.delete(item.id) }
             } else if item.section == .tabs {
                 Button("Pin") { model.pin(item.id) }
                 Button("Add to Favorites") { model.addToFavorites(item.id) }
@@ -31,7 +31,7 @@ struct SidebarItemMenu: ViewModifier {
                 }
                 Button("Close") { model.close(item.id) }
                 Divider()
-                Button("Delete", role: .destructive) { model.library.deleteItem(item.id) }
+                Button("Delete", role: .destructive) { model.delete(item.id) }
             }
         }
     }
