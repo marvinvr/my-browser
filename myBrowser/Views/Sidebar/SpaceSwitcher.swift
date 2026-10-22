@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Space icons along the bottom of the sidebar, plus a button that creates one.
@@ -46,11 +47,11 @@ struct SpaceSwitcher: View {
         } label: {
             Image(systemName: space.symbol)
                 .font(.system(size: Self.symbolSize, weight: .regular))
+                .symbolRenderingMode(.monochrome)
                 .foregroundStyle(space.color.color)
                 .frame(width: Self.target, height: Self.target)
                 .background {
-                    RoundedRectangle(cornerRadius: Self.corner, style: .continuous)
-                        .fill(chipFill(selected: selected, tint: space.color.color))
+                    FlatFill(color: chipColor(selected: selected, color: space.color), cornerRadius: Self.corner)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: Self.corner, style: .continuous))
         }
@@ -81,8 +82,31 @@ struct SpaceSwitcher: View {
         .accessibilityLabel("New Space")
     }
 
-    private func chipFill(selected: Bool, tint: Color) -> Color {
+    /// Space tint at ~16–18%, pinned as an sRGB color so vibrancy cannot turn it solid.
+    private func chipColor(selected: Bool, color: SpaceColor) -> NSColor {
         guard selected else { return .clear }
-        return tint.opacity(colorScheme == .dark ? 0.32 : 0.18)
+        let alpha: CGFloat = colorScheme == .dark ? 0.18 : 0.16
+        let base = nsColor(color)
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var ignored: CGFloat = 0
+        let rgb = base.usingColorSpace(.sRGB) ?? base
+        rgb.getRed(&red, green: &green, blue: &blue, alpha: &ignored)
+        return NSColor(srgbRed: red, green: green, blue: blue, alpha: alpha)
+    }
+
+    private func nsColor(_ color: SpaceColor) -> NSColor {
+        switch color {
+        case .blue: .systemBlue
+        case .purple: .systemPurple
+        case .pink: .systemPink
+        case .red: .systemRed
+        case .orange: .systemOrange
+        case .yellow: .systemYellow
+        case .green: .systemGreen
+        case .teal: .systemTeal
+        case .gray: .systemGray
+        }
     }
 }

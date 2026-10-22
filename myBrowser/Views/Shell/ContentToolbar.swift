@@ -1,10 +1,19 @@
 import SwiftUI
 
-/// Compact toolbar above the page: back, forward, reload, and the address capsule.
-/// When the sidebar is hidden, controls are inset so they clear the traffic lights.
+/// Back, forward, reload, and the address field.
+///
+/// `.content` is one row above the page. `.sidebar` puts navigation on the traffic-light
+/// row and the address field underneath, the way Arc does. The field always shows the
+/// live page host; glass is drawn behind the label so the text stays visible.
 struct ContentToolbar: View {
+    enum Style: Equatable {
+        case content
+        case sidebar
+    }
+
     var traffic: TrafficLightAnchor
     var sidebarVisible: Bool
+    var style: Style = .content
 
     @Environment(BrowserModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
@@ -12,6 +21,15 @@ struct ContentToolbar: View {
     private let leadingPadding: CGFloat = 10
 
     var body: some View {
+        switch style {
+        case .content:
+            contentBody
+        case .sidebar:
+            sidebarBody
+        }
+    }
+
+    private var contentBody: some View {
         VStack(spacing: 0) {
             controls
                 .padding(.horizontal, leadingPadding)
@@ -41,10 +59,35 @@ struct ContentToolbar: View {
         .animation(SidebarMotion.sidebar, value: sidebarVisible)
     }
 
-    /// Distance from the card's padded leading edge to the first control, when the sidebar is hidden.
-    /// The card already starts `contentInset` points from the window edge.
+    /// Sidebar placement: navigation shares the traffic-light row; the address field sits below it.
+    private var sidebarBody: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                Color.clear
+                    .frame(width: max(traffic.clearance, SidebarMetrics.minimumTrafficClearance))
+                    .accessibilityHidden(true)
+                navigationCluster
+                Spacer(minLength: 4)
+                ToolbarIconButton(systemName: "sidebar.left", help: "Hide Sidebar") {
+                    model.toggleSidebar()
+                }
+            }
+            .padding(.trailing, 8)
+            .frame(height: SidebarMetrics.navRowHeight)
+            .padding(.top, max(0, SidebarMetrics.chromeCenterFromTop - SidebarMetrics.navRowHeight / 2))
+
+            addressField
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+                .padding(.bottom, 6)
+            progressTrack
+        }
+    }
+
+    /// The collapsed card is flush with the window, so clearance is the whole leading inset.
     private var trafficSpacer: CGFloat {
-        max(0, traffic.clearance - SidebarMetrics.contentInset - leadingPadding)
+        let clearance = max(traffic.clearance, SidebarMetrics.minimumTrafficClearance)
+        return max(0, clearance - leadingPadding)
     }
 
     private var navigationCluster: some View {
@@ -82,24 +125,26 @@ struct ContentToolbar: View {
     }
 
     private var addressField: some View {
-        let current = address
+        let current = addressText
         return Button {
             model.showCommandBar(.editCurrent)
         } label: {
-            Text(current.text)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(current.isPlaceholder ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity)
-                .frame(height: SidebarMetrics.toolbarControl)
-                .contentShape(Capsule())
+            ZStack {
+                Capsule()
+                    .fill(Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.05))
+                    .glassEffect(.regular.interactive(), in: .capsule)
+                Text(current.text)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(current.isPlaceholder ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 10)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: SidebarMetrics.toolbarControl)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .background {
-            Capsule().fill(Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.05))
-        }
-        .glassEffect(.regular.interactive(), in: .capsule)
         .overlay {
             Capsule().strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.16 : 0.12), lineWidth: 1)
         }
@@ -112,11 +157,18 @@ struct ContentToolbar: View {
         model.selectedTab?.isLoading == true
     }
 
-    private var address: (text: String, isPlaceholder: Bool) {
-        let url = model.selectedTab?.url
-            ?? model.selectedItemID.flatMap { model.library.item($0)?.url }
+    /// Live tab URL, then the sidebar item's URL. Reads both so the field updates when either changes.
+    private var addressText: (text: String, isPlaceholder: Bool) {
+        let tab = model.selectedTab
+        let live = tab?.url ?? tab?.webView?.url
+        let stored = model.selectedItemID.flatMap { model.library.item($0)?.url }
+        let url = live ?? stored
         if let host = SidebarTitle.host(of: url) {
             return (host, false)
+        }
+        if let absolute = url?.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines),
+           !absolute.isEmpty, absolute != "about:blank" {
+            return (absolute, false)
         }
         return ("Search or enter URL", true)
     }

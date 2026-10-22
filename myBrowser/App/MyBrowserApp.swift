@@ -13,6 +13,10 @@ struct MyBrowserApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
         .commands { AppCommands(model: appDelegate.model, updater: appDelegate.updater) }
+
+        Settings {
+            SettingsView()
+        }
     }
 }
 
@@ -42,7 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_COMMAND_BAR"] == "1" {
             model.showCommandBar(.newTab)
         }
+        if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SETTINGS"] == "1" {
+            openSettingsForDebug()
+        }
         DebugSnapshot.install(model: model)
+        installDebugToggle()
         #endif
     }
 
@@ -66,6 +74,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             break
         }
+    }
+
+    private func installDebugToggle() {
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(debugToggleSidebar(_:)),
+            name: Notification.Name("ch.marvinvr.mybrowser.debug.toggleSidebar"),
+            object: nil,
+            suspensionBehavior: .deliverImmediately
+        )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(debugOpenSettings(_:)),
+            name: Notification.Name("ch.marvinvr.mybrowser.debug.settings"),
+            object: nil,
+            suspensionBehavior: .deliverImmediately
+        )
+    }
+
+    @objc private func debugToggleSidebar(_ notification: Notification) {
+        model.toggleSidebar()
+    }
+
+    @objc private func debugOpenSettings(_ notification: Notification) {
+        openSettingsForDebug()
+    }
+
+    /// SwiftUI registers `showSettingsWindow:` after launch, so a delay is required.
+    private func openSettingsForDebug() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            NSApp.activate(ignoringOtherApps: true)
+            if let item = Self.menuItem(titled: "Settings") ?? Self.menuItem(titled: "Preferences") {
+                NSApp.sendAction(item.action ?? Selector(("showSettingsWindow:")), to: item.target, from: item)
+            } else {
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            }
+            let wanted = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SETTINGS_TAB"]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard let wanted, !wanted.isEmpty else { return }
+                for window in NSApp.windows {
+                    guard let toolbar = window.toolbar else { continue }
+                    guard let item = toolbar.items.first(where: {
+                        $0.label.caseInsensitiveCompare(wanted) == .orderedSame
+                    }) else { continue }
+                    if let action = item.action {
+                        NSApp.sendAction(action, to: item.target, from: item)
+                    }
+                }
+            }
+        }
+    }
+
+    private static func menuItem(titled needle: String) -> NSMenuItem? {
+        func walk(_ menu: NSMenu?) -> NSMenuItem? {
+            for item in menu?.items ?? [] {
+                if item.title.localizedCaseInsensitiveContains(needle) { return item }
+                if let found = walk(item.submenu) { return found }
+            }
+            return nil
+        }
+        return walk(NSApp.mainMenu)
     }
 
     /// Snapshot-only. `defaults` and System Events cannot change this machine's appearance.

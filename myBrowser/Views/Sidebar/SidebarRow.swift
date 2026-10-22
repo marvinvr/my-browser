@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// A site row shared by pinned items and today's tabs.
@@ -25,11 +26,7 @@ struct SidebarRow: View {
                 HStack(spacing: 8) {
                     FaviconView(image: icon, url: item.url ?? tab?.url, title: title, size: 16)
                         .opacity(isLoaded || isSelected ? 1 : 0.78)
-                    Text(title)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    FlatLabel(text: title)
                     Spacer(minLength: 0)
                 }
                 .padding(.leading, 6 + CGFloat(depth) * 14)
@@ -74,4 +71,35 @@ struct SidebarRow: View {
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
+}
+
+/// Opaque sidebar title. Vibrant `Text` over the selection fill cache-displays as grey and
+/// washes out against the light-mode chip.
+private struct FlatLabel: NSViewRepresentable {
+    var text: String
+
+    func makeNSView(context: Context) -> FlatLabelField {
+        let field = FlatLabelField(frame: .zero)
+        field.isEditable = false
+        field.isSelectable = false
+        field.isBordered = false
+        field.drawsBackground = false
+        field.font = .systemFont(ofSize: 13)
+        field.textColor = .labelColor
+        field.lineBreakMode = .byTruncatingTail
+        field.maximumNumberOfLines = 1
+        field.stringValue = text
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        return field
+    }
+
+    func updateNSView(_ field: FlatLabelField, context: Context) {
+        if field.stringValue != text { field.stringValue = text }
+        field.textColor = .labelColor
+    }
+}
+
+private final class FlatLabelField: NSTextField {
+    override var allowsVibrancy: Bool { false }
 }
