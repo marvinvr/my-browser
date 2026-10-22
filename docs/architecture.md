@@ -15,11 +15,12 @@ Living document. Update it when you change structure, the data model or a decisi
 ```
 myBrowser/
   App/            MyBrowserApp (scene), AppCommands (menu + shortcuts), WindowConfigurator (NSWindow tweaks)
-  Model/          Value types: Profile, Space, SidebarItem, SpaceColor, SortKey, SearchEngine, URLInput
+  Model/          Value types: Profile, Space, SidebarItem, SpaceColor, SortKey, SearchEngine, URLInput, URLDisplay
   Persistence/    LibraryStore (synced data), SessionStore (local window/tab session), JSONFileStorage
   Browser/        BrowserModel (per-window coordinator), BrowserTab (one WKWebView), ProfileManager, FaviconStore
   Views/
     Shell/        MainWindowView: sidebar + content card, ContentToolbar above the page
+    Toolbar/      AddressField, NavigationButtons, CopyLinkButton (shared with a sidebar address bar)
     Sidebar/      SidebarView, SpaceSwipeContainer, FavoritesGrid, PinnedTree, TabList, SpaceSwitcher, SidebarRow
     Web/          WebContentView (NSViewRepresentable that swaps the selected tab's WKWebView in)
     CommandBar/   CommandBarView + CommandBarModel (results)
@@ -66,7 +67,7 @@ SidebarItem {
 A pinned/favorite site keeps its `url` as the home URL even when its live tab navigates elsewhere (Arc behaviour). Closing a pinned tab unloads its web view, the item stays.
 
 ### Tabs (runtime)
-`BrowserTab` (`@Observable`, main actor) is the live counterpart of a site item: `tab.id == item.id`. It owns at most one `WKWebView`, created lazily on first selection, so restored tabs cost nothing until used. It exposes `title`, `url`, `favicon`, `isLoading`, `estimatedProgress`, `canGoBack/Forward`, and `goBack/goForward/reload/stop/load`. On creation it restores `interactionState` from the session store if present (back/forward history survives relaunch).
+`BrowserTab` (`@Observable`, main actor) is the live counterpart of a site item: `tab.id == item.id`. It owns at most one `WKWebView`, created lazily on first selection, so restored tabs cost nothing until used. It exposes `title`, `url`, `favicon`, `isLoading`, `estimatedProgress`, `canGoBack/Forward`, `themeColor`, and `goBack/goForward/reload/stop/load`. `themeColor` is the page tint: WebKit's `themeColor` when that colour is opaque, else `underPageBackgroundColor`, else a sample of the top of the page. On creation it restores `interactionState` from the session store if present (back/forward history survives relaunch).
 
 `BrowserModel.tabs: [UUID: BrowserTab]` holds the live tabs. An item without a `BrowserTab` is "not loaded". Selecting it creates one.
 
@@ -91,7 +92,7 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 - Phase 1: one main window (`Window` scene, id `main`) with one `BrowserModel`. `LibraryStore` and `SessionStore` are app-level singletons owned by the app and injected. Multiple windows (each its own `BrowserModel` sharing the library) come later.
 - Window: hidden title bar, full-size content view, transparent title bar; the traffic lights sit over the sidebar like Arc. `WindowConfigurator` (an `NSViewRepresentable` that grabs `view.window`) applies the AppKit tweaks.
 - Layout (`MainWindowView`): full-height sidebar on the left (behind-window vibrancy), web content on the right as a rounded card inset by a few points. The sidebar can be toggled (Cmd+S, like Arc); when hidden the card fills the window.
-- Toolbar (`ContentToolbar`): a compact bar (~38pt) across the top of the content card, above the page. It holds back, forward, and reload/stop, plus a Liquid Glass capsule address field that shows the page host. Clicking the field (or Cmd+L) opens the command bar in edit-current mode. A thin progress line runs under the toolbar while the page loads. The sidebar's top row is only the traffic lights and a sidebar-toggle button; favorites start below it. When the sidebar is hidden, the toolbar insets its controls so they clear the traffic lights.
+- Toolbar (`ContentToolbar`): a compact bar (~38pt) across the top of the content card, above the page. `NavigationButtons` (back, forward, reload/stop) and `AddressField` (with `CopyLinkButton`) read `BrowserModel` from the environment and take an optional `ToolbarChrome`, so the same controls can sit at the top of the sidebar. The resting field shows `URLDisplay`: host without scheme or `www.`, up to three path segments, no query or fragment. Clicking it (or Cmd+L) opens the command bar in edit-current mode with the full URL selected. The bar crossfades (~0.25s) to `BrowserTab.themeColor`; a transparent or neon colour keeps the window background. The field fill and label colours are derived from that tint so the text stays legible. ⌘R is handled only by `KeyMonitor` (Ctrl+R does nothing; key repeat does not reload again). ⌘⇧C copies the current URL. A thin progress line runs under the toolbar while the page loads. The sidebar's top row is only the traffic lights and a sidebar-toggle button; favorites start below it. When the sidebar is hidden, the toolbar insets its controls so they clear the traffic lights.
 - Sidebar rows use a flat highlight (soft white in light mode, a lighter fill in dark mode). They do not use `glassEffect`. Space icons share one size; the selected space is a small tinted rounded chip.
 - Command bar: a SwiftUI overlay centred over the window (glass panel), not a separate NSPanel. It opens with a short spring (~0.18s) and closes faster.
 
@@ -123,7 +124,8 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous item in sidebar order |
 | Cmd+Opt+→ / ← | Next / previous space |
 | Cmd+[ / Cmd+] | Back / forward |
-| Cmd+R | Reload |
+| Cmd+R | Reload (`KeyMonitor` only; Ctrl+R does nothing) |
+| Cmd+Shift+C | Copy link |
 | Cmd+S | Toggle sidebar |
 | Cmd+D | Pin / unpin current tab |
 | Esc | Close command bar / stop loading |
@@ -136,4 +138,5 @@ Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt
 - 2026-10-22: page two-finger swipe = back/forward, sidebar swipe = spaces. Sidebar swipe commits past 30% of the column or on a flick, and rubber-bands on the first and last space.
 - 2026-10-22: single window in Phase 1.
 - 2026-10-22: address field and back/forward/reload live in a toolbar above the page. Tabs stay in the sidebar. Sidebar selection is a flat fill, not glass.
+- 2026-10-22: the content toolbar tints from the page theme colour and shows a formatted URL. ⌘⇧C copies the link. The same toolbar controls are reusable in the sidebar.
 - 2026-10-22: bundle id `ch.marvinvr.mybrowser`; Sparkle feed on `main`; releases via `scripts/release.sh`.

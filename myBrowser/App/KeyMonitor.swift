@@ -2,6 +2,8 @@ import AppKit
 
 /// One local key monitor for shortcuts SwiftUI menus don't deliver reliably.
 /// Control-Tab switches tabs. Escape closes the command bar, or stops the load when it is hidden.
+/// ⌘R reloads here and the event is swallowed, so the Reload menu item does not fire as well.
+/// Ctrl+R is swallowed and does nothing (Safari). Key repeat does not reload again.
 final class KeyMonitor {
     static let shared = KeyMonitor()
 
@@ -18,10 +20,11 @@ final class KeyMonitor {
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let keyCode = event.keyCode
             let rawFlags = event.modifierFlags.rawValue
+            let isRepeat = event.isARepeat
             let consume = Self.shouldConsume(keyCode: keyCode, rawFlags: rawFlags)
             if consume || Self.isPlainEscape(keyCode: keyCode, rawFlags: rawFlags) {
                 Task { @MainActor in
-                    KeyMonitor.shared.handle(keyCode: keyCode, rawFlags: rawFlags)
+                    KeyMonitor.shared.handle(keyCode: keyCode, rawFlags: rawFlags, isRepeat: isRepeat)
                 }
             }
             return consume ? nil : event
@@ -37,6 +40,8 @@ final class KeyMonitor {
         }
         if keyCode == tKey, flags == [.command, .shift] { return true }
         if keyCode == wKey, flags == [.command, .shift] { return true }
+        // ⌘R is reload. Ctrl+R is eaten so it does not reload and does not reach the page.
+        if keyCode == rKey && (flags == .command || flags == .control) { return true }
         return false
     }
 
@@ -49,7 +54,7 @@ final class KeyMonitor {
     }
 
     /// Returns true when the event was handled and should not be delivered.
-    private func handle(keyCode: UInt16, rawFlags: UInt) -> Bool {
+    private func handle(keyCode: UInt16, rawFlags: UInt, isRepeat: Bool) -> Bool {
         guard let model else { return false }
         let flags = Self.modifiers(rawFlags)
 
@@ -74,6 +79,18 @@ final class KeyMonitor {
             return true
         }
 
+        if keyCode == Self.rKey {
+            if flags == .command {
+                if !isRepeat {
+                    model.selectedTab?.reload()
+                }
+                return true
+            }
+            if flags == .control {
+                return true
+            }
+        }
+
         if keyCode == Self.escapeKey, flags.isEmpty {
             if model.commandBarMode != nil {
                 model.hideCommandBar()
@@ -91,4 +108,5 @@ final class KeyMonitor {
     nonisolated private static let escapeKey: UInt16 = 53
     nonisolated private static let tKey: UInt16 = 17
     nonisolated private static let wKey: UInt16 = 13
+    nonisolated private static let rKey: UInt16 = 15
 }

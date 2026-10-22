@@ -17,6 +17,11 @@ struct AppCommands: Commands {
             Button("Check for Updates…") { updater.checkForUpdates() }
         }
 
+        CommandGroup(after: .pasteboard) {
+            Button("Copy Link") { model.copyCurrentLink() }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+        }
+
         CommandGroup(replacing: .newItem) {
             Button("New Tab") { model.showCommandBar(.newTab) }
                 .keyboardShortcut("t")
@@ -191,6 +196,9 @@ private struct ReloadCommand: View {
     @FocusedValue(\.browserNavigation) private var navigation
 
     var body: some View {
+        // The shortcut is also swallowed by KeyMonitor, which is the one path for ⌘R
+        // (no key-repeat, and Ctrl+R is not reload). This item stays so the menu shows ⌘R
+        // and a click still reloads. BrowserTab.reload drops a second call within 200ms.
         Button("Reload") { model.selectedTab?.reload() }
             .keyboardShortcut("r")
             .disabled(navigation?.canReload != true)
