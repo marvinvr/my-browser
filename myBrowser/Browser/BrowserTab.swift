@@ -5,7 +5,7 @@ import WebKit
 /// The live counterpart of a site `SidebarItem` (`id == item.id`). Owns at most one WKWebView,
 /// created lazily by `loadIfNeeded()`.
 @Observable
-final class BrowserTab: Identifiable {
+final class BrowserTab: NSObject, Identifiable {
     let id: UUID
     let profileID: UUID
 
@@ -49,6 +49,8 @@ final class BrowserTab: Identifiable {
     @ObservationIgnored private var lastReloadTime: TimeInterval = -.infinity
     @ObservationIgnored private var downloads: [ObjectIdentifier: WKDownload] = [:]
     @ObservationIgnored private var webDelegate: TabWebDelegate?
+    /// Filled in by `BrowserModel` so this tab can answer `WKWebExtensionTab`.
+    @ObservationIgnored var extensionBridge = ExtensionTabBridge()
 
     init(id: UUID, profileID: UUID, url: URL?, title: String, interactionState: Data?) {
         self.id = id
@@ -57,6 +59,7 @@ final class BrowserTab: Identifiable {
         self.title = title
         self.initialURL = url
         self.storedInteractionState = interactionState
+        super.init()
     }
 
     /// Owns a web view WebKit already created (window.open / target=_blank). Does not load `url`.
@@ -67,6 +70,7 @@ final class BrowserTab: Identifiable {
         self.title = title
         self.initialURL = nil
         self.storedInteractionState = nil
+        super.init()
         attach(webView)
     }
 
@@ -248,6 +252,7 @@ final class BrowserTab: Identifiable {
         if !loading {
             refreshThemeColor()
         }
+        onStateChange?(self)
     }
 
     private func noteProgress(_ progress: Double) {

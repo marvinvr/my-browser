@@ -53,7 +53,8 @@ struct ContentToolbar: View {
     private var contentBody: some View {
         VStack(spacing: 0) {
             controls
-                .padding(.horizontal, leadingPadding)
+                .padding(.leading, leadingPadding)
+                .padding(.trailing, leadingPadding + 6)
                 .frame(height: SidebarMetrics.toolbarHeight - SidebarMetrics.progressHeight)
             progressTrack(shown)
         }
@@ -86,8 +87,12 @@ struct ContentToolbar: View {
 
             NavigationButtons(chrome: shown)
             AddressField(chrome: shown)
-                .frame(maxWidth: .infinity)
+                .frame(minWidth: 80, maxWidth: .infinity)
+                .layoutPriority(-1)
                 .padding(.leading, 8)
+            ExtensionButtons()
+                .layoutPriority(1)
+                .padding(.leading, 4)
         }
         .animation(SidebarMotion.sidebar, value: sidebarVisible)
     }
@@ -113,7 +118,13 @@ struct ContentToolbar: View {
             AddressField(chrome: chrome)
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
-                .padding(.bottom, 6)
+                .padding(.bottom, 2)
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                ExtensionButtons()
+            }
+            .padding(.trailing, 8)
+            .padding(.bottom, 2)
             progressTrack(chrome)
         }
     }
