@@ -3,7 +3,7 @@
 myBrowser: native macOS browser (Swift 6, SwiftUI + AppKit, WebKit). Product + phases: `docs/PLAN.md`. Architecture: `docs/architecture.md` (keep it current).
 
 ## How work is organised
-- A **Claude lead** owns a phase/workstream. It plans, splits work into small, clearly specified tasks, and delegates the coding to **Grok High** agents via mmux. The lead reviews every diff, integrates, builds, runs and verifies. The lead codes itself only for glue, UI/feel decisions, or when a Grok agent failed twice on the same task.
+- **HARD RULE: Claude leads do not write code or project files themselves.** A Claude lead only plans, writes task prompts, spawns **Grok High** agents via mmux, waits, reviews diffs (read-only), and sends fixes back to the Grok agent that made them. Scaffolding, project.yml, architecture.md drafts, tests, UI tweaks, bug fixes: all of it goes to Grok High agents. The lead's own edits are limited to AGENTS.md/PLAN notes of a few lines. If a Grok agent fails twice, try a fresh Grok High or Grok xHigh with a better prompt, not Claude.
 - Spawn workers: `mmux new agent "Grok High" -p <project> --prompt "<self-contained task: goal, files, constraints, how to verify, commit message style>"`. The first Grok start in a folder shows a trust prompt: `mmux keys sX y`.
 - Wait: `mmux wait sX -t 2h` (exit 3 = needs input: read `mmux status sX`, answer with `mmux answer`). Then `mmux last sX`. Close finished workers (`mmux close sX`).
 - Parallel workers that touch overlapping files: give each its own worktree (`mmux worktree new <branch> --agent "Grok High" --prompt ...`), merge after review, then `mmux worktree rm <branch>`.
