@@ -72,7 +72,7 @@ struct ToolbarIconButton: View {
 }
 
 /// The reload arrow spins on the symbol's own ring anchor for the duration of a load.
-/// Clearing `spinning` lets that effect finish the turn and settle upright.
+/// About one turn every 0.65s. Clearing `spinning` settles upright at that rate.
 private struct ReloadButton: View {
     var symbol: Color
 
@@ -91,7 +91,7 @@ private struct ReloadButton: View {
                 .symbolRenderingMode(.monochrome)
                 .symbolEffect(
                     .rotate.byLayer.clockwise,
-                    options: .repeat(.continuous),
+                    options: .repeat(.continuous).speed(2.8),
                     isActive: spinning
                 )
                 .frame(width: SidebarMetrics.toolbarControl, height: SidebarMetrics.toolbarControl)
