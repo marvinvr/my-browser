@@ -32,6 +32,7 @@ struct SpaceSwipeContainer<Content: View>: View {
     @State private var settleToken = 0
     @State private var commitInFlight = false
     @State private var columnWidth: CGFloat = SidebarMetrics.defaultWidth
+    @State private var swipeGate = HapticGate<SpaceSwipeAction>()
 
     private let forcedOffset = SpaceSwipeDebug.forcedOffset
 
@@ -123,11 +124,13 @@ struct SpaceSwipeContainer<Content: View>: View {
         case .passthrough, .consume:
             break
         case .tracking(let value):
+            noteSpaceDetent(for: value)
             settleToken += 1
             var transaction = Transaction()
             transaction.animation = SpaceSwipeMotion.tracking
             withTransaction(transaction) { offset = value }
         case .settle(let value, let action):
+            noteSpaceDetent(action)
             settleToken += 1
             let token = settleToken
             withAnimation(SpaceSwipeMotion.settle) {
@@ -199,6 +202,25 @@ struct SpaceSwipeContainer<Content: View>: View {
             snap(to: newID)
             relay.noteSettleFinished()
         }
+    }
+
+    /// One tick when the finger locks onto a neighbour, including a flick that never sat on the line.
+    private func noteSpaceDetent(_ action: SpaceSwipeAction) {
+        let token: SpaceSwipeAction? = action == .none ? nil : action
+        guard swipeGate.changed(to: token) != nil else { return }
+        Haptics.play(.spaceSnap)
+    }
+
+    private func noteSpaceDetent(for offset: CGFloat) {
+        let current = displayedSpaceID ?? model.selectedSpaceID
+        let spaces = model.library.orderedSpaces
+        let index = spaces.firstIndex { $0.id == current } ?? 0
+        noteSpaceDetent(SpaceSwipeTracker.armedDetent(
+            offset: offset,
+            width: columnWidth,
+            canGoPrevious: index > 0,
+            canGoNext: index + 1 < spaces.count
+        ))
     }
 
     private func snap(to id: UUID) {

@@ -85,7 +85,8 @@ nonisolated struct SpaceSwipeTracker: Sendable {
     var canGoNext = false
     var width: CGFloat = 1
 
-    var commitFraction: CGFloat = 0.30
+    static let defaultCommitFraction: CGFloat = 0.30
+    var commitFraction: CGFloat = defaultCommitFraction
     /// Points per second. A flick at least this fast commits without crossing `commitFraction`.
     var flickVelocity: CGFloat = 1100
     var dominanceRatio: CGFloat = 1.5
@@ -194,6 +195,21 @@ nonisolated struct SpaceSwipeTracker: Sendable {
             }
             return nil
         }
+    }
+
+    /// Neighbour the finger has crossed the commit line toward. Dead ends stay `.none`.
+    static func armedDetent(
+        offset: CGFloat,
+        width: CGFloat,
+        commitFraction: CGFloat = defaultCommitFraction,
+        canGoPrevious: Bool,
+        canGoNext: Bool
+    ) -> SpaceSwipeAction {
+        guard width >= 1 else { return .none }
+        let line = width * commitFraction
+        if offset >= line, canGoPrevious { return .selectPrevious }
+        if offset <= -line, canGoNext { return .selectNext }
+        return .none
     }
 
     /// Diminishing translation for `distance` points of overscroll along `dimension`.

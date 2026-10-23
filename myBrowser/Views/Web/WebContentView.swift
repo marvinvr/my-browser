@@ -14,6 +14,13 @@ struct WebContentView: View {
             }
         }
         .animation(.spring(duration: 0.35, bounce: 0.2), value: model.selectedTab == nil)
+        .background {
+            NavigationSwipeMonitor(
+                canGoBack: model.selectedTab?.canGoBack ?? false,
+                canGoForward: model.selectedTab?.canGoForward ?? false
+            )
+            .allowsHitTesting(false)
+        }
         .background(Color(nsColor: .windowBackgroundColor))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

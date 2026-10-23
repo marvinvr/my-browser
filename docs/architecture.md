@@ -121,7 +121,7 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 - `WebContentView` is an `NSViewRepresentable` around a plain container `NSView`; when the selected tab changes it removes the old `WKWebView` and adds the new one as a subview (pinned to edges). Web views are never recreated on selection changes, so page state is kept.
 - Space switching swaps the sidebar contents and selects that space's last selected item; live tabs of other spaces stay loaded (memory pressure handling / tab unloading is Phase 2+).
 - `target=_blank` / `window.open` / Cmd-click: `WKUIDelegate.createWebView` → new `.tabs` item in the same space (Phase 1 opens in a new tab and selects it; Cmd-click opens in background).
-- Back/forward: `allowsBackForwardNavigationGestures = true` (Safari-style two-finger swipe on the page). Decision: **page swipe = back/forward; swipes on the sidebar switch spaces**. `SpaceSwipeContainer` claims a horizontal trackpad swipe on the space column only (`SpaceSwipeTracker`); vertical list scrolling and the web view are left alone.
+- Back/forward: `allowsBackForwardNavigationGestures = true` (Safari-style two-finger swipe on the page). Decision: **page swipe = back/forward; swipes on the sidebar switch spaces**. `SpaceSwipeContainer` claims a horizontal trackpad swipe on the space column only (`SpaceSwipeTracker`); vertical list scrolling and the web view are left alone. Crossing the space-swipe commit line (30% of the column, or a flick that will commit) ticks the trackpad once. Crossing WebKit's history-swipe completion distance (`min(187.5pt, half the page)`) ticks once. Both go through `Haptics` and do not repeat while the finger stays past the line.
 - Favicons: `FaviconStore` downloads `/favicon.ico` or the page's `<link rel=icon>` (via JS after load) and caches PNGs per host in `Favicons/`. Not synced.
 
 ## Web extensions
@@ -169,6 +169,7 @@ The sidebar is a `VStack`/`ForEach`, not a `List`. Rows use `.draggable` and one
 - Favorites accept sites only. Dragging between the tabs list and pinned pins or unpins. A link dragged from a page or another app (http/https only) becomes a new site at that slot. A new tab in the current space is selected.
 - Dropping on a space icon moves the item and its subtree. Sites keep their section. Folders can only live in pinned, so they land there. The current space stays selected. A live tab that changes space is unloaded, because the destination profile has different cookies, and the page URL is stored on the item.
 - A two-finger space swipe that is still tracking always settles: a new touch that begins outside the sidebar, the window resigning key, or the app resigning active. Under 30% of the column width it springs back to 0. Past that, or on a flick, it commits.
+- Drag haptics, also via `Haptics`: a new drop slot, a cross between Tabs and Pinned, a folder that opens after the hover delay, a Space icon becoming the drop target, and the drop itself. Each fires once per change. Hovering a folder without it opening is silent. Patterns and timing live in `Views/Haptics.swift`.
 
 ## Sync
 
@@ -266,3 +267,4 @@ Do not flip those switches before the container and the profile exist. A Release
 - 2026-10-23: sidebar drag and drop uses `LibraryStore.move` (one batch, subtree included). A drop on a space icon keeps a site's section; folders land in pinned. A live tab that changes space is unloaded and keeps its URL. A space swipe that is still tracking settles on a new outside touch, resign-key, or resign-active.
 - 2026-10-23: Chrome-family bookmarks and Arc sidebars import through an `ImportPlan` applied in one `LibraryStore` batch. Arc favorites go on the first space of each shared profile. `Space.emoji` is optional so older library files still open.
 - 2026-10-23: web extensions use `WKWebExtensionController`, one controller per profile id. Packages are unpacked under `Application Support/myBrowser/Extensions`.
+- 2026-10-23: trackpad haptics use `NSHapticFeedbackManager` through `Haptics`. One pulse per state change: space-swipe detent, history-swipe threshold, drop slot, pin/unpin, folder auto-expand, space drop target, and the drop.

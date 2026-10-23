@@ -419,6 +419,7 @@ final class SidebarInteraction {
     @ObservationIgnored weak var model: BrowserModel?
     @ObservationIgnored private var expandTask: Task<Void, Never>?
     @ObservationIgnored private var expandID: UUID?
+    @ObservationIgnored private var dragHaptics = SidebarDragHaptics()
 
     func noteDrag(phase: DragSession.Phase, ids: [UUID]) {
         switch phase {
@@ -430,6 +431,7 @@ final class SidebarInteraction {
             proposal = nil
             hoverToken = nil
             cancelExpand()
+            dragHaptics.reset()
         @unknown default:
             draggingID = ids.first ?? SidebarDragBridge.armedID
         }
@@ -462,7 +464,12 @@ final class SidebarInteraction {
                 draggingID: dragging,
                 library: model.library
             )
-            if proposal != next { proposal = next }
+            if proposal != next {
+                proposal = next
+                if let moment = dragHaptics.note(next) {
+                    Haptics.play(moment)
+                }
+            }
             if case .intoFolder(let folder) = next {
                 scheduleExpand(folder)
             } else {
@@ -554,6 +561,7 @@ final class SidebarInteraction {
             let section = model.library.sectionForSpaceDrop(item)
             model.moveItem(draggingID, toSpace: spaceID, section: section, parentID: nil, position: .end)
         }
+        Haptics.play(.drop)
         self.proposal = nil
         hoverToken = nil
         cancelExpand()
@@ -578,6 +586,7 @@ final class SidebarInteraction {
             guard self.expandID == folderID, let model = self.model else { return }
             guard let folder = model.library.item(folderID), folder.isFolder, !folder.isExpanded else { return }
             model.toggleExpanded(folderID)
+            Haptics.play(.folderExpand)
         }
     }
 
