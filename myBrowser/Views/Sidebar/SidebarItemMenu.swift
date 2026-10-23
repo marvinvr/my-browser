@@ -11,12 +11,13 @@ struct SidebarItemMenu: ViewModifier {
     func body(content: Content) -> some View {
         content.contextMenu {
             if item.isFolder {
-                Button("Rename") { onRename() }
+                Button("Rename…") { onRename() }
                 Button("New Folder") { onNewFolderInside() }
                 moveMenu
                 Divider()
                 Button("Delete", role: .destructive) { model.delete(item.id) }
             } else if item.section == .tabs {
+                Button("Rename…") { onRename() }
                 Button("Pin") { model.pin(item.id) }
                 Button("Add to Favorites") { model.addToFavorites(item.id) }
                 Button("New Folder") { onNewFolderInside() }
@@ -29,7 +30,7 @@ struct SidebarItemMenu: ViewModifier {
                 Button("Close") { model.close(item.id) }
             } else {
                 Button("Unpin") { model.unpin(item.id) }
-                Button("Rename") { onRename() }
+                Button("Rename…") { onRename() }
                 if model.isPinnedAway(item.id) {
                     Button("Replace Pinned URL with Current") {
                         model.replacePinnedURLWithCurrent(item.id)

@@ -17,7 +17,7 @@ struct SidebarRow: View {
         let away = model.isPinnedAway(item.id)
         let title = SidebarTitle.text(for: item, tab: tab)
         let isSelected = model.selectedItemID == item.id && !model.sidebarFocusIsFolder
-        let isEditing = interaction.editingID == item.id && item.section != .tabs
+        let isEditing = interaction.editingID == item.id
         let icon = rowIcon(tab: tab, away: away)
         let leading = SidebarDropGeometry.rowLeading + CGFloat(depth) * SidebarDropGeometry.indent
         let iconURL = item.section == .tabs ? (item.url ?? tab?.url) : item.url
@@ -41,34 +41,38 @@ struct SidebarRow: View {
                 .accessibilityHidden(true)
             }
 
-            Button {
-                model.select(item.id)
-            } label: {
+            if isEditing {
                 HStack(spacing: item.section == .pinned ? 0 : 8) {
                     if item.section != .pinned {
                         FaviconView(image: icon, url: iconURL, title: title, size: 16)
                     }
-                    if away, !isEditing {
-                        FlatLabel(text: "  /  ", color: .secondaryLabelColor, hugs: true)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .accessibilityHidden(true)
-                    }
-                    if isEditing {
-                        SidebarInlineField(itemID: item.id, title: item.title)
-                    } else {
-                        FlatLabel(text: title)
-                    }
+                    SidebarInlineField(title: title, itemID: item.id)
                     Spacer(minLength: 0)
                 }
                 .padding(.leading, item.section == .pinned ? 0 : leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+            } else {
+                Button {
+                    model.select(item.id)
+                } label: {
+                    HStack(spacing: item.section == .pinned ? 0 : 8) {
+                        if item.section != .pinned {
+                            FaviconView(image: icon, url: iconURL, title: title, size: 16)
+                        }
+                        if away {
+                            FlatLabel(text: "  /  ", color: .secondaryLabelColor, hugs: true)
+                                .fixedSize(horizontal: true, vertical: false)
+                                .accessibilityHidden(true)
+                        }
+                        FlatLabel(text: title)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.leading, item.section == .pinned ? 0 : leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            .simultaneousGesture(TapGesture(count: 2).onEnded {
-                guard item.section != .tabs else { return }
-                interaction.editingID = item.id
-            })
 
             if hovering, !isEditing {
                 Button {

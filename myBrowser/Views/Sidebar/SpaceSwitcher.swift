@@ -5,6 +5,7 @@ import SwiftUI
 /// Every icon shares one hit target. Selection is a tinted rounded chip, not a filled circle.
 struct SpaceSwitcher: View {
     @Environment(BrowserModel.self) private var model
+    @Environment(SidebarInteraction.self) private var interaction
     @Environment(\.colorScheme) private var colorScheme
     @State private var editorMode: SpaceEditorMode?
 
@@ -59,6 +60,11 @@ struct SpaceSwitcher: View {
         .animation(SidebarMotion.row, value: selected)
         .sidebarDropTarget(.space(space.id))
         .contextMenu {
+            Button("Rename…") {
+                interaction.editingID = nil
+                model.selectSpace(space.id)
+                interaction.editingSpaceID = space.id
+            }
             Button("Edit…") { editorMode = .edit(space) }
             Button("Delete", role: .destructive) { model.deleteSpace(space.id) }
                 .disabled(onlySpace)

@@ -326,6 +326,13 @@ final class BrowserTab: NSObject, Identifiable {
         onStateChange?(self)
     }
 
+    /// Sidebar rename. The next real page title still replaces this.
+    func replaceTitle(_ raw: String) {
+        let next = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !next.isEmpty, next != title else { return }
+        title = next
+    }
+
     private func noteURL(_ newURL: URL?) {
         guard let newURL, Self.isPageURL(newURL), newURL != url else { return }
         let previousHost = url?.host()?.lowercased()

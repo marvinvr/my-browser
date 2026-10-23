@@ -428,6 +428,8 @@ final class SidebarInteraction {
     var proposal: SidebarDropProposal?
     var hoverToken: UUID?
     var editingID: UUID?
+    /// Space whose name is being edited in the sidebar header.
+    var editingSpaceID: UUID?
 
     @ObservationIgnored weak var model: BrowserModel?
     @ObservationIgnored private var expandTask: Task<Void, Never>?

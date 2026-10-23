@@ -406,8 +406,10 @@ final class BrowserModel {
     }
 
     func rename(_ itemID: UUID, to title: String) {
-        guard library.item(itemID) != nil else { return }
-        library.updateItem(itemID) { $0.title = title }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, library.item(itemID) != nil else { return }
+        library.updateItem(itemID) { $0.title = trimmed }
+        tabs[itemID]?.replaceTitle(trimmed)
     }
 
     func toggleExpanded(_ folderID: UUID) {
