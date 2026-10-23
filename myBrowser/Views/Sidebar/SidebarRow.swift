@@ -19,7 +19,7 @@ struct SidebarRow: View {
 
         HStack(spacing: 0) {
             if item.isSplit {
-                splitSegments(leading: leading, isSelected: isSelected)
+                splitSegments(isSelected: isSelected)
             } else {
                 siteControls(isEditing: isEditing, leading: leading)
             }
@@ -44,10 +44,13 @@ struct SidebarRow: View {
         }
         .frame(height: SidebarMetrics.rowHeight)
         .background {
-            SidebarSelectionBackground(
-                isSelected: isSelected,
-                isHovering: hovering
-            )
+            // A split's fill sits on the focused segment, not across the whole row.
+            if !item.isSplit {
+                SidebarSelectionBackground(
+                    isSelected: isSelected,
+                    isHovering: hovering
+                )
+            }
         }
         .onContinuousHover { phase in
             if interaction.draggingID == item.id { return }
@@ -127,68 +130,24 @@ struct SidebarRow: View {
         }
     }
 
-    private func splitSegments(leading: CGFloat, isSelected: Bool) -> some View {
+    /// One row-height container. Segments share its width; a gap separates them.
+    /// Folder depth indents the container the same way a nested site row indents its icon.
+    private func splitSegments(isSelected: Bool) -> some View {
         let members = model.library.splitMembers(of: item.id)
         let focusID = model.resolvedFocus(in: item.id)
-        return HStack(spacing: 0) {
-            ForEach(Array(members.enumerated()), id: \.element.id) { index, member in
-                if index > 0 {
-                    Rectangle()
-                        .fill(Color.primary.opacity(isSelected ? 0.28 : 0.16))
-                        .frame(width: 1, height: SidebarMetrics.splitDivider)
-                        .padding(.horizontal, 4)
-                        .accessibilityHidden(true)
-                }
-                splitSegment(member, focused: member.id == focusID)
+        return SplitSegmentLayout(spacing: SidebarMetrics.splitSegmentGap) {
+            ForEach(members) { member in
+                SplitPaneSegment(
+                    member: member,
+                    splitID: item.id,
+                    focused: member.id == focusID,
+                    rowSelected: isSelected,
+                    paneCount: members.count
+                )
             }
         }
-        .padding(.leading, leading)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func splitSegment(_ member: SidebarItem, focused: Bool) -> some View {
-        let tab = model.tabs[member.id]
-        let away = model.isPinnedAway(member.id)
-        let title = SidebarTitle.text(for: member, tab: tab)
-        let icon = rowIcon(for: member, tab: tab, away: away)
-        let iconURL = member.section == .tabs ? (member.url ?? tab?.url) : member.url
-        return HStack(spacing: 0) {
-            Button {
-                guard !interaction.shouldIgnoreRowClick() else { return }
-                if away {
-                    model.returnToPinnedURL(member.id)
-                } else {
-                    model.select(member.id)
-                }
-            } label: {
-                FaviconView(image: icon, url: iconURL, title: title, size: SidebarMetrics.rowIcon)
-                    .frame(height: SidebarMetrics.rowHeight)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHidden(true)
-
-            Button {
-                guard !interaction.shouldIgnoreRowClick() else { return }
-                model.select(member.id)
-            } label: {
-                HStack(spacing: 0) {
-                    if away {
-                        FlatLabel(text: "  /  ", prominence: .quiet, hugs: true)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .accessibilityHidden(true)
-                    }
-                    FlatLabel(text: title, prominence: focused ? .strong : .quiet)
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityLabel(title)
-            .accessibilityAddTraits(focused ? .isSelected : [])
-        }
+        .padding(.leading, CGFloat(depth) * SidebarDropGeometry.indent)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     /// Away pins keep the saved site's icon. The slash is what says the page has moved.
@@ -220,15 +179,138 @@ struct SidebarRow: View {
     }
 }
 
+/// One pane inside a split row. Same height and corner radius as a site row.
+/// The focused pane of the selected split takes the selection fill; hover fills just this segment.
+private struct SplitPaneSegment: View {
+    var member: SidebarItem
+    var splitID: UUID
+    var focused: Bool
+    var rowSelected: Bool
+    var paneCount: Int
+
+    @Environment(BrowserModel.self) private var model
+    @Environment(SidebarInteraction.self) private var interaction
+    @State private var hovering = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let showTitle = SidebarMetrics.splitSegmentShowsTitle(paneCount: paneCount, width: geo.size.width)
+            segment(showTitle: showTitle)
+                .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            SidebarSelectionBackground(
+                isSelected: rowSelected && focused,
+                isHovering: hovering
+            )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onContinuousHover { phase in
+            if interaction.draggingID == splitID { return }
+            hovering = if case .active = phase { true } else { false }
+        }
+    }
+
+    private func segment(showTitle: Bool) -> some View {
+        let tab = model.tabs[member.id]
+        let away = model.isPinnedAway(member.id)
+        let title = SidebarTitle.text(for: member, tab: tab)
+        let icon = iconImage(tab: tab, away: away)
+        let iconURL = member.section == .tabs ? (member.url ?? tab?.url) : member.url
+        return HStack(spacing: showTitle ? 8 : 0) {
+            iconControl(image: icon, url: iconURL, title: title, away: away, fills: !showTitle)
+            if showTitle {
+                titleControl(title: title, away: away)
+            }
+        }
+        .padding(.leading, showTitle ? SidebarDropGeometry.rowLeading : 0)
+        .padding(.trailing, showTitle ? 4 : 0)
+    }
+
+    /// The icon returns a pin home when the live page has moved. The rest of the segment focuses the pane.
+    private func iconControl(image: NSImage?, url: URL?, title: String, away: Bool, fills: Bool) -> some View {
+        Button {
+            guard !interaction.shouldIgnoreRowClick() else { return }
+            if away {
+                model.returnToPinnedURL(member.id)
+            } else {
+                model.select(member.id)
+            }
+        } label: {
+            FaviconView(image: image, url: url, title: title, size: SidebarMetrics.rowIcon)
+                .frame(maxWidth: fills ? .infinity : nil, maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityHidden(!fills)
+        .accessibilityAddTraits(fills && rowSelected && focused ? .isSelected : [])
+    }
+
+    private func titleControl(title: String, away: Bool) -> some View {
+        Button {
+            guard !interaction.shouldIgnoreRowClick() else { return }
+            model.select(member.id)
+        } label: {
+            HStack(spacing: 0) {
+                if away {
+                    FlatLabel(text: "  /  ", prominence: .quiet, hugs: true)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityHidden(true)
+                }
+                FlatLabel(text: title)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(rowSelected && focused ? .isSelected : [])
+    }
+
+    private func iconImage(tab: BrowserTab?, away: Bool) -> NSImage? {
+        if away, let saved = member.url, let cached = model.favicons.cachedFavicon(for: saved) {
+            return cached
+        }
+        return tab?.favicon ?? (member.url ?? tab?.url).flatMap { model.favicons.cachedFavicon(for: $0) }
+    }
+}
+
+/// Equal slots for a split row. Title length does not change a segment's width.
+private nonisolated struct SplitSegmentLayout: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        CGSize(
+            width: proposal.width ?? 0,
+            height: proposal.height ?? SidebarMetrics.rowHeight
+        )
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let count = subviews.count
+        guard count > 0 else { return }
+        let gaps = spacing * CGFloat(count - 1)
+        let width = max(0, (bounds.width - gaps) / CGFloat(count))
+        let child = ProposedViewSize(width: width, height: bounds.height)
+        var x = bounds.minX
+        for subview in subviews {
+            subview.place(at: CGPoint(x: x, y: bounds.minY), anchor: .topLeading, proposal: child)
+            x += width + spacing
+        }
+    }
+}
+
 /// Opaque sidebar title. Vibrant `Text` over the selection fill cache-displays as grey and
 /// washes out against the light-mode chip.
 private struct FlatLabel: NSViewRepresentable {
     enum Prominence {
-        /// A normal row, and an unfocused split pane.
+        /// A row title. Split panes use this too; the segment fill marks focus.
         case regular
-        /// The focused pane. Slightly heavier than its siblings.
-        case strong
-        /// An unfocused pane in a split row, and the away slash.
+        /// The away slash.
         case quiet
     }
 
@@ -261,9 +343,6 @@ private struct FlatLabel: NSViewRepresentable {
         switch prominence {
         case .regular:
             field.font = .systemFont(ofSize: SidebarMetrics.rowTitle)
-            field.textColor = .labelColor
-        case .strong:
-            field.font = .systemFont(ofSize: SidebarMetrics.rowTitle, weight: .medium)
             field.textColor = .labelColor
         case .quiet:
             field.font = .systemFont(ofSize: SidebarMetrics.rowTitle)

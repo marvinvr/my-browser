@@ -36,8 +36,17 @@ nonisolated enum SidebarMetrics {
     static let folderSymbol: CGFloat = 14
     /// New Tab plus. Was 12pt.
     static let newTabSymbol: CGFloat = 13
-    /// Hairline between panes in a split row. Was 12pt.
-    static let splitDivider: CGFloat = 13
+    /// Gap between the equal segments of a split row.
+    static let splitSegmentGap: CGFloat = 2
+    /// Narrowest 3- or 4-pane segment that still shows a title. Two panes always show one.
+    /// Below this the title is a letter and an ellipsis, so the segment is the favicon.
+    static let splitTitleMinWidth: CGFloat = 62
+
+    /// A 3- or 4-pane segment shows its title only when `width` fits one. Two panes always do.
+    static func splitSegmentShowsTitle(paneCount: Int, width: CGFloat) -> Bool {
+        if paneCount < 3 { return true }
+        return width.isFinite && width >= splitTitleMinWidth
+    }
     /// Favorite glyph. The old 18pt icon scaled with the row icon (16 → 17).
     static let favoriteIcon: CGFloat = 19
     /// Favorite tile. Was 36pt, so the padding around the glyph stays the same.

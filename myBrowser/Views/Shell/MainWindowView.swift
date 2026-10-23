@@ -59,6 +59,13 @@ struct MainWindowView: View {
     }
 
     private var resolvedWidth: Double {
+        #if DEBUG
+        // Snapshot runs must not write `sidebarWidth`. The installed app shares that default.
+        if let raw = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SIDEBAR_WIDTH"],
+           let width = Double(raw), width > 0 {
+            return min(SidebarMetrics.maxWidth, max(SidebarMetrics.minWidth, width))
+        }
+        #endif
         let raw = draggedWidth ?? storedSidebarWidth
         return min(SidebarMetrics.maxWidth, max(SidebarMetrics.minWidth, raw))
     }
