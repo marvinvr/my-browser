@@ -5,7 +5,11 @@ import Foundation
 /// An id is 32 characters from `a` through `p`. Store links look like
 /// `https://chromewebstore.google.com/detail/<name>/<id>`.
 nonisolated enum ChromeWebStoreLink {
-    private static let chromeVersion = "138.0.7204.100"
+    /// A current Chrome major, written `major.0.0.0`. The update server answers
+    /// HTTP 204 with an empty body when this is older than the versions it still
+    /// serves. `138.0.7204.100` did that for 1Password on 2026-10-23. `140.0.0.0`
+    /// and newer return a redirect to the CRX.
+    private static let chromeVersion = "156.0.0.0"
 
     static func isExtensionID(_ text: String) -> Bool {
         text.count == 32 && text.allSatisfy { $0 >= "a" && $0 <= "p" }
@@ -35,12 +39,14 @@ nonisolated enum ChromeWebStoreLink {
         return components?.url
     }
 
-    /// Downloads the CRX. Google answers with a redirect to the package bytes.
+    /// Downloads the CRX. Google's first response is a redirect to the package bytes.
+    /// `URLSession` follows that redirect and keeps this User-Agent on the second request.
     static func download(id: String) async throws -> Data {
         guard let url = downloadURL(id: id) else {
             throw ExtensionInstallError.store("That is not a Chrome Web Store extension id.")
         }
         var request = URLRequest(url: url, timeoutInterval: 60)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         let data: Data
         let response: URLResponse
@@ -49,11 +55,16 @@ nonisolated enum ChromeWebStoreLink {
         } catch {
             throw ExtensionInstallError.store(error.localizedDescription)
         }
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw ExtensionInstallError.store("The store returned HTTP \(http.statusCode).")
+        let status = (response as? HTTPURLResponse)?.statusCode
+        if status == 204 || data.isEmpty {
+            let suffix = status.map { " (HTTP \($0))" } ?? ""
+            throw ExtensionInstallError.store("Chrome returned an empty download\(suffix).")
+        }
+        if let status, !(200..<300).contains(status) {
+            throw ExtensionInstallError.store("The store returned HTTP \(status).")
         }
         guard data.count > 16 else {
-            throw ExtensionInstallError.store("The store returned an empty download.")
+            throw ExtensionInstallError.store("Chrome returned an empty download.")
         }
         if !data.prefix(4).elementsEqual(Data("Cr24".utf8)) {
             let preview = String(data: data.prefix(180), encoding: .utf8)?
@@ -64,5 +75,5 @@ nonisolated enum ChromeWebStoreLink {
         return data
     }
 
-    private static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+    private static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/\(chromeVersion) Safari/537.36"
 }

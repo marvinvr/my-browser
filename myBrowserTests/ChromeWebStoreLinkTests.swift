@@ -21,5 +21,7 @@ struct ChromeWebStoreLinkTests {
         #expect(absolute.contains("acceptformat=crx2,crx3") || absolute.contains("acceptformat=crx2%2Ccrx3"))
         #expect(absolute.contains("id%3D\(darkReader)%26uc"))
         #expect(ChromeWebStoreLink.downloadURL(id: "nope") == nil)
+        let current = try #require(ChromeWebStoreLink.downloadURL(id: darkReader))
+        #expect(current.absoluteString.contains("prodversion=156.0.0.0"))
     }
 }
