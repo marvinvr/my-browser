@@ -184,19 +184,12 @@ private struct CommandBarPanel: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 16, height: 16)
         case .tab(let item):
-            let image = browser.tabs[item.id]?.favicon ?? item.url.flatMap { browser.favicons.cachedFavicon(for: $0) }
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 16, height: 16)
-                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-            } else {
-                Image(systemName: "globe")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
-            }
+            FaviconView(
+                image: browser.tabs[item.id]?.favicon ?? item.url.flatMap { browser.favicons.cachedFavicon(for: $0) },
+                url: item.url,
+                title: item.title,
+                size: 16
+            )
         }
     }
 
