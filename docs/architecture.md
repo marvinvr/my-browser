@@ -136,6 +136,7 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 - `BrowserTab` adopts `WKWebExtensionTab` (`Browser/BrowserTab+Extension.swift`). The main window is one `WKWebExtensionWindow`. Open, activate, close, and property changes are forwarded to the controller. An extension that opens a tab goes through `BrowserModel.openTabForExtension`, which returns the live tab. Extension pages (options, extension URLs) use that extension context's `webViewConfiguration`.
 - A click calls `performAction(for:)`. When the action presents a popup, the controller delegate shows `action.popupPopover` anchored to the toolbar button. Permission requests are an Allow / Don't Allow sheet. The choice is written into `extensions.json` and applied with `setPermissionStatus` before the context loads.
 - Enabling an extension that injects scripts reloads that profile's open http(s) pages so the scripts run. Launching the app loads the extension without reloading pages that are already open.
+- A package that requests `privacy` or `webRequestBlocking` gets `ExtensionWebKitCompat` at install. WebKit has neither API, and it ignores `{cancel:true}` from `webRequest`, so the shim only fills the missing objects (`privacy`, a few `webNavigation` / `runtime` events, `alarms.create`, illegal menu patterns) and leaves the real `browser` object in place. uBlock Origin's cosmetic filters then run. Scriptlets use the same `tabs.executeScript` path. Network blocking does not. See `docs/ubo-network-blocking.md`.
 
 ## Command bar
 
@@ -275,6 +276,7 @@ Do not flip those switches before the container and the profile exist. A Release
 - 2026-10-23: folder rows drag as plain buttons. A link drop reads `NSURL` from the pasteboard and falls back to the plain-text URL. The row close button hides for the duration of a drag without leaving the layout.
 - 2026-10-23: Chrome-family bookmarks and Arc sidebars import through an `ImportPlan` applied in one `LibraryStore` batch. Arc favorites (`topApps`) are copied onto every imported space of that profile. `Space.emoji` is optional so older library files still open.
 - 2026-10-23: web extensions use `WKWebExtensionController`, one controller per profile id. Packages are unpacked under `Application Support/myBrowser/Extensions`.
+- 2026-10-23: uBlock Origin (MV2, Chromium zip) installs through Settings → Extensions. Cosmetic filters run. Scriptlets use `tabs.executeScript`. Blocking `webRequest` does not, and there is no content-rule bridge yet (`docs/ubo-network-blocking.md`).
 - 2026-10-23: trackpad haptics use `NSHapticFeedbackManager` through `Haptics`. One pulse per state change: space-swipe detent, history-swipe threshold, drop slot, pin/unpin, folder auto-expand, space drop target, and the drop.
 - 2026-10-23: folder disclosure is a 0.2s no-bounce spring. Sidebar views read per-parent `SidebarSiblingList`s, so one toggle does not refresh the rest of the column.
 - 2026-10-23: the favorites grid balances rows (`ceil(n / maxPerRow)`, remainder on the earlier rows) so six icons are 3+3. Tiles in a row share its width. At most four per row, same as before.
