@@ -16,6 +16,22 @@ struct SidebarItemMenu: ViewModifier {
                 moveMenu
                 Divider()
                 Button("Delete", role: .destructive) { model.delete(item.id) }
+            } else if item.isSplit {
+                if item.section == .tabs {
+                    Button("Pin") { model.pin(item.id) }
+                } else {
+                    Button("Unpin") { model.unpin(item.id) }
+                }
+                moveMenu
+                if let url = splitLink {
+                    Button("Copy Link") { SidebarClipboard.copy(url) }
+                }
+                Divider()
+                Button("Close") { model.close(item.id) }
+                if item.section != .tabs {
+                    Divider()
+                    Button("Delete", role: .destructive) { model.delete(item.id) }
+                }
             } else if item.section == .tabs {
                 Button("Pin") { model.pin(item.id) }
                 Button("Add to Favorites") { model.addToFavorites(item.id) }
@@ -55,5 +71,13 @@ struct SidebarItemMenu: ViewModifier {
 
     private var link: URL? {
         SidebarTitle.link(for: item, tab: model.tabs[item.id])
+    }
+
+    /// Focused pane, or the first pane when focus has not been stored.
+    private var splitLink: URL? {
+        let members = model.library.splitMembers(of: item.id)
+        let focus = model.resolvedFocus(in: item.id)
+        guard let member = members.first(where: { $0.id == focus }) ?? members.first else { return nil }
+        return SidebarTitle.link(for: member, tab: model.tabs[member.id])
     }
 }
