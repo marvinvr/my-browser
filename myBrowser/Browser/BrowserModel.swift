@@ -72,6 +72,9 @@ final class BrowserModel {
         if let itemID = session.selectedItemBySpace[resolved] {
             select(itemID)
         }
+        library.onRemoteApplied = { [weak self] in
+            self?.adoptLiveSpaceIfSelectionGone()
+        }
         installPictureInPictureMonitoring()
     }
 
@@ -205,6 +208,12 @@ final class BrowserModel {
             guard let self, !Task.isCancelled else { return }
             self.prewarmNeighbourSpaces()
         }
+    }
+
+    /// The placeholder space was removed after a fetch, or the selected space is gone.
+    private func adoptLiveSpaceIfSelectionGone() {
+        guard library.space(selectedSpaceID) == nil, let space = library.orderedSpaces.first else { return }
+        selectSpace(space.id)
     }
 
     func selectNextSpace() { moveSpace(by: 1) }

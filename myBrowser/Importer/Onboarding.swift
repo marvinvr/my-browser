@@ -8,7 +8,7 @@ enum Onboarding {
     /// Sets the flag when it has never been set. A later launch does not change it,
     /// even after the default space creates `library.json`.
     static func prepareForLaunch(libraryDirectory: URL, defaults: UserDefaults = .standard) {
-        if ProcessInfo.processInfo.environment["MYBROWSER_LIBRARY_DIR"] != nil, defaults === UserDefaults.standard {
+        if LibraryStore.libraryOverrideIsActive, defaults === UserDefaults.standard {
             return
         }
         #if DEBUG

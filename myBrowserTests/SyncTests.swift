@@ -519,6 +519,57 @@ struct SyncTests {
         #expect(SyncController.containerInfoKey == "MBCloudKitContainer")
         #expect(SyncController.enabledDefaultsKey == "iCloudSyncEnabled")
     }
+
+    @Test func untouchedPlaceholderIsDroppedWheniCloudAlreadyHasSpaces() {
+        let store = LibraryStore(directory: nil)
+        var echoes: [Set<UUID>] = []
+        store.onChange = { echoes.append($0) }
+        let placeholder = store.ensureDefaultSpace()
+        let ids = store.untouchedPlaceholderIDs
+        #expect(ids == [placeholder.id, placeholder.profileID])
+        #expect(PlaceholderSync.afterFetch(placeholderIDs: ids, liveSpaceIDs: [placeholder.id]) == .upload(ids))
+
+        let kept = store.createSpace(name: "Day Trip", symbol: "sun.max.fill", color: .orange)
+        #expect(store.untouchedPlaceholderIDs.isEmpty)
+        #expect(store.placeholderStillUntouched(ids))
+        let live = Set(store.spaces.values.filter { $0.deletedAt == nil }.map(\.id))
+        #expect(PlaceholderSync.afterFetch(placeholderIDs: ids, liveSpaceIDs: live) == .drop(ids))
+        echoes.removeAll()
+        let removed = store.discardPlaceholder(ids)
+        #expect(removed == ids)
+        #expect(store.space(placeholder.id) == nil)
+        #expect(store.profile(placeholder.profileID) == nil)
+        #expect(store.space(kept.id)?.name == "Day Trip")
+        #expect(store.pendingChanges(for: ids).isEmpty)
+        #expect(echoes.isEmpty)
+
+        let renamed = LibraryStore(directory: nil)
+        let personal = renamed.ensureDefaultSpace()
+        renamed.updateSpace(personal.id) { $0.name = "Home" }
+        #expect(renamed.untouchedPlaceholderIDs.isEmpty)
+
+        let pinned = LibraryStore(directory: nil)
+        let space = pinned.ensureDefaultSpace()
+        _ = pinned.addItem(spaceID: space.id, section: .pinned, title: "Maps", url: URL(string: "https://example.com/maps"))
+        #expect(pinned.untouchedPlaceholderIDs.isEmpty)
+
+        let tabbed = LibraryStore(directory: nil)
+        let home = tabbed.ensureDefaultSpace()
+        _ = tabbed.addItem(spaceID: home.id, section: .tabs, title: "Local")
+        #expect(tabbed.untouchedPlaceholderIDs == [home.id, home.profileID])
+
+        let custom = LibraryStore(directory: nil)
+        let circle = custom.createSpace(name: "Personal")
+        #expect(custom.untouchedPlaceholderIDs.isEmpty)
+        #expect(circle.symbol != "person.fill")
+    }
+
+    @Test func footerStaysPausedAndDoesNotIdleWhileChangesArePending() {
+        #expect(SyncActivityStatus.text(paused: true, hasPendingChanges: false) == SyncController.pausedStatus)
+        #expect(SyncActivityStatus.text(paused: true, hasPendingChanges: true) == SyncController.pausedStatus)
+        #expect(SyncActivityStatus.text(paused: false, hasPendingChanges: true) == SyncController.syncingStatus)
+        #expect(SyncActivityStatus.text(paused: false, hasPendingChanges: false) == SyncController.idleStatus)
+    }
 }
 
 private func makeTempDirectory() throws -> URL {

@@ -1,14 +1,24 @@
 import Foundation
 
-/// Throws away a library through `MYBROWSER_SYNC_PROBE` so a Release build can upload, edit, and restore.
-/// Inert unless that variable is a directory path.
+/// Exercises a library through `MYBROWSER_SYNC_PROBE`.
+/// Inert unless that variable is a directory path. A Release build also requires
+/// `MYBROWSER_ALLOW_LIBRARY_OVERRIDE=1` and `MYBROWSER_LIBRARY_DIR`, so the probe cannot
+/// edit `~/Library/Application Support/myBrowser`.
 /// `MYBROWSER_SYNC_PROBE_MODE=scenario` renames a space, nests and collapses a folder, sets a pinned home URL,
 /// builds a vertical split with unequal shares, and deletes an item.
 /// `MYBROWSER_SYNC_PROBE_MODE=cleanup` deletes every space and waits for the push.
+/// Cleanup runs only when the library override is active.
 enum SyncProbe {
     static let selectItem = Notification.Name("MBSyncProbeSelectItem")
 
-    static var isRequested: Bool { directory != nil }
+    static var isRequested: Bool {
+        guard directory != nil else { return false }
+        #if DEBUG
+        return true
+        #else
+        return LibraryStore.libraryOverrideIsActive
+        #endif
+    }
 
     private static var directory: URL? {
         guard let raw = ProcessInfo.processInfo.environment["MYBROWSER_SYNC_PROBE"]?
@@ -31,6 +41,10 @@ enum SyncProbe {
             return
         }
         if mode == "cleanup" {
+            guard LibraryStore.libraryOverrideIsActive else {
+                write(directory, #"{"phase":"refused","reason":"cleanup requires MYBROWSER_LIBRARY_DIR"}"#)
+                return
+            }
             for space in library.orderedSpaces {
                 library.deleteSpace(space.id)
             }

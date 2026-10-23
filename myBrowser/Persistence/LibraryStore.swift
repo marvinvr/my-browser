@@ -20,6 +20,8 @@ final class LibraryStore {
 
     /// Invoked with the ids of records each mutation changed. Not persisted (Phase 2 sync).
     @ObservationIgnored var onChange: ((Set<UUID>) -> Void)?
+    /// A remote apply or a discarded placeholder changed the store without `onChange`.
+    @ObservationIgnored var onRemoteApplied: (() -> Void)?
 
     @ObservationIgnored private var isDirty = false
     @ObservationIgnored private var saveTask: Task<Void, Never>?
@@ -40,6 +42,26 @@ final class LibraryStore {
 
     static func defaultDirectory() -> URL {
         URL.applicationSupportDirectory.appending(path: "myBrowser", directoryHint: .isDirectory)
+    }
+
+    /// `MYBROWSER_LIBRARY_DIR` replaces Application Support.
+    /// Debug honors that variable alone. Release also requires `MYBROWSER_ALLOW_LIBRARY_OVERRIDE=1`,
+    /// so a stray variable cannot point a syncing build at another folder.
+    static var libraryOverrideIsActive: Bool {
+        guard let raw = ProcessInfo.processInfo.environment["MYBROWSER_LIBRARY_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return false }
+        #if DEBUG
+        return true
+        #else
+        return ProcessInfo.processInfo.environment["MYBROWSER_ALLOW_LIBRARY_OVERRIDE"] == "1"
+        #endif
+    }
+
+    static var libraryOverrideURL: URL? {
+        guard libraryOverrideIsActive,
+              let raw = ProcessInfo.processInfo.environment["MYBROWSER_LIBRARY_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+        return URL(fileURLWithPath: raw, isDirectory: true)
     }
 
     // MARK: Queries (tombstones excluded)

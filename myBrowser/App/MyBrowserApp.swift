@@ -383,12 +383,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     #endif
 
-    /// `MYBROWSER_LIBRARY_DIR` replaces Application Support for a throwaway library (Release included).
-    /// `MYBROWSER_DEBUG_LIBRARY` is the Debug snapshot path.
+    /// `MYBROWSER_LIBRARY_DIR` replaces Application Support. Release also requires
+    /// `MYBROWSER_ALLOW_LIBRARY_OVERRIDE=1`. `MYBROWSER_DEBUG_LIBRARY` is the Debug snapshot path.
     private static func storageDirectory() -> URL {
         let env = ProcessInfo.processInfo.environment
-        if let override = env["MYBROWSER_LIBRARY_DIR"], !override.isEmpty {
-            return URL(fileURLWithPath: override, isDirectory: true)
+        if let override = LibraryStore.libraryOverrideURL {
+            return override
         }
         #if DEBUG
         if let override = env["MYBROWSER_DEBUG_LIBRARY"], !override.isEmpty {

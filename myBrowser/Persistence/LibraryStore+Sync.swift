@@ -7,6 +7,32 @@ nonisolated struct RemoteLibraryUpdate: Equatable, Sendable {
     var items: [SidebarItem] = []
 }
 
+/// What to do with the launch placeholder around the first fetch.
+enum PlaceholderSync {
+    enum Decision: Equatable {
+        case upload(Set<UUID>)
+        case drop(Set<UUID>)
+    }
+
+    /// After the first fetch. Other live spaces mean iCloud already has a library:
+    /// drop the placeholder instead of uploading it. No other space means upload it.
+    static func afterFetch(placeholderIDs: Set<UUID>, liveSpaceIDs: Set<UUID>) -> Decision {
+        let others = liveSpaceIDs.subtracting(placeholderIDs)
+        if others.isEmpty { return .upload(placeholderIDs) }
+        return .drop(placeholderIDs)
+    }
+}
+
+/// Footer after a fetch or a send finishes.
+enum SyncActivityStatus {
+    /// A failed save stays paused. Pending zone changes stay on syncing.
+    static func text(paused: Bool, hasPendingChanges: Bool) -> String {
+        if paused { return SyncController.pausedStatus }
+        if hasPendingChanges { return SyncController.syncingStatus }
+        return SyncController.idleStatus
+    }
+}
+
 /// One unsent library change. `.tabs` rows are never included.
 nonisolated enum PendingSyncChange: Equatable, Sendable {
     case save(UUID)
@@ -77,6 +103,7 @@ extension LibraryStore {
         if changed {
             refreshSiblingLists()
             scheduleSave()
+            onRemoteApplied?()
         }
         for splitID in splitsLosingAMember where existingLiveSplits.contains(splitID) {
             reconcileSplit(splitID)
@@ -146,6 +173,66 @@ extension LibraryStore {
             scheduleSave()
         }
         return removed
+    }
+
+    /// The launch placeholder, when it is the entire synced library: one untouched Personal space
+    /// (`person.fill`, blue, no emoji) and its profile, with no synced items and no tombstones.
+    /// Local tabs do not count. A rename, a pin, or a second space is not a placeholder.
+    var untouchedPlaceholderIDs: Set<UUID> {
+        let liveSpaces = spaces.values.filter { $0.deletedAt == nil }
+        let liveProfiles = profiles.values.filter { $0.deletedAt == nil }
+        let syncedLiveItems = items.values.contains { $0.deletedAt == nil && $0.isSynced }
+        let tombstones = spaces.values.contains { $0.deletedAt != nil }
+            || profiles.values.contains { $0.deletedAt != nil }
+            || items.values.contains { $0.deletedAt != nil && $0.isSynced }
+        guard !tombstones, !syncedLiveItems,
+              liveSpaces.count == 1, liveProfiles.count == 1,
+              let space = liveSpaces.first, let profile = liveProfiles.first,
+              space.profileID == profile.id,
+              Self.isUntouchedPlaceholder(space, profile: profile) else { return [] }
+        return [space.id, profile.id]
+    }
+
+    /// True when `ids` is still the untouched placeholder, even if a fetch has added other spaces.
+    func placeholderStillUntouched(_ ids: Set<UUID>) -> Bool {
+        let liveSpaces = ids.compactMap { spaces[$0] }.filter { $0.deletedAt == nil }
+        let liveProfiles = ids.compactMap { profiles[$0] }.filter { $0.deletedAt == nil }
+        guard liveSpaces.count == 1, liveProfiles.count == 1,
+              let space = liveSpaces.first, let profile = liveProfiles.first,
+              Self.isUntouchedPlaceholder(space, profile: profile) else { return false }
+        // A pin or a tombstone in this space means the user edited it during the fetch.
+        return !items.values.contains { $0.isSynced && $0.spaceID == space.id }
+    }
+
+    /// Removes that placeholder, its profile, and its local tabs. Does not call `onChange`,
+    /// so a row that was never uploaded is not deleted in CloudKit. No-op if `ids` was edited.
+    @discardableResult
+    func discardPlaceholder(_ ids: Set<UUID>) -> Set<UUID> {
+        guard placeholderStillUntouched(ids) else { return [] }
+        let savedChangeHandler = onChange
+        onChange = nil
+        let spaceIDs = Set(ids.filter { spaces[$0] != nil })
+        let owned = items.compactMap { itemID, item in spaceIDs.contains(item.spaceID) ? itemID : nil }
+        for itemID in owned {
+            items[itemID] = nil
+        }
+        for id in ids {
+            profiles[id] = nil
+            spaces[id] = nil
+        }
+        onChange = savedChangeHandler
+        refreshSiblingLists()
+        scheduleSave()
+        onRemoteApplied?()
+        return ids
+    }
+
+    static func isUntouchedPlaceholder(_ space: Space, profile: Profile) -> Bool {
+        space.deletedAt == nil && profile.deletedAt == nil
+            && space.profileID == profile.id
+            && space.name == "Personal" && profile.name == "Personal"
+            && space.symbol == "person.fill" && space.emoji == nil
+            && space.color == .blue
     }
 
     /// A valid key after the last live space, ignoring `excluding` and any key `SortKey` would reject.

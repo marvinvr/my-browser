@@ -21,6 +21,12 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
     private var choosingAccount = false
     /// A fetch or save has started. A caught-up launch never does either, and the footer would stay on "Syncing…".
     private var sawSyncCycle = false
+    /// A save failed and was not retried. Later fetch/send events must not replace the paused footer.
+    private var syncPaused = false
+    /// First sync of an untouched Personal placeholder. Its records stay local until the fetch
+    /// shows whether iCloud already has spaces. Ids are captured before the fetch adds spaces.
+    private var withholdPlaceholder = false
+    private var withheldPlaceholderIDs: Set<UUID> = []
 
     init(library: LibraryStore, containerIdentifier: String) {
         self.library = library
@@ -45,11 +51,26 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
         installHandler()
         let firstSync = state.serialization() == nil
         if firstSync {
-            enqueueFullUpload()
-            sawSyncCycle = true
+            beginFirstSync()
         }
         forgetPurged(library.purgeAcknowledgedTombstones(sent: state.acknowledgedDeletions))
         scheduleIdleIfQuiet()
+    }
+
+    /// Uploads an existing library immediately. A placeholder-only library waits for the fetch:
+    /// the zone is created, and the Personal space is uploaded only if iCloud has no spaces.
+    private func beginFirstSync() {
+        let placeholder = library.untouchedPlaceholderIDs
+        if !placeholder.isEmpty {
+            withholdPlaceholder = true
+            withheldPlaceholderIDs = placeholder
+            ck?.state.add(pendingDatabaseChanges: [.saveZone(SyncSchema.zone)])
+            Self.log.info("Queued Library zone save")
+            sawSyncCycle = true
+            return
+        }
+        enqueueFullUpload()
+        sawSyncCycle = true
     }
 
     /// CKSyncEngine skips the fetch when the change token is current and nothing is pending.
@@ -57,11 +78,58 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
     private func scheduleIdleIfQuiet() {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(800))
-            guard !sawSyncCycle, let ck else { return }
-            guard ck.state.pendingRecordZoneChanges.isEmpty,
-                  ck.state.pendingDatabaseChanges.isEmpty else { return }
-            onStatus?(SyncController.idleStatus)
+            guard !withholdPlaceholder, !sawSyncCycle, let ck else { return }
+            settle(ck)
+        }
+    }
+
+    private func hasPendingWork(_ syncEngine: CKSyncEngine) -> Bool {
+        !syncEngine.state.pendingRecordZoneChanges.isEmpty
+            || !syncEngine.state.pendingDatabaseChanges.isEmpty
+    }
+
+    private func settle(_ syncEngine: CKSyncEngine) {
+        let text = SyncActivityStatus.text(paused: syncPaused, hasPendingChanges: hasPendingWork(syncEngine) || withholdPlaceholder)
+        onStatus?(text)
+        if text == SyncController.idleStatus {
             Self.log.info("Sync idle")
+        }
+    }
+
+    /// The fetch has landed. Drop the placeholder when iCloud already has spaces; otherwise upload it.
+    private func resolvePlaceholderAfterFetch(_ syncEngine: CKSyncEngine) {
+        guard withholdPlaceholder else { return }
+        withholdPlaceholder = false
+        let ids = withheldPlaceholderIDs
+        withheldPlaceholderIDs = []
+        guard library.placeholderStillUntouched(ids) else {
+            enqueueFullUpload()
+            return
+        }
+        let live = Set(library.spaces.values.filter { $0.deletedAt == nil }.map(\.id))
+        switch PlaceholderSync.afterFetch(placeholderIDs: ids, liveSpaceIDs: live) {
+        case .drop:
+            let removed = library.discardPlaceholder(ids)
+            removePending(removed, syncEngine: syncEngine)
+            Self.log.info("Dropped untouched placeholder")
+        case .upload:
+            enqueue(ids)
+        }
+    }
+
+    private func removePending(_ ids: Set<UUID>, syncEngine: CKSyncEngine) {
+        guard !ids.isEmpty else { return }
+        let pending = syncEngine.state.pendingRecordZoneChanges.filter { change in
+            switch change {
+            case .saveRecord(let recordID), .deleteRecord(let recordID):
+                guard let id = UUID(uuidString: recordID.recordName) else { return false }
+                return ids.contains(id)
+            @unknown default:
+                return false
+            }
+        }
+        if !pending.isEmpty {
+            syncEngine.state.remove(pendingRecordZoneChanges: pending)
         }
     }
 
@@ -75,6 +143,11 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
 
     func enqueue(_ ids: Set<UUID>) {
         guard let ck, !ids.isEmpty else { return }
+        var ids = ids
+        if withholdPlaceholder {
+            ids.subtract(withheldPlaceholderIDs)
+        }
+        guard !ids.isEmpty else { return }
         let changes = library.pendingChanges(for: ids).map { change -> CKSyncEngine.PendingRecordZoneChange in
             let recordID = SyncSchema.recordID(for: change.id)
             switch change {
@@ -114,13 +187,18 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
                 handleZoneFetchFinished(fetched, syncEngine: syncEngine)
             case .willFetchChanges, .willFetchRecordZoneChanges, .willSendChanges:
                 sawSyncCycle = true
-                onStatus?(SyncController.syncingStatus)
-            case .didFetchChanges, .didSendChanges:
+                if !syncPaused {
+                    onStatus?(SyncController.syncingStatus)
+                }
+            case .didFetchChanges:
                 sawSyncCycle = true
-                onStatus?(SyncController.idleStatus)
-                Self.log.info("Sync idle")
+                resolvePlaceholderAfterFetch(syncEngine)
+                settle(syncEngine)
+            case .didSendChanges:
+                sawSyncCycle = true
+                settle(syncEngine)
             case .sentDatabaseChanges:
-                break
+                settle(syncEngine)
             @unknown default:
                 break
             }
@@ -137,12 +215,20 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
             }
         case .signIn:
             if state.systemFields.isEmpty {
-                enqueueFullUpload()
-                sawSyncCycle = true
-            } else if syncEngine.state.pendingRecordZoneChanges.isEmpty,
-                      syncEngine.state.pendingDatabaseChanges.isEmpty {
-                onStatus?(SyncController.idleStatus)
-                Self.log.info("Sync idle")
+                // beginFirstSync already captured the placeholder. Re-reading it after a fetch
+                // sees the remote spaces and would upload the placeholder.
+                if !withholdPlaceholder {
+                    let placeholder = library.untouchedPlaceholderIDs
+                    if state.serialization() == nil && !placeholder.isEmpty {
+                        withholdPlaceholder = true
+                        withheldPlaceholderIDs = placeholder
+                    } else {
+                        enqueueFullUpload()
+                        sawSyncCycle = true
+                    }
+                }
+            } else {
+                settle(syncEngine)
             }
         case .switchAccounts:
             dropPending()
@@ -184,6 +270,8 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
         }
         guard lostZone else { return }
         state.clearSystemFields()
+        withholdPlaceholder = false
+        withheldPlaceholderIDs = []
         enqueueFullUpload()
     }
 
@@ -195,6 +283,8 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
         switch error.code {
         case .zoneNotFound, .userDeletedZone:
             state.clearSystemFields()
+            withholdPlaceholder = false
+            withheldPlaceholderIDs = []
             syncEngine.state.add(pendingDatabaseChanges: [.saveZone(SyncSchema.zone)])
             enqueueFullUpload()
         default:
@@ -261,6 +351,9 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
         for failure in changes.failedRecordSaves {
             handleFailedSave(failure, syncEngine: syncEngine)
         }
+        if changes.failedRecordSaves.isEmpty {
+            syncPaused = false
+        }
         forgetPurged(library.purgeAcknowledgedTombstones(sent: state.acknowledgedDeletions))
     }
 
@@ -290,6 +383,7 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
 
         guard error.code == .unknownItem || error.code == .zoneNotFound else {
             Self.log.error("Save failed \(error.code.rawValue, privacy: .public)")
+            syncPaused = true
             onStatus?(SyncController.pausedStatus)
             return
         }
