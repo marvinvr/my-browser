@@ -3,10 +3,10 @@ import SwiftUI
 
 /// Back, forward, reload, and the address field.
 ///
-/// `.content` is one row above the page and crossfades to the page tint.
-/// `.sidebar` puts the same `NavigationButtons` and `AddressField` on the traffic-light
-/// row, with the field underneath. Sidebar chrome stays untinted so the symbols sit on
-/// the vibrancy material rather than on a colour that is not painted there.
+/// `.content` is one row above the page. The bar crossfades to a quiet wash of the page
+/// colour. The URL is plain text; a neutral field appears only on hover or while editing.
+/// `.sidebar` puts the same controls on the traffic-light row, with a pill underneath.
+/// Sidebar chrome stays untinted so the symbols sit on the vibrancy material.
 /// When the sidebar is hidden, the content bar insets its controls past the traffic lights.
 struct ContentToolbar: View {
     enum Style: Equatable {
@@ -86,10 +86,10 @@ struct ContentToolbar: View {
             }
 
             NavigationButtons(chrome: shown)
-            AddressField(chrome: shown)
-                .frame(minWidth: 80, maxWidth: .infinity)
+            AddressField(chrome: shown, presentation: .inline)
+                .frame(minWidth: 40, maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(-1)
-                .padding(.leading, 8)
+                .padding(.leading, 6)
             ExtensionButtons()
                 .layoutPriority(1)
                 .padding(.leading, 4)
@@ -115,7 +115,7 @@ struct ContentToolbar: View {
             .frame(height: SidebarMetrics.navRowHeight)
             .padding(.top, max(0, SidebarMetrics.chromeCenterFromTop - SidebarMetrics.navRowHeight / 2))
 
-            AddressField(chrome: chrome)
+            AddressField(chrome: chrome, presentation: .pill)
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
                 .padding(.bottom, 2)

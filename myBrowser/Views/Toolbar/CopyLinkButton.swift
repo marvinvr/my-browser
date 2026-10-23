@@ -5,6 +5,8 @@ import SwiftUI
 /// so every field morphs to a checkmark for a second.
 struct CopyLinkButton: View {
     var chrome: ToolbarChrome? = nil
+    /// Top toolbar: secondary symbol, same weight as the URL, no tinted field colour.
+    var quiet: Bool = false
 
     @Environment(BrowserModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
@@ -32,7 +34,7 @@ struct CopyLinkButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(resolved.fieldSymbol)
+        .foregroundStyle(quiet ? AnyShapeStyle(.secondary) : AnyShapeStyle(resolved.fieldSymbol))
         .opacity(hasLink ? 1 : 0.35)
         .disabled(!hasLink)
         .help(confirmed ? "Copied" : "Copy Link")

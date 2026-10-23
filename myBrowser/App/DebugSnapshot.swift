@@ -32,6 +32,7 @@ enum DebugSnapshot {
             })
         }
         relays.append(observe("ch.marvinvr.mybrowser.debug.open") { note in
+            guard Self.addressedToThisProcess(note) else { return }
             let raw = note.userInfo?["url"] as? String
             Task { @MainActor in
                 guard let raw, let url = URL(string: raw) else { return }
@@ -44,6 +45,7 @@ enum DebugSnapshot {
             }
         })
         relays.append(observe("ch.marvinvr.mybrowser.debug.appearance") { note in
+            guard Self.addressedToThisProcess(note) else { return }
             let mode = (note.userInfo?["mode"] as? String)?.lowercased()
             Task { @MainActor in
                 switch mode {
@@ -60,6 +62,7 @@ enum DebugSnapshot {
             }
         })
         relays.append(observe("ch.marvinvr.mybrowser.debug.addressBar") { note in
+            guard Self.addressedToThisProcess(note) else { return }
             let raw = (note.userInfo?["position"] as? String)?.lowercased()
             Task { @MainActor in
                 guard let raw, AddressBarPosition(rawValue: raw) != nil else { return }
@@ -108,6 +111,7 @@ enum DebugSnapshot {
             }
         })
         relays.append(observe("ch.marvinvr.mybrowser.debug.command") { note in
+            guard Self.addressedToThisProcess(note) else { return }
             let mode = note.userInfo?["mode"] as? String
             Task { @MainActor in
                 guard let model = attachedModel else { return }
@@ -118,6 +122,13 @@ enum DebugSnapshot {
                 }
             }
         })
+    }
+
+    /// A note that carries `channel` is for one debug build. Other builds ignore it.
+    /// Notes without a channel stay shared, which is what the existing snapshot scripts send.
+    nonisolated private static func addressedToThisProcess(_ note: Notification) -> Bool {
+        guard let channel = note.userInfo?["channel"] as? String, !channel.isEmpty else { return true }
+        return channel == ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SNAPSHOT_NAME"]
     }
 
     /// Selector observer with `.deliverImmediately`, so `userInfo` survives when the app is not frontmost.

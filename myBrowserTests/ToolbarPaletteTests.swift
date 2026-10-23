@@ -11,26 +11,41 @@ struct ToolbarPaletteTests {
         assertLegible(ToolbarPalette.resolve(tint: nil, material: darkWindow), lightText: true)
     }
 
-    @Test func darkPageTintUsesLightText() {
+    @Test func darkPageTintStaysOnTheMaterial() {
         let github = ToolbarPalette.RGBA(r: 13 / 255, g: 17 / 255, b: 23 / 255, a: 1)
         let palette = ToolbarPalette.resolve(tint: github, material: lightWindow)
         #expect(palette.isTinted)
-        assertLegible(palette, lightText: true)
+        assertCalm(palette, material: lightWindow, lightText: false)
     }
 
-    @Test func lightPageTintUsesDarkText() {
+    @Test func lightPageTintStaysOnTheDarkMaterial() {
         let palette = ToolbarPalette.resolve(tint: .white, material: darkWindow)
         #expect(palette.isTinted)
-        assertLegible(palette, lightText: false)
+        assertCalm(palette, material: darkWindow, lightText: true)
     }
 
-    @Test func strongBrandColorStaysTinted() {
+    @Test func strongBrandColorIsAQuietWash() {
         // Stripe-like blurple. Saturated, but not a pure neon primary.
         let blurple = ToolbarPalette.RGBA(r: 0.388, g: 0.357, b: 1, a: 1)
         #expect(ToolbarPalette.isUsable(blurple))
         let palette = ToolbarPalette.resolve(tint: blurple, material: lightWindow)
         #expect(palette.isTinted)
-        #expect(ToolbarPalette.contrast(palette.primaryText, palette.field) >= 4.5)
+        assertCalm(palette, material: lightWindow, lightText: false)
+    }
+
+    @Test func brightPageDoesNotPaintAStripe() {
+        let yellow = ToolbarPalette.RGBA(r: 1, g: 0.86, b: 0.1, a: 1)
+        let red = ToolbarPalette.RGBA(r: 0.86, g: 0.12, b: 0.12, a: 1)
+        #expect(ToolbarPalette.isUsable(yellow))
+        #expect(ToolbarPalette.isUsable(red))
+        for tint in [yellow, red] {
+            let palette = ToolbarPalette.resolve(tint: tint, material: lightWindow)
+            #expect(palette.isTinted)
+            assertCalm(palette, material: lightWindow, lightText: false)
+            let dark = ToolbarPalette.resolve(tint: tint, material: darkWindow)
+            #expect(dark.isTinted)
+            assertCalm(dark, material: darkWindow, lightText: true)
+        }
     }
 
     @Test func transparentAndNeonFallBackToMaterial() {
@@ -46,6 +61,15 @@ struct ToolbarPaletteTests {
         let palette = ToolbarPalette.resolve(tint: neon, material: darkWindow)
         #expect(!palette.isTinted)
         #expect(palette.background == ToolbarPalette.resolve(tint: nil, material: darkWindow).background)
+    }
+
+    /// The wash may carry a little hue. It must not jump away from the window in brightness.
+    private func assertCalm(_ palette: ToolbarPalette.Palette, material: ToolbarPalette.RGBA, lightText: Bool) {
+        #expect(abs(palette.background.relativeLuminance - material.relativeLuminance) <= 0.05)
+        let channels = [palette.background.r, palette.background.g, palette.background.b]
+        let chroma = (channels.max() ?? 0) - (channels.min() ?? 0)
+        #expect(chroma <= 0.08)
+        assertLegible(palette, lightText: lightText)
     }
 
     private func assertLegible(_ palette: ToolbarPalette.Palette, lightText: Bool) {

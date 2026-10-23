@@ -1,14 +1,15 @@
 import Foundation
 
-/// Contrast rules for a tinted toolbar. Pure sRGB math so the address field stays legible
-/// on a page tint and on the normal window background.
+/// Contrast rules for the toolbar. Pure sRGB math.
 ///
 /// A tint is unusable when it is missing, not solid (`alpha` under 0.85, which covers a
 /// fully transparent colour), or neon: saturation at least 0.92 and brightness at least 0.78,
 /// or a near-pure primary/secondary (channels pegged high or low). Those fall back to `material`.
 ///
-/// The field fill shifts off the toolbar (lighter on a dark tint, darker on a light one) until
-/// text clears 4.5:1. The stroke is the field's edge and aims for 3:1 against the toolbar.
+/// A usable page colour does not paint the bar. It becomes a low-saturation wash held close
+/// to the window material, so a dark header or a bright brand cannot turn the toolbar into
+/// a solid stripe. The sidebar pill's fill still shifts off that bar until label text clears
+/// 4.5:1. The stroke is the pill's edge and aims for 3:1 against the bar.
 nonisolated enum ToolbarPalette {
     nonisolated struct RGBA: Equatable, Sendable {
         var r: Double
@@ -68,7 +69,8 @@ nonisolated enum ToolbarPalette {
     /// `material` is the window background the untinted bar already sits on.
     static func resolve(tint: RGBA?, material: RGBA) -> Palette {
         let usable = tint.flatMap { isUsable($0) ? opaque($0) : nil }
-        let background = usable ?? opaque(material)
+        let base = opaque(material)
+        let background = usable.map { calmBackground(page: $0, material: base) } ?? base
         let field = fieldFill(on: background)
         let primary = textColor(on: field)
         return Palette(
@@ -82,6 +84,32 @@ nonisolated enum ToolbarPalette {
             warning: warningColor(on: field, fallback: primary),
             isTinted: usable != nil
         )
+    }
+
+    /// Page hue as a quiet wash on `material`. Brightness stays near the window.
+    static func calmBackground(page: RGBA, material: RGBA) -> RGBA {
+        let pageWeight = weighted(page)
+        let materialWeight = weighted(material)
+        let pastel = RGBA(
+            r: clamp(materialWeight + (page.r - pageWeight) * 0.9),
+            g: clamp(materialWeight + (page.g - pageWeight) * 0.9),
+            b: clamp(materialWeight + (page.b - pageWeight) * 0.9),
+            a: 1
+        )
+        var wash = mix(material, pastel, 0.42)
+        let delta = wash.relativeLuminance - material.relativeLuminance
+        let limit = 0.045
+        if abs(delta) > limit {
+            wash = mix(material, wash, limit / abs(delta))
+        }
+        // A yellow or red page is already near the window's brightness, so the luminance
+        // cap does not catch it. Pull hue back until the wash is only faintly tinted.
+        let chroma = max(wash.r, wash.g, wash.b) - min(wash.r, wash.g, wash.b)
+        let chromaLimit = 0.06
+        if chroma > chromaLimit {
+            wash = mix(material, wash, chromaLimit / chroma)
+        }
+        return wash
     }
 
     // MARK: - Derivation
@@ -156,6 +184,14 @@ nonisolated enum ToolbarPalette {
         let bright = RGBA(r: 1, g: 0.62, b: 0.55, a: 1)
         if contrast(bright, field) >= 3 { return bright }
         return fallback
+    }
+
+    private static func weighted(_ color: RGBA) -> Double {
+        0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b
+    }
+
+    private static func clamp(_ value: Double) -> Double {
+        min(1, max(0, value))
     }
 
     private static func opaque(_ color: RGBA) -> RGBA {
