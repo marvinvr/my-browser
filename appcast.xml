@@ -7,6 +7,16 @@
     <description>Updates of myBrowser</description>
     <language>en</language>
     <item>
+      <title>Version 0.6.1</title>
+      <pubDate>Fri, 23 Oct 2026 16:27:20 +0000</pubDate>
+      <sparkle:version>11</sparkle:version>
+      <sparkle:shortVersionString>0.6.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://github.com/marvinvr/my-browser/releases/tag/v0.6.1</sparkle:fullReleaseNotesLink>
+      <description><![CDATA[<ul><li>Pause inline when the Picture in Picture panel is closed</li><li>Put split pane controls on each pane toolbar</li><li>Round only full-bleed favicons</li><li>Cross-fade the page when switching Spaces</li><li>Make the sidebar hover shape the click target</li><li>Release v0.6.0</li><li>Shorten the space-switch spring and carry the finger&#x27;s speed</li><li>Keep low-contrast favicons readable</li><li>Drop an untouched Personal placeholder when iCloud already has spaces</li><li>Show sync as up to date when CloudKit is caught up</li><li>Clear a removed space emoji and cover split sync fields</li><li>Enable iCloud sync in Release builds</li><li>Preview half-card split drops without moving pins</li><li>Show the next Space&#x27;s page while the sidebar is still moving</li><li>Draw expanded folders with the catalog symbol</li></ul>]]></description>
+      <enclosure url="https://github.com/marvinvr/my-browser/releases/download/v0.6.1/myBrowser-0.6.1-11.dmg" length="5830909" type="application/octet-stream" sparkle:edSignature="ReHpeEjqhGDwKTWf7srg3G9Bmjf0Bndm3kOodmjVcOEPaswJ6R2K9KJXOBFnDWMjpqJ4KaebM0hqIIoO9MsYAw=="/>
+    </item>
+    <item>
       <title>Version 0.6.0</title>
       <pubDate>Fri, 23 Oct 2026 13:32:05 +0000</pubDate>
       <sparkle:version>10</sparkle:version>
