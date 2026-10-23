@@ -29,6 +29,10 @@ final class ProfileManager {
     /// Preferences for a configuration no web view owns yet. Popups and extension pages only need
     /// `PageRenderingRate.apply`; this is the full set for a tab the app creates itself.
     static func prepare(_ configuration: WKWebViewConfiguration) {
+        // Known-host upgrade would rewrite an explicit http:// and tailnet names. HTTPS-first
+        // for public hosts is decided in URLInput and falls back in the navigation delegate.
+        configuration.upgradeKnownHostsToHTTPS = false
+        configuration.defaultWebpagePreferences.preferredHTTPSNavigationPolicy = .keepAsRequested
         configuration.preferences.isElementFullscreenEnabled = true
         // AirPlay defaults to allowed; set it explicitly so a future default change can't turn it off.
         configuration.allowsAirPlayForMediaPlayback = true

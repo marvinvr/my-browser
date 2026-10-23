@@ -5,8 +5,9 @@ import Foundation
 /// The host is the primary run, without a scheme or a leading `www.`. At most the last two
 /// word-like path segments follow, each separated by a padded slash. Short pieces, locales,
 /// versions, and ids are omitted. Queries and fragments are omitted. The stored `absolute`
-/// string is still the real URL. `http` pages that are not local are `.insecure`; `https`
-/// shows no security decoration.
+/// string is still the real URL. Public `http` is `.insecure`. Relaxed hosts (localhost,
+/// single-label names, LAN and tailnet suffixes, private and CGNAT addresses, any explicit
+/// port) stay quiet; `https` shows no security decoration.
 nonisolated struct URLDisplay: Equatable, Sendable {
     nonisolated enum Security: Equatable, Sendable {
         /// https, a local http host, file, or anything else that should stay quiet.
@@ -263,16 +264,7 @@ nonisolated struct URLDisplay: Equatable, Sendable {
 
     private static func security(of url: URL) -> Security {
         guard url.scheme?.lowercased() == "http" else { return .none }
-        return isLocal(url) ? .none : .insecure
-    }
-
-    /// localhost, `*.localhost`, and loopback. Other http hosts are not secure.
-    private static func isLocal(_ url: URL) -> Bool {
-        guard let host = url.host(percentEncoded: false)?.lowercased(), !host.isEmpty else { return false }
-        if host == "localhost" || host.hasSuffix(".localhost") { return true }
-        if host == "::1" { return true }
-        if let ipv4 = parseIPv4(host), ipv4.0 == 127 { return true }
-        return false
+        return HTTPRelaxation.isRelaxed(url) ? .none : .insecure
     }
 
     private static func parseIPv4(_ host: String) -> (Int, Int, Int, Int)? {

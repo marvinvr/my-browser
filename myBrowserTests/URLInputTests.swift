@@ -46,7 +46,6 @@ struct URLInputTests {
         expect("Example.COM", url: "https://example.com")
         expect("example.com/path?q=1", url: "https://example.com/path?q=1")
         expect("example.com/path?q=a+b#s", url: "https://example.com/path?q=a+b#s")
-        expect("example.com:8080/x", url: "https://example.com:8080/x")
         expect("example.com.", url: "https://example.com")
         expect("example.com./a", url: "https://example.com/a")
         expect("foo.bar", url: "https://foo.bar")
@@ -108,8 +107,62 @@ struct URLInputTests {
         #expect(direct.absoluteString == "https://example.com/a")
     }
 
-    private func expect(_ input: String, url expected: String, sourceLocation: SourceLocation = #_sourceLocation) {
-        switch URLInput.resolve(input) {
+    @Test func relaxedHostsAreHTTP() {
+        expect("photos/", url: "http://photos/")
+        expect("Photos/albums", url: "http://photos/albums")
+        expect("meals/", url: "http://meals/")
+        expect("coolify:8000", url: "http://coolify:8000")
+        expect("coolify:8000/x", url: "http://coolify:8000/x")
+        expect("COOLIFY:8000/", url: "http://coolify:8000/")
+        expect("nas.local", url: "http://nas.local")
+        expect("nas.local/a", url: "http://nas.local/a")
+        expect("box.ts.net", url: "http://box.ts.net")
+        expect("a.b.ts.net/x", url: "http://a.b.ts.net/x")
+        expect("printer.internal", url: "http://printer.internal")
+        expect("dev.lan/x", url: "http://dev.lan/x")
+        expect("printer.home.arpa", url: "http://printer.home.arpa")
+        expect("foo.bar.home.arpa/a", url: "http://foo.bar.home.arpa/a")
+        expect("example.com:8080/x", url: "http://example.com:8080/x")
+        expect("http://photos/", url: "http://photos/")
+        expect("https://photos/", url: "https://photos/")
+        expect("http://example.com/a", url: "http://example.com/a")
+        expect("https://example.com/a", url: "https://example.com/a")
+    }
+
+    @Test func bareSingleLabelNavigatesOnlyWhenItResolves() {
+        expect("photos", url: "http://photos/", bareHostResolves: { $0 == "photos" })
+        expect("Photos", url: "http://photos/", bareHostResolves: { $0 == "photos" })
+        expect("photos.", url: "http://photos/", bareHostResolves: { $0 == "photos" })
+        expectSearch("photos", "photos", bareHostResolves: { _ in false })
+        expectSearch("meals", "meals", bareHostResolves: { $0 == "photos" })
+        expectSearch("google", "google", bareHostResolves: { _ in false })
+        #expect(URLInput.bareHostCandidate("photos") == "photos")
+        #expect(URLInput.bareHostCandidate("photos/") == nil)
+        #expect(URLInput.bareHostCandidate("hello world") == nil)
+    }
+
+    @Test func httpsFirstIsOnlySynthesizedPublicHTTPS() {
+        #expect(URLInput.isHTTPSFirst("example.com"))
+        #expect(URLInput.isHTTPSFirst("example.com/a"))
+        #expect(!URLInput.isHTTPSFirst("https://example.com"))
+        #expect(!URLInput.isHTTPSFirst("HTTPS://example.com/a"))
+        #expect(!URLInput.isHTTPSFirst("http://example.com"))
+        #expect(!URLInput.isHTTPSFirst("photos/"))
+        #expect(!URLInput.isHTTPSFirst("coolify:8000"))
+        #expect(!URLInput.isHTTPSFirst("example.com:8080"))
+        #expect(!URLInput.isHTTPSFirst("nas.local"))
+        #expect(!URLInput.isHTTPSFirst("box.ts.net"))
+        #expect(!URLInput.isHTTPSFirst("google"))
+        #expect(!URLInput.isHTTPSFirst("http://photos/"))
+    }
+
+    private func expect(
+        _ input: String,
+        url expected: String,
+        bareHostResolves: (String) -> Bool = { _ in false },
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        switch URLInput.resolve(input, bareHostResolves: bareHostResolves) {
         case .url(let url):
             #expect(url.absoluteString == expected, "resolve(\(input))", sourceLocation: sourceLocation)
         case .search(let query):
@@ -117,8 +170,13 @@ struct URLInputTests {
         }
     }
 
-    private func expectSearch(_ input: String, _ expected: String, sourceLocation: SourceLocation = #_sourceLocation) {
-        switch URLInput.resolve(input) {
+    private func expectSearch(
+        _ input: String,
+        _ expected: String,
+        bareHostResolves: (String) -> Bool = { _ in false },
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        switch URLInput.resolve(input, bareHostResolves: bareHostResolves) {
         case .search(let query):
             #expect(query == expected, "resolve(\(input))", sourceLocation: sourceLocation)
         case .url(let url):

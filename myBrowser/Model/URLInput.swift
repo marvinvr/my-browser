@@ -2,11 +2,11 @@ import Foundation
 
 /// Turns what the user typed into the command bar into a URL to load.
 ///
-/// Trimmed input with an explicit scheme (`http`, `https`, `file`, `about`, `data`, `mailto`, …)
-/// is a URL. `localhost`, an IPv4 address, or a bracketed IPv6 address (each with an optional port
-/// and path) becomes an `http` URL. `host.tld` with no spaces, whose last label is at least two
-/// letters or a known suffix, becomes an `https` URL. Anything with spaces, or a single word
-/// without a dot, is a search.
+/// An explicit scheme is kept. `localhost`, IP addresses, single-label names with a `/` or a port,
+/// relaxed suffixes (`*.ts.net`, `*.local`, `*.internal`, `*.lan`, `*.home.arpa`), and any host
+/// written with a port become `http`. A bare single-label name (`photos`) becomes `http` only when
+/// `bareHostResolves` says it resolves; otherwise it is a search. Other `host.tld` values become
+/// `https` (HTTPS-first). Anything with spaces is a search.
 nonisolated enum URLInput {
     enum Resolution: Equatable, Sendable {
         case url(URL)
@@ -14,7 +14,13 @@ nonisolated enum URLInput {
     }
 
     /// URL if the input looks like one, otherwise a search query (already trimmed).
-    static func resolve(_ input: String) -> Resolution {
+    ///
+    /// `bareHostResolves` is consulted only for a single label with no `/` and no port.
+    /// The command bar passes a DNS cache; tests pass a fixture. The default reads that cache.
+    static func resolve(
+        _ input: String,
+        bareHostResolves: (String) -> Bool = { BareHostLookup.cached($0) == true }
+    ) -> Resolution {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .search("") }
 
@@ -33,7 +39,26 @@ nonisolated enum URLInput {
         if let url = implicitURL(trimmed) {
             return .url(url)
         }
+        if let url = bareHostURL(trimmed, resolves: bareHostResolves) {
+            return .url(url)
+        }
         return .search(trimmed)
+    }
+
+    /// `true` when the typed text chose HTTPS for the user, so a failure may fall back to HTTP once.
+    /// An explicit `https://` is not HTTPS-first: it stays HTTPS.
+    static func isHTTPSFirst(_ input: String) -> Bool {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.lowercased().hasPrefix("https:") else { return false }
+        guard case .url(let url) = resolve(trimmed) else { return false }
+        return HTTPRelaxation.httpFallback(from: url) != nil
+    }
+
+    /// A single label that is still a search until DNS says it is a host. Nil when the text is already a URL.
+    static func bareHostCandidate(_ input: String) -> String? {
+        guard let label = bareLabel(input) else { return nil }
+        if case .url = resolve(input, bareHostResolves: { _ in false }) { return nil }
+        return label
     }
 
     static func url(for input: String, engine: SearchEngine = .current) -> URL {
@@ -105,8 +130,9 @@ nonisolated enum URLInput {
 
     private static func implicitURL(_ text: String) -> URL? {
         let (authority, remainder) = splitAuthority(text)
-        guard let parsed = parseAuthority(authority) else { return nil }
-        guard remainder.isEmpty || remainder.hasPrefix("/") || remainder.hasPrefix("?") || remainder.hasPrefix("#") else {
+        let allowsSingleLabel = remainder.hasPrefix("/") || remainder.hasPrefix("?") || remainder.hasPrefix("#")
+        guard let parsed = parseAuthority(authority, allowsSingleLabel: allowsSingleLabel) else { return nil }
+        guard remainder.isEmpty || allowsSingleLabel else {
             return nil
         }
         let parts = splitRemainder(remainder)
@@ -171,7 +197,7 @@ nonisolated enum URLInput {
         return (body, query, fragment)
     }
 
-    private static func parseAuthority(_ authority: String) -> Authority? {
+    private static func parseAuthority(_ authority: String, allowsSingleLabel: Bool = false) -> Authority? {
         if authority.hasPrefix("[") {
             guard let bracket = authority.firstIndex(of: "]") else { return nil }
             let inner = String(authority[authority.index(after: authority.startIndex)..<bracket])
@@ -194,9 +220,40 @@ nonisolated enum URLInput {
             return Authority(usesHTTP: true, host: host, port: port, isIPv6: false)
         }
         if isDomain(host) {
-            return Authority(usesHTTP: false, host: host.lowercased(), port: port, isIPv6: false)
+            let http = HTTPRelaxation.isRelaxed(host: host, port: port)
+            return Authority(usesHTTP: http, host: host.lowercased(), port: port, isIPv6: false)
+        }
+        // `photos/` and `coolify:8000`. A bare `photos` is decided by the resolver, not here.
+        if allowsSingleLabel || port != nil, isSingleLabel(host) {
+            return Authority(usesHTTP: true, host: host.lowercased(), port: port, isIPv6: false)
         }
         return nil
+    }
+
+    /// `http://photos/` when the label resolves. No trailing path on input.
+    private static func bareHostURL(_ text: String, resolves: (String) -> Bool) -> URL? {
+        guard let label = bareLabel(text), resolves(label) else { return nil }
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = label
+        components.path = "/"
+        return components.url
+    }
+
+    private static func bareLabel(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains(where: \.isWhitespace) else { return nil }
+        guard !trimmed.contains("/") && !trimmed.contains(":") && !trimmed.contains("?") && !trimmed.contains("#") else {
+            return nil
+        }
+        let host = stripTrailingDots(trimmed)
+        guard isSingleLabel(host) else { return nil }
+        return host.lowercased()
+    }
+
+    private static func isSingleLabel(_ host: String) -> Bool {
+        guard !host.contains(".") else { return false }
+        return HTTPRelaxation.isHostLabel(host)
     }
 
     /// `nil` port when there is no colon. `nil` result when a colon is present but the port is invalid.

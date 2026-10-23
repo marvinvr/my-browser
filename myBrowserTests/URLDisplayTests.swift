@@ -69,13 +69,34 @@ struct URLDisplayTests {
         #expect(page.plainText == "neverssl.com")
         #expect(page.security == .insecure)
 
-        let ip = format("http://192.168.1.10")
-        #expect(ip.plainText == "192.168.1.10")
+        let ip = format("http://8.8.8.8")
+        #expect(ip.plainText == "8.8.8.8")
         #expect(ip.security == .insecure)
 
         let secureIP = format("https://192.168.1.10/status")
         #expect(secureIP.plainText == "192.168.1.10  /  status")
         #expect(secureIP.security == .none)
+    }
+
+    @Test func relaxedHTTPIsNotMarkedInsecure() {
+        let lan = format("http://192.168.1.10")
+        #expect(lan.plainText == "192.168.1.10")
+        #expect(lan.security == .none)
+
+        #expect(format("http://10.1.2.3").security == .none)
+        #expect(format("http://172.16.0.5/a").security == .none)
+        #expect(format("http://100.100.1.1").security == .none)
+        #expect(format("http://photos/").security == .none)
+        #expect(format("http://nas.local/a").security == .none)
+        #expect(format("http://box.ts.net").security == .none)
+        #expect(format("http://dev.internal").security == .none)
+        #expect(format("http://printer.lan").security == .none)
+        #expect(format("http://printer.home.arpa/a").security == .none)
+        #expect(format("http://example.com:8080/a").security == .none)
+        #expect(format("http://[fd00::1]/").security == .none)
+        #expect(format("http://[fe80::1]/").security == .none)
+        #expect(format("http://172.15.0.1").security == .insecure)
+        #expect(format("http://100.128.0.1").security == .insecure)
     }
 
     @Test func httpsShowsNoWarningAndDropsDefaultPort() {

@@ -169,18 +169,19 @@ final class BrowserModel {
     }
 
     /// Opens `url` in a new `.tabs` item at the top of the current space. Background leaves the selection alone.
-    func openInNewTab(_ url: URL, inBackground: Bool = false) {
+    /// `httpsFirst` may fall back to HTTP once if that load fails.
+    func openInNewTab(_ url: URL, inBackground: Bool = false, httpsFirst: Bool = false) {
         guard let spaceID = selectedSpace?.id else { return }
-        openInNewTab(url, spaceID: spaceID, inBackground: inBackground)
+        openInNewTab(url, spaceID: spaceID, inBackground: inBackground, httpsFirst: httpsFirst)
     }
 
     /// Loads `url` in the selected tab, or a new tab when nothing is selected.
-    func openInCurrentTab(_ url: URL) {
+    func openInCurrentTab(_ url: URL, httpsFirst: Bool = false) {
         if let id = selectedItemID, library.item(id)?.kind == .site {
             select(id)
-            tabs[id]?.load(url)
+            tabs[id]?.load(url, httpsFirst: httpsFirst)
         } else {
-            openInNewTab(url)
+            openInNewTab(url, httpsFirst: httpsFirst)
         }
     }
 
@@ -492,6 +493,8 @@ final class BrowserModel {
     @discardableResult
     func presentPopup(configuration: WKWebViewConfiguration, url: URL?, spaceID: UUID) -> WKWebView? {
         guard library.space(spaceID) != nil else { return nil }
+        configuration.upgradeKnownHostsToHTTPS = false
+        configuration.defaultWebpagePreferences.preferredHTTPSNavigationPolicy = .keepAsRequested
         PictureInPictureWebKit.enable(configuration.preferences)
         PageRenderingRate.apply(to: configuration.preferences)
         let pageURL = url.flatMap { BrowserTab.isPageURL($0) ? $0 : nil }
@@ -530,7 +533,7 @@ final class BrowserModel {
 
     // MARK: Private
 
-    private func openInNewTab(_ url: URL, spaceID: UUID, inBackground: Bool) {
+    private func openInNewTab(_ url: URL, spaceID: UUID, inBackground: Bool, httpsFirst: Bool = false) {
         guard library.space(spaceID) != nil else { return }
         let item = library.addItem(
             spaceID: spaceID,
@@ -540,6 +543,9 @@ final class BrowserModel {
             url: url,
             at: .start
         )
+        if httpsFirst {
+            ensureTab(for: item).wantsHTTPSFirst = true
+        }
         guard !inBackground else { return }
         if selectedSpaceID != spaceID {
             adoptSpace(spaceID)

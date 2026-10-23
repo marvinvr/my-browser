@@ -141,7 +141,7 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 
 - Cmd+T: new tab mode (empty field). Cmd+L: edit current URL (prefilled, selected); Enter navigates the current tab.
 - Results: "Open URL" when input looks like a URL, "Search <engine>" otherwise, plus matching open tabs / pinned sites in the current space (title or URL contains the query) → switch to them.
-- `URLInput.resolve(_:)` decides URL vs search: explicit scheme, `localhost[:port]`, IPs, or `something.tld` without spaces ⇒ URL (https assumed); everything else ⇒ search.
+- `URLInput.resolve(_:)` decides URL vs search. An explicit scheme is kept. `localhost`, IP addresses, a single label with `/` or a port (`photos/`, `coolify:8000`), `*.ts.net`, `*.local`, `*.internal`, `*.lan`, `*.home.arpa`, and any host with a port are `http`. A bare single label is `http` when it resolves and a search otherwise. Other `host.tld` values are HTTPS-first: one connection, certificate, or timeout failure falls back to `http` with the address-field "Not secure" mark, and never a confirm page. Relaxed hosts are not marked insecure. WebKit's known-host upgrade and user-mediated HTTPS fallback stay off.
 - Default search engine: **Google** (enum `SearchEngine`: google, duckDuckGo, kagi, bing, ecosia). The choice is Settings → General, stored in `UserDefaults` under `SearchEngine.defaultsKey`.
 
 ## Keyboard shortcuts (Phase 1)

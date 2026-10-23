@@ -48,6 +48,10 @@ final class BrowserTab: NSObject, Identifiable {
     @ObservationIgnored private var historyRestoreAttempts = 0
     /// Set when `load` happens before the web view exists, so it wins over restored history.
     @ObservationIgnored private var pendingURL: URL?
+    /// The next `loadIfNeeded` was an HTTPS-first navigation and may fall back to HTTP once.
+    @ObservationIgnored var wantsHTTPSFirst = false
+    @ObservationIgnored private var navigationGeneration = 0
+    @ObservationIgnored private var httpsFirstAttempt: HTTPSFirstAttempt?
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var metaTheme: ThemeSample?
     @ObservationIgnored private var underPageTheme: ThemeSample?
@@ -99,12 +103,17 @@ final class BrowserTab: NSObject, Identifiable {
         attach(webView)
 
         if let pendingURL {
+            let httpsFirst = wantsHTTPSFirst
+            wantsHTTPSFirst = false
             self.pendingURL = nil
-            webView.load(URLRequest(url: pendingURL))
+            beginNavigation(pendingURL, in: webView, httpsFirst: httpsFirst)
         } else if let state = storedInteractionState {
+            wantsHTTPSFirst = false
             webView.interactionState = state
         } else if let initialURL {
-            webView.load(URLRequest(url: initialURL))
+            let httpsFirst = wantsHTTPSFirst
+            wantsHTTPSFirst = false
+            beginNavigation(initialURL, in: webView, httpsFirst: httpsFirst)
         }
 
         useCachedFavicon()
@@ -179,15 +188,52 @@ final class BrowserTab: NSObject, Identifiable {
         webView?.interactionState as? Data
     }
 
-    func load(_ url: URL) {
+    func load(_ url: URL, httpsFirst: Bool = false) {
         pendingURL = url
         storedInteractionState = nil
+        wantsHTTPSFirst = httpsFirst
         if self.url != url {
             self.url = url
             onStateChange?(self)
         }
         guard let webView else { return }
         pendingURL = nil
+        let first = wantsHTTPSFirst
+        wantsHTTPSFirst = false
+        beginNavigation(url, in: webView, httpsFirst: first)
+    }
+
+    /// HTTPS responded, so this navigation no longer falls back to HTTP.
+    func httpsFirstDidCommit() {
+        httpsFirstAttempt = nil
+    }
+
+    /// One silent HTTP load when the HTTPS-first attempt fails. A second failure stays failed.
+    func fallbackFromHTTPSFirst(_ error: Error) {
+        guard let attempt = httpsFirstAttempt, attempt.generation == navigationGeneration else { return }
+        let ns = error as NSError
+        guard HTTPRelaxation.isRetryableHTTPSFailure(ns) else { return }
+        if let failed = HTTPRelaxation.failingURL(ns),
+           let failedHost = failed.host(percentEncoded: false),
+           let attemptHost = attempt.url.host(percentEncoded: false),
+           !HTTPRelaxation.sameSite(host: failedHost, as: attemptHost) {
+            return
+        }
+        guard let httpURL = HTTPRelaxation.httpFallback(from: attempt.url) else {
+            httpsFirstAttempt = nil
+            return
+        }
+        httpsFirstAttempt = nil
+        load(httpURL)
+    }
+
+    private func beginNavigation(_ url: URL, in webView: WKWebView, httpsFirst: Bool) {
+        navigationGeneration &+= 1
+        if httpsFirst, HTTPRelaxation.httpFallback(from: url) != nil {
+            httpsFirstAttempt = HTTPSFirstAttempt(url: url, generation: navigationGeneration)
+        } else {
+            httpsFirstAttempt = nil
+        }
         webView.load(URLRequest(url: url))
     }
 
@@ -290,6 +336,11 @@ final class BrowserTab: NSObject, Identifiable {
         guard canGoForward != value else { return }
         canGoForward = value
         onNavigationChange?(self)
+    }
+
+    private struct HTTPSFirstAttempt {
+        var url: URL
+        var generation: Int
     }
 
     static func isPageURL(_ url: URL) -> Bool {
