@@ -84,6 +84,10 @@ private struct ReloadButton: View {
     private var tabID: UUID? { model.selectedTab?.id }
     /// One turn of `arrow.clockwise` while a page is loading.
     private var revolution: TimeInterval { 0.7 }
+    /// Square around the 12pt semibold glyph. Same frame at rest and while spinning.
+    private static let glyphSide: CGFloat = 18
+    /// The ring sits below the symbol bounds centre: baseline alignment, plus the arrowhead above the cap line.
+    private static let ringOffset: CGFloat = 1.125
     private var animating: Bool {
         switch phase {
         case .spinning, .settling: true
@@ -96,8 +100,13 @@ private struct ReloadButton: View {
             TimelineView(.animation(minimumInterval: 1 / 60, paused: !animating)) { context in
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 12, weight: .semibold))
+                    .imageScale(.medium)
                     .symbolRenderingMode(.monochrome)
-                    .rotationEffect(.degrees(displayedAngle(at: context.date)))
+                    .alignmentGuide(VerticalAlignment.center) { dimensions in
+                        dimensions[VerticalAlignment.center] + Self.ringOffset
+                    }
+                    .frame(width: Self.glyphSide, height: Self.glyphSide, alignment: .center)
+                    .rotationEffect(.degrees(displayedAngle(at: context.date)), anchor: .center)
                     .transaction { $0.disablesAnimations = true }
                     .frame(width: SidebarMetrics.toolbarControl, height: SidebarMetrics.toolbarControl)
             }
