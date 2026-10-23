@@ -898,10 +898,12 @@ final class BrowserModel {
     @discardableResult
     func presentPopup(configuration: WKWebViewConfiguration, url: URL?, spaceID: UUID, selectTab: Bool = true) -> WKWebView? {
         guard library.space(spaceID) != nil else { return nil }
+        let profileID = library.space(spaceID)?.profileID ?? spaceID
         configuration.upgradeKnownHostsToHTTPS = false
         configuration.defaultWebpagePreferences.preferredHTTPSNavigationPolicy = .keepAsRequested
         PictureInPictureWebKit.enable(configuration.preferences)
         PageRenderingRate.apply(to: configuration.preferences)
+        profiles.prepareConfiguration?(configuration, profileID)
         let pageURL = url.flatMap { BrowserTab.isPageURL($0) ? $0 : nil }
         let extensionURL = url.flatMap { BrowserTab.isExtensionPageURL($0) ? $0 : nil }
         let storedURL = pageURL ?? extensionURL
@@ -914,7 +916,6 @@ final class BrowserModel {
             url: storedURL,
             at: .start
         )
-        let profileID = library.space(spaceID)?.profileID ?? spaceID
         let webView = WKWebView(frame: .zero, configuration: configuration)
         let tab = BrowserTab(id: item.id, profileID: profileID, title: title, url: storedURL, adopting: webView)
         wire(tab, spaceID: spaceID)

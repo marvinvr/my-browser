@@ -36,9 +36,11 @@ final class ExtensionManager {
     @ObservationIgnored private var promptTail: Task<Bool, Never>?
     @ObservationIgnored private var focusObserver: NSObjectProtocol?
     @ObservationIgnored weak var model: BrowserModel?
+    @ObservationIgnored let contentBlocker: ContentBlockerController
 
     init(directory: URL) {
         self.directory = directory
+        contentBlocker = ContentBlockerController(extensionsDirectory: directory)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         do {
             records = try ExtensionCatalogStore.load(from: directory)
@@ -46,6 +48,7 @@ final class ExtensionManager {
             records = []
             lastError = "Couldn't read the extension list. The previous file was kept beside it."
         }
+        contentBlocker.recordsProvider = { [weak self] in self?.records ?? [] }
     }
 
     /// Call after this object is retained. A weak delegate pointer set inside `init` does not stick.
@@ -58,6 +61,7 @@ final class ExtensionManager {
         connectOwner()
         self.model = model
         window.model = model
+        contentBlocker.attach(model)
         observeFocus()
     }
 
@@ -65,6 +69,7 @@ final class ExtensionManager {
     /// SwiftUI's launch notification and trips a main-actor assertion when a large
     /// extension (1Password) is already installed.
     func loadEnabledExtensions() async {
+        contentBlocker.refresh()
         await loadEnabled()
         #if DEBUG
         debugLoadNote(debugLoadReport())
@@ -534,6 +539,7 @@ final class ExtensionManager {
             unload(id: id, profileID: profileID)
             record.enabledProfileIDs.removeAll { $0 == profileID }
             replace(record)
+            contentBlocker.refresh()
         }
     }
 
@@ -547,6 +553,7 @@ final class ExtensionManager {
         iconCache[id] = nil
         records.removeAll { $0.id == id }
         save()
+        contentBlocker.refresh()
     }
 
     /// Opens the options page with the extension's own web view configuration. Returns an error when there is nothing to open.
@@ -796,6 +803,9 @@ final class ExtensionManager {
         revision &+= 1
         if reloadPages, context.hasInjectedContent {
             model?.reloadWebTabs(in: profileID)
+        }
+        if UBOFilterSource.isFullUBO(record, extensionsDirectory: directory) {
+            contentBlocker.refresh()
         }
     }
 

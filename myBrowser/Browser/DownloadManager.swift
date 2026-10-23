@@ -394,6 +394,11 @@ final class DownloadManager {
         return nil
     }
 
+    /// The hidden web view already created for this profile, when a download outlived its tab.
+    func existingAuxiliaryWebView(profileID: UUID) -> WKWebView? {
+        auxiliary[profileID]
+    }
+
     /// A hidden web view for a profile whose tabs are all unloaded.
     func auxiliaryWebView(profileID: UUID, configuration: WKWebViewConfiguration) -> WKWebView {
         if let existing = auxiliary[profileID] { return existing }

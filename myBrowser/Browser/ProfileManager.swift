@@ -7,6 +7,9 @@ final class ProfileManager {
     /// Per-profile extension controller. Set before the first web view is created.
     var extensionController: ((UUID) -> WKWebExtensionController?)?
 
+    /// Adds compiled content-blocker lists. Set before the first web view is created.
+    var prepareConfiguration: ((WKWebViewConfiguration, UUID) -> Void)?
+
     func dataStore(for profileID: UUID) -> WKWebsiteDataStore {
         if let store = dataStores[profileID] { return store }
         let store = WKWebsiteDataStore(forIdentifier: profileID)
@@ -23,6 +26,7 @@ final class ProfileManager {
         if let controller = extensionController?(profileID) {
             configuration.webExtensionController = controller
         }
+        prepareConfiguration?(configuration, profileID)
         return configuration
     }
 
