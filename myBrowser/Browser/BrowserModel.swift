@@ -39,6 +39,8 @@ final class BrowserModel {
     var commandBarMode: CommandBarMode?
     /// File → Import… presents the import sheet from the main window.
     var isPresentingImport = false
+    /// History → Archived Tabs… presents the archive sheet.
+    var isPresentingArchive = false
 
     init(library: LibraryStore, session: SessionStore, extensions: ExtensionManager? = nil) {
         self.library = library
@@ -66,7 +68,11 @@ final class BrowserModel {
     }
 
     deinit {
+        archiveLoop?.cancel()
         for token in pictureInPictureObservers {
+            NotificationCenter.default.removeObserver(token)
+        }
+        for token in archiveObservers {
             NotificationCenter.default.removeObserver(token)
         }
     }
@@ -100,6 +106,8 @@ final class BrowserModel {
     @ObservationIgnored var pictureInPictureWindowFocused: Bool?
     @ObservationIgnored var pictureInPictureFocusTask: Task<Void, Never>?
     @ObservationIgnored nonisolated(unsafe) var pictureInPictureObservers: [NSObjectProtocol] = []
+    @ObservationIgnored nonisolated(unsafe) var archiveObservers: [NSObjectProtocol] = []
+    @ObservationIgnored nonisolated(unsafe) var archiveLoop: Task<Void, Never>?
 
     /// Sites in sidebar order for the current space: favorites, pinned (depth-first, expanded folders only), tabs.
     var navigableItems: [SidebarItem] {
@@ -153,6 +161,11 @@ final class BrowserModel {
     /// Selects an item and creates its live tab if needed. The web view itself is created by `BrowserTab.loadIfNeeded`.
     func select(_ itemID: UUID) {
         guard let item = library.item(itemID), item.kind == .site else { return }
+        // The tab being left was viewed until this moment, so its idle time starts now.
+        if let previous = session.selectedItemBySpace[item.spaceID], previous != itemID {
+            session.lastActiveAt[previous] = .now
+        }
+        session.lastActiveAt[itemID] = .now
         setSidebarFocus(itemID)
         let previous = selectedTab
         if selectedSpaceID != item.spaceID {
@@ -198,6 +211,11 @@ final class BrowserModel {
     }
 
     func close(_ itemID: UUID) {
+        close(itemID, archivingAt: nil)
+    }
+
+    /// `archivingAt` also records the tab in Archived Tabs. Manual closes pass nil.
+    func close(_ itemID: UUID, archivingAt: Date?) {
         guard let item = library.item(itemID), item.kind == .site else { return }
         let spaceID = item.spaceID
         let wasSelected = session.selectedItemBySpace[spaceID] == itemID
@@ -215,6 +233,16 @@ final class BrowserModel {
             if session.closedTabs.count > Self.closedTabLimit {
                 session.closedTabs.removeFirst(session.closedTabs.count - Self.closedTabLimit)
             }
+            if let archivingAt {
+                session.archivedTabs.removeAll { $0.item.id == itemID }
+                session.archivedTabs.append(SessionStore.ArchivedTab(
+                    item: snapshot,
+                    interactionState: state,
+                    archivedAt: archivingAt,
+                    lastActiveAt: session.lastActiveAt[itemID] ?? archivingAt
+                ))
+            }
+            session.lastActiveAt[itemID] = nil
             session.interactionStates[itemID] = nil
             library.deleteItem(itemID)
         } else {
@@ -248,6 +276,7 @@ final class BrowserModel {
 
         for id in removed {
             session.interactionStates[id] = nil
+            session.lastActiveAt[id] = nil
             unloadTab(id)
         }
         if sidebarFocusID == itemID || sidebarFocusID.map(removed.contains) == true {
@@ -268,20 +297,36 @@ final class BrowserModel {
     }
 
     /// Cmd+Shift+T. Restores the item at the top of `.tabs` with its back/forward history and selects it.
+    /// An archived tab reopened this way leaves the archive, so it is not listed twice.
     func reopenClosedTab() {
         while let closed = session.closedTabs.last {
             session.closedTabs.removeLast()
-            guard library.space(closed.item.spaceID) != nil else { continue }
-            let item = library.restoreItem(closed.item, at: .start)
-            if let state = closed.interactionState {
-                session.interactionStates[item.id] = state
-            }
-            if selectedSpaceID != item.spaceID {
-                adoptSpace(item.spaceID)
-            }
-            select(item.id)
+            session.archivedTabs.removeAll { $0.item.id == closed.item.id }
+            guard restoreClosed(closed.item, interactionState: closed.interactionState) else { continue }
             return
         }
+    }
+
+    /// Puts an archived tab back at the top of its space and selects it.
+    func reopenArchivedTab(_ id: UUID) {
+        guard let index = session.archivedTabs.lastIndex(where: { $0.item.id == id }) else { return }
+        let archived = session.archivedTabs.remove(at: index)
+        session.closedTabs.removeAll { $0.item.id == id }
+        _ = restoreClosed(archived.item, interactionState: archived.interactionState)
+    }
+
+    @discardableResult
+    private func restoreClosed(_ snapshot: SidebarItem, interactionState: Data?) -> Bool {
+        guard library.space(snapshot.spaceID) != nil else { return false }
+        let item = library.restoreItem(snapshot, at: .start)
+        if let interactionState {
+            session.interactionStates[item.id] = interactionState
+        }
+        if selectedSpaceID != item.spaceID {
+            adoptSpace(item.spaceID)
+        }
+        select(item.id)
+        return true
     }
 
     /// Cmd+1…8 (index 0…7). Cmd+9 passes `nil`, which selects the last navigable item.
@@ -632,6 +677,7 @@ final class BrowserModel {
         if httpsFirst {
             ensureTab(for: item).wantsHTTPSFirst = true
         }
+        session.lastActiveAt[item.id] = .now
         guard !inBackground else { return }
         if selectedSpaceID != spaceID {
             adoptSpace(spaceID)

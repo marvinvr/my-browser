@@ -23,6 +23,8 @@ final class BrowserTab: NSObject, Identifiable {
     private(set) var isLoaded = false
     /// A large enough video is playing and the site allows Picture in Picture.
     var hasPictureInPictureVideo = false
+    /// WebKit reports playback, or a large video is playing. The archive sweep refreshes this.
+    var isPlayingMedia = false
     var isPictureInPictureActive = false
     /// Toolbar and menus. Stays up while PiP is active so the video can be returned inline.
     var showsPictureInPictureButton: Bool { hasPictureInPictureVideo || isPictureInPictureActive }
@@ -391,6 +393,26 @@ final class BrowserTab: NSObject, Identifiable {
     /// WebKit calls this synchronously. The returned view must be built with `configuration`.
     func createWebView(configuration: WKWebViewConfiguration, url: URL?) -> WKWebView? {
         onCreateWebView?(configuration, url)
+    }
+
+    /// A download that still belongs to this tab's web view. The archive sweep leaves it open.
+    var hasActiveDownload: Bool {
+        guard let webView else { return false }
+        return downloads?.isDownloading(in: webView) == true
+    }
+
+    /// Asks WebKit whether audio or video is playing. Picture in Picture counts as playing.
+    func refreshMediaPlaybackState() async {
+        var playing = hasPictureInPictureVideo || isPictureInPictureActive
+        if let webView {
+            let state = await webView.requestMediaPlaybackState()
+            if state == .playing {
+                playing = true
+            }
+        }
+        if isPlayingMedia != playing {
+            isPlayingMedia = playing
+        }
     }
 
     func fetchFaviconIfNeeded() {

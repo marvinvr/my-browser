@@ -131,6 +131,31 @@ struct CommandBarModelTests {
         #expect(bar.selection == 0)
     }
 
+    @Test func archiveCommandOpensTheList() {
+        let browser = makeBrowser()
+        browser.showCommandBar(.newTab)
+        let bar = CommandBarModel(browser: browser, mode: .newTab, engine: .google)
+        bar.query = "archive"
+        let index = bar.rows.firstIndex { row in
+            if case .archivedTabs = row { return true }
+            return false
+        }
+        #expect(index != nil)
+        if let index {
+            bar.execute(bar.rows[index])
+        }
+        #expect(browser.isPresentingArchive)
+        #expect(browser.commandBarMode == nil)
+
+        let typing = CommandBarModel(browser: browser, mode: .newTab, engine: .google)
+        typing.query = "arch"
+        #expect(typing.rows.contains { if case .archivedTabs = $0 { true } else { false } })
+        typing.query = "git"
+        #expect(!typing.rows.contains { if case .archivedTabs = $0 { true } else { false } })
+        typing.query = "tab"
+        #expect(!typing.rows.contains { if case .archivedTabs = $0 { true } else { false } })
+    }
+
     @Test func executeHidesTheCommandBar() {
         let browser = makeBrowser()
         browser.showCommandBar(.newTab)

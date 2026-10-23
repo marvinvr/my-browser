@@ -59,6 +59,10 @@ struct AppCommands: Commands {
             PictureInPictureCommand(model: model)
         }
 
+        CommandMenu("History") {
+            Button("Archived Tabs…") { model.isPresentingArchive = true }
+        }
+
         CommandMenu("Tabs") {
             Button("Next Tab") { model.selectNextTab() }
                 .keyboardShortcut(.tab, modifiers: .control)

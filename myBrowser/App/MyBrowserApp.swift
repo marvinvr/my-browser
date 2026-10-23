@@ -52,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppIconApplier.apply()
         updater.start()
+        model.startArchiveMonitoring()
         #if DEBUG
         applyDebugAppearance()
         applyDebugAddressBar()
@@ -61,6 +62,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SETTINGS"] == "1" {
             openSettingsForDebug()
+        }
+        if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_ARCHIVE"] == "1" {
+            seedDebugArchive()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                self.model.isPresentingArchive = true
+            }
+        }
+        if let raw = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_WINDOW_X"], let x = Double(raw) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                for window in NSApp.windows where window.canBecomeKey {
+                    var frame = window.frame
+                    frame.origin.x = x
+                    window.setFrame(frame, display: true)
+                }
+            }
         }
         installDebugExtensionsIfRequested()
         DebugSnapshot.install(model: model)
@@ -169,6 +185,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if empty {
                 model.deleteSpace(space.id)
             }
+        }
+    }
+
+    /// Sample archived tabs for a snapshot. Only when the library is a throwaway directory.
+    private func seedDebugArchive() {
+        guard ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_LIBRARY"] != nil else { return }
+        guard model.session.archivedTabs.isEmpty else { return }
+        let spaceID = model.selectedSpaceID
+        let now = Date.now
+        let samples: [(String, String, TimeInterval)] = [
+            ("The Verge", "https://www.theverge.com", -18 * 86_400),
+            ("Wikipedia", "https://en.wikipedia.org/wiki/MacOS", -6 * 86_400),
+            ("Swift Forums", "https://forums.swift.org", -2 * 86_400),
+        ]
+        for (title, raw, age) in samples {
+            guard let url = URL(string: raw) else { continue }
+            let item = SidebarItem(
+                spaceID: spaceID,
+                section: .tabs,
+                kind: .site,
+                title: title,
+                url: url,
+                sortKey: "a0",
+                createdAt: now.addingTimeInterval(age)
+            )
+            model.session.archivedTabs.append(SessionStore.ArchivedTab(
+                item: item,
+                interactionState: nil,
+                archivedAt: now.addingTimeInterval(age),
+                lastActiveAt: now.addingTimeInterval(age - 3_600)
+            ))
         }
     }
 

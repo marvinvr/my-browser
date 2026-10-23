@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings scene (⌘,). General holds the search engine; Appearance holds the address bar and Dock icon; Extensions holds installed web extensions.
+/// Settings scene (⌘,). General holds the search engine, tab archive, and iCloud Sync; Appearance holds the address bar and Dock icon; Extensions holds installed web extensions.
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -11,12 +11,13 @@ struct SettingsView: View {
             ExtensionsSettingsView()
                 .tabItem { Label("Extensions", systemImage: "puzzlepiece.extension") }
         }
-        .frame(width: 520, height: 520)
+        .frame(width: 520, height: 560)
     }
 }
 
 private struct GeneralSettingsView: View {
     @AppStorage(SearchEngine.defaultsKey) private var searchEngine: SearchEngine = .google
+    @AppStorage(TabArchiveInterval.defaultsKey) private var archiveAfter: TabArchiveInterval = .twentyFourHours
     @AppStorage(PictureInPictureSettings.autoDefaultsKey) private var autoPictureInPicture = true
     @AppStorage(SyncController.enabledDefaultsKey) private var iCloudSyncEnabled = false
 
@@ -36,6 +37,29 @@ private struct GeneralSettingsView: View {
                 ForEach(SearchEngine.allCases, id: \.self) { engine in
                     Text(engine.displayName).tag(engine)
                 }
+            }
+
+            Section {
+                LabeledContent("Archive tabs after") {
+                    HStack(spacing: 6) {
+                        Picker("Archive tabs after", selection: $archiveAfter) {
+                            ForEach(TabArchiveInterval.allCases) { interval in
+                                Text(interval.label).tag(interval)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .fixedSize()
+                        .accessibilityIdentifier("archiveTabsAfter")
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .help(TabArchiveInterval.explanation)
+                            .accessibilityLabel("About archiving tabs")
+                    }
+                }
+            } header: {
+                Text("Tabs")
             }
 
             Section {

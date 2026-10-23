@@ -10,12 +10,15 @@ final class CommandBarModel {
         case search(title: String, url: URL)
         /// A favorite, pin or tab in the current space.
         case tab(SidebarItem)
+        /// Opens the Archived Tabs list.
+        case archivedTabs
 
         var id: String {
             switch self {
             case .open: "open"
             case .search: "search"
             case .tab(let item): "tab-\(item.id.uuidString)"
+            case .archivedTabs: "archived-tabs"
             }
         }
 
@@ -23,6 +26,7 @@ final class CommandBarModel {
             switch self {
             case .open(let title, _, _), .search(let title, _): title
             case .tab(let item): item.title
+            case .archivedTabs: "Archived Tabs"
             }
         }
 
@@ -30,6 +34,7 @@ final class CommandBarModel {
             switch self {
             case .open(_, let url, _), .search(_, let url): url
             case .tab(let item): item.url
+            case .archivedTabs: nil
             }
         }
     }
@@ -98,6 +103,9 @@ final class CommandBarModel {
             commit(url: url, httpsFirst: false)
         case .tab(let item):
             browser.select(item.id)
+            browser.hideCommandBar()
+        case .archivedTabs:
+            browser.isPresentingArchive = true
             browser.hideCommandBar()
         }
     }
@@ -169,6 +177,9 @@ final class CommandBarModel {
                 let url = engine.searchURL(for: text)
                 next.append(.search(title: "Search \(engine.displayName) for '\(text)'", url: url))
             }
+            if Self.wantsArchivedTabs(trimmed) {
+                next.append(.archivedTabs)
+            }
             let matches = Self.rankedMatches(query: trimmed, items: candidateSites())
             let room = max(0, Self.maxVisibleRows - next.count)
             next.append(contentsOf: matches.prefix(room).map { .tab($0) })
@@ -204,6 +215,14 @@ final class CommandBarModel {
         return browser.library.items.values.filter { item in
             item.deletedAt == nil && item.spaceID == spaceID && item.kind == .site
         }
+    }
+
+    /// "archive", "archived", "archived tabs", and a prefix of that title ("arch").
+    static func wantsArchivedTabs(_ query: String) -> Bool {
+        let folded = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard folded.count >= 3 else { return false }
+        if folded.contains("archive") { return true }
+        return "archived tabs".hasPrefix(folded)
     }
 
     private func openTabs() -> [SidebarItem] {

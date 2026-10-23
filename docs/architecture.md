@@ -39,7 +39,7 @@ myBrowserTests/   Swift Testing unit tests (model, SortKey, store, URL parsing)
 Two kinds of state:
 
 1. **Library** (`LibraryStore`, `library.json`): profiles, spaces, sidebar items. This is the part that will sync via CloudKit in Phase 2 (except the `tabs` section, see below).
-2. **Session** (`SessionStore`, `session.json`): local-only window state: selected space, selected item per space, per-tab WebKit `interactionState` (back/forward history), recently closed tabs. Never synced.
+2. **Session** (`SessionStore`, `session.json`): local-only window state: selected space, selected item per space, per-tab WebKit `interactionState` (back/forward history), recently closed tabs, last-active times, and archived tabs. Never synced. `lastActiveAt` and `archivedTabs` are optional on decode so a session file from before archiving still opens. Schema stays 1.
 
 ### Profile
 `Profile { id: UUID, name, modifiedAt, deletedAt? }`. The profile's `id` is the identifier passed to `WKWebsiteDataStore(forIdentifier:)`, so cookies, local storage, caches etc. are isolated per profile and persist across launches. By default every new Space gets its own new Profile (1:1); the model allows several Spaces to share a Profile later (Arc does this).
@@ -77,6 +77,14 @@ A pinned or favorite site keeps `url` as its home. Navigating the live tab does 
 
 `BrowserModel.tabs: [UUID: BrowserTab]` holds the live tabs. An item without a `BrowserTab` is "not loaded". Selecting it creates one.
 
+### Tab archive
+
+Unpinned tabs (the `.tabs` section only) that have not been selected for longer than Settings → General → **Archive tabs after** are closed into an archive. The choices are 12 hours, 24 hours (the default), 7 days, 30 days, and Never (`UserDefaults` key `archiveTabsAfter`). An info button on that row explains the rule. A tab is kept when it is the selected item of its space, playing audio or video (`WKWebView` media state, or a large playing video), in Picture in Picture, or has an active download. Pinned sites, favorites, and items inside pinned folders are not candidates.
+
+`SessionStore.lastActiveAt` maps an item id to the last time it was selected. It is session state, not a field on `SidebarItem`, so opening a pin does not rewrite a record that syncs. Selecting a tab stamps it and stamps the tab that was just left, so the time it stayed selected counts as viewed. A tab with no stamp is stamped with the check time on the first sweep, so turning the feature on does not archive the whole list. The sweep runs about every three minutes, and again at launch and when the app becomes active. The clock is injectable; idle time has to be longer than the interval.
+
+`SessionStore.ArchivedTab` keeps the item snapshot (same id), the WebKit interaction state, `archivedAt`, and `lastActiveAt`. Entries older than 30 days are dropped, and so are entries whose space is gone. History → Archived Tabs… and a command bar match for "archive" open a search list. Reopening restores the `.tabs` item at the top of its space with its history. The same close is pushed onto the closed-tab stack, so ⌘⇧T reopens the most recent one and removes it from the archive. The archive is local, like `.tabs`: it is not uploaded.
+
 ### Ordering keys
 `sortKey` is a fractional index string (`SortKey.between(a, b)`, base-62 digits, lexicographic compare). Inserting/moving only rewrites the moved record, which keeps CloudKit conflicts local to one record. Ties (two devices inserting at the same spot) are broken by `id`.
 
@@ -107,7 +115,7 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 ## Window / scene structure
 
 - Phase 1: one main window (`Window` scene, id `main`) with one `BrowserModel`. `LibraryStore` and `SessionStore` are app-level singletons owned by the app and injected. Multiple windows (each its own `BrowserModel` sharing the library) come later.
-- Settings (`Settings` scene, ⌘,): **General** — default search engine (`SearchEngine.defaultsKey`) and iCloud Sync (beta), disabled until `MBCloudKitContainer` is set. **Appearance** — address bar position (`AddressBarPosition.defaultsKey`: `top` default, or `sidebar`) and the Dock icon (`AppIconVariant.defaultsKey`: `light` default, or `dark`). **Extensions** — installed web extensions, per-profile enablement, install from a file or the Chrome Web Store. General and Appearance are `@AppStorage` over `UserDefaults`. Grouped `Form`.
+- Settings (`Settings` scene, ⌘,): **General** — default search engine (`SearchEngine.defaultsKey`), **Archive tabs after** (`archiveTabsAfter`: `12h`, `24h` default, `7d`, `30d`, `never`) with an info tooltip, and iCloud Sync (beta), disabled until `MBCloudKitContainer` is set. **Appearance** — address bar position (`AddressBarPosition.defaultsKey`: `top` default, or `sidebar`) and the Dock icon (`AppIconVariant.defaultsKey`: `light` default, or `dark`). **Extensions** — installed web extensions, per-profile enablement, install from a file or the Chrome Web Store. General and Appearance are `@AppStorage` over `UserDefaults`. Grouped `Form`.
 - Window: hidden title bar, full-size content view, transparent title bar; the traffic lights sit over the sidebar like Arc. `WindowConfigurator` (an `NSViewRepresentable` that grabs `view.window`) applies the AppKit tweaks and moves `standardWindowButton`s so their vertical centre matches the toolbar. It re-applies that position on resize and when leaving fullscreen (AppKit resets the buttons). While fullscreen is active the system owns the buttons.
 - Layout (`MainWindowView`): full-height sidebar on the left (behind-window vibrancy), web content on the right as a rounded card inset by a few points. The sidebar toggles with ⌘S (View menu "Hide Sidebar" / "Show Sidebar", plus a `sidebar.left` button). When hidden, the card fills the window edge to edge: no inset, no shadow, so the sidebar material does not leave a frame. Collapse and the address-bar setting share one spring (`SidebarMotion.sidebar`). The traffic-light centre stays on `SidebarMetrics.chromeCenterFromTop` in both modes, so the lights do not jump.
 - Toolbar (`ContentToolbar`): `NavigationButtons` (back, forward, reload/stop) and `AddressField` (with `CopyLinkButton`) read `BrowserModel` from the environment and take an optional `ToolbarChrome`. Extension action buttons sit at the trailing end of the content toolbar, and on their own row under the address field when that field is in the sidebar. Up to four icons show; the rest are in a puzzle-piece menu. The resting field shows `URLDisplay`: host without scheme or `www.`, then at most the last two word-like path segments (short, numeric, locale, version, and id segments omitted), no query or fragment. Clicking it (or Cmd+L) opens the command bar in edit-current mode with the full URL selected. ⌘R is handled only by `KeyMonitor` (Ctrl+R does nothing; key repeat does not reload again). ⌘⇧C copies the current URL. While a page loads, the reload arrow (`arrow.clockwise`) spins continuously and eases to upright when loading ends; clicking it during a load stops the page. A thin progress line still runs under the bar.
@@ -171,7 +179,7 @@ The toolbar button (`arrow.down.circle`) sits at the trailing end of the address
 | Cmd+T | Command bar, new tab |
 | Cmd+L | Command bar, edit current URL |
 | Cmd+W | Close tab (pinned/favorite: unload and reset to the saved URL; tabs: delete) |
-| Cmd+Shift+T | Reopen last closed tab |
+| Cmd+Shift+T | Reopen last closed tab, including one the archiver just closed |
 | Cmd+1…8 | Select n-th item in sidebar order (favorites, pinned (expanded), tabs); Cmd+9 = last |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous item in sidebar order |
 | Cmd+Opt+→ / ← | Next / previous space |
@@ -302,3 +310,4 @@ Do not flip those switches before the container and the profile exist. A Release
 - 2026-10-23: the favorites grid balances rows (`ceil(n / maxPerRow)`, remainder on the earlier rows) so six icons are 3+3. Tiles in a row share its width. At most four per row, same as before.
 - 2026-10-23: sidebar folders drop the disclosure chevron. Closed is `folder`, expanded is `folder.fill`, with a magic symbol replace in a fixed frame so rows stay aligned.
 - 2026-10-23: downloads use `WKDownload` into `~/Downloads` (`file (1).pdf`, a `.download` partial, then a rename). The toolbar button shows active and recent items for the current profile. PDF, image, text, video, and audio open in a tab. Other types open in the default app.
+- 2026-10-23: unpinned tabs archive after an idle interval (24 hours by default). Last-active times and the archive live in `session.json`, not on synced sidebar records. History → Archived Tabs… searches the last 30 days. ⌘⇧T still reopens the newest closed or archived tab.
