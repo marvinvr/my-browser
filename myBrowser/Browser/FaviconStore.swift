@@ -13,6 +13,15 @@ final class FaviconStore {
     @ObservationIgnored private var inFlight: [String: Task<NSImage?, Never>] = [:]
     /// Bumped when a newly fetched icon is stored, so sidebar views refresh.
     private(set) var cacheGeneration = 0
+    /// Views set this from the window appearance. A dark page icon is preferred while it is true.
+    @ObservationIgnored var onAppearanceChange: (() -> Void)?
+    var prefersDarkIcons = false {
+        didSet {
+            guard prefersDarkIcons != oldValue else { return }
+            cacheGeneration &+= 1
+            onAppearanceChange?()
+        }
+    }
 
     /// - Parameter directory: The app support directory (`…/myBrowser`). `nil` keeps icons in memory only.
     init(directory: URL?) {
@@ -32,15 +41,13 @@ final class FaviconStore {
     }
 
     /// Synchronous lookup for sidebar rows whose tab is not loaded. Checks memory, then disk.
+    /// The appearance-specific file wins. The other variant is the fallback.
     func cachedFavicon(for url: URL) -> NSImage? {
         _ = cacheGeneration
+        _ = prefersDarkIcons
         guard let key = Self.cacheKey(for: url) else { return nil }
-        if let image = memory[key] { return image }
-        guard let file = fileURL(for: key), let image = NSImage(contentsOf: file), Self.isUsable(image) else {
-            return nil
-        }
-        memory[key] = image
-        return image
+        if let image = lookup(Self.variant(key, dark: prefersDarkIcons)) { return image }
+        return lookup(Self.variant(key, dark: !prefersDarkIcons))
     }
 
     /// Resolves the best icon for a loaded page, then downloads and caches it.
@@ -59,30 +66,47 @@ final class FaviconStore {
     // MARK: Fetch
 
     private func fetch(pageURL: URL, key: String, webView: WKWebView?) async -> NSImage? {
+        let choice = await iconURLs(in: webView)
         let fallback = Self.faviconICO(for: pageURL)
-        let preferred = await iconURL(in: webView)
-        if let preferred, preferred != fallback, let image = await download(preferred) {
-            store(image, for: key)
-            return image
+        var light: NSImage?
+        if let lightURL = choice.light {
+            light = await download(lightURL)
         }
-        if let fallback, let image = await download(fallback) {
-            store(image, for: key)
-            return image
+        var dark: NSImage?
+        if let darkURL = choice.dark, darkURL != choice.light {
+            dark = await download(darkURL)
         }
-        return nil
+        if light == nil, dark == nil, let fallback, fallback != choice.light, fallback != choice.dark {
+            light = await download(fallback)
+        }
+        if let light {
+            store(light, for: Self.variant(key, dark: false))
+        }
+        if let dark {
+            store(dark, for: Self.variant(key, dark: true))
+        }
+        if prefersDarkIcons {
+            return dark ?? light
+        }
+        return light ?? dark
     }
 
-    /// Best `<link rel~=icon>` href. Prefers `apple-touch-icon`, then the largest declared size.
-    private func iconURL(in webView: WKWebView?) async -> URL? {
-        guard let webView else { return nil }
+    /// Light and dark `<link rel>` hrefs. A matching `prefers-color-scheme` beats `apple-touch-icon`.
+    private func iconURLs(in webView: WKWebView?) async -> (light: URL?, dark: URL?) {
+        guard let webView else { return (nil, nil) }
         do {
             let result = try await webView.evaluateJavaScript(Self.iconScript)
-            guard let href = result as? String, !href.isEmpty, let url = URL(string: href) else { return nil }
-            guard url.scheme == "http" || url.scheme == "https" else { return nil }
-            return url
+            guard let text = result as? String, let data = text.data(using: .utf8) else { return (nil, nil) }
+            let links = try JSONDecoder().decode(IconLinks.self, from: data)
+            return (Self.httpURL(links.light), Self.httpURL(links.dark))
         } catch {
-            return nil
+            return (nil, nil)
         }
+    }
+
+    private struct IconLinks: Decodable {
+        var light: String?
+        var dark: String?
     }
 
     private func download(_ url: URL) async -> NSImage? {
@@ -98,12 +122,32 @@ final class FaviconStore {
         }
     }
 
+    private func lookup(_ key: String) -> NSImage? {
+        if let image = memory[key] { return image }
+        guard let file = fileURL(for: key), let image = NSImage(contentsOf: file), Self.isUsable(image) else {
+            return nil
+        }
+        memory[key] = image
+        return image
+    }
+
     private func store(_ image: NSImage, for key: String) {
         memory[key] = image
         if let file = fileURL(for: key), let png = Self.pngData(from: image) {
             try? png.write(to: file, options: .atomic)
         }
         cacheGeneration &+= 1
+    }
+
+    /// `github.com.dark` is the dark file. The plain host is the light file, including icons saved before variants.
+    private static func variant(_ key: String, dark: Bool) -> String {
+        dark ? key + ".dark" : key
+    }
+
+    private static func httpURL(_ string: String?) -> URL? {
+        guard let string, let url = URL(string: string),
+              let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return nil }
+        return url
     }
 
     // MARK: Keys and files
@@ -144,26 +188,48 @@ final class FaviconStore {
         return rep.representation(using: .png, properties: [:])
     }
 
+    /// Picks one href per appearance. An explicit `prefers-color-scheme` icon outranks `apple-touch-icon`.
     private static let iconScript = """
     (() => {
       const links = Array.from(document.querySelectorAll(
         'link[rel~="icon"], link[rel="apple-touch-icon"], link[rel="apple-touch-icon-precomposed"], link[rel="shortcut icon"]'
       ));
-      const score = (link) => {
-        const rel = (link.getAttribute("rel") || "").toLowerCase();
-        const sizes = (link.getAttribute("sizes") || "").toLowerCase();
-        let size = sizes === "any" ? 512 : 0;
-        for (const part of sizes.split(/\\s+/)) {
-          const match = part.match(/(\\d+)x(\\d+)/);
-          if (match) size = Math.max(size, parseInt(match[1], 10));
-        }
-        let value = size;
-        if (rel.includes("apple-touch-icon")) value += 10000;
-        else if (rel.includes("icon")) value += 1000;
-        return value;
+      const schemeOf = (link) => {
+        const media = (link.getAttribute("media") || "").toLowerCase();
+        if (/prefers-color-scheme\\s*:\\s*light/.test(media)) return "light";
+        if (/not\\s*\\([^)]*prefers-color-scheme\\s*:\\s*dark/.test(media)) return "light";
+        if (/prefers-color-scheme\\s*:\\s*dark/.test(media)) return "dark";
+        return "";
       };
-      links.sort((a, b) => score(b) - score(a));
-      return links.length ? links[0].href : null;
+      const pick = (dark) => {
+        let best = null;
+        let bestScore = -1;
+        for (const link of links) {
+          const rel = (link.getAttribute("rel") || "").toLowerCase();
+          const scheme = schemeOf(link);
+          if (dark && scheme === "light") continue;
+          if (!dark && scheme === "dark") continue;
+          const sizes = (link.getAttribute("sizes") || "").toLowerCase();
+          let size = sizes === "any" ? 512 : 0;
+          for (const part of sizes.split(/\\s+/)) {
+            const match = part.match(/(\\d+)x(\\d+)/);
+            if (match) size = Math.max(size, parseInt(match[1], 10));
+          }
+          let value = size;
+          if ((dark && scheme === "dark") || (!dark && scheme === "light")) value += 30000;
+          if (rel.includes("apple-touch-icon")) value += 10000;
+          else if (rel.includes("icon")) value += 1000;
+          if (value > bestScore && link.href) {
+            bestScore = value;
+            best = link.href;
+          }
+        }
+        return best;
+      };
+      const light = pick(false);
+      const dark = pick(true);
+      if (!light && !dark) return null;
+      return JSON.stringify({ light: light, dark: dark });
     })()
     """
 }

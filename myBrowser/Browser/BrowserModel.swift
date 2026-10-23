@@ -69,6 +69,9 @@ final class BrowserModel {
             extensions?.controller(for: profileID)
         }
         notifications.model = self
+        favicons.onAppearanceChange = { [weak self] in
+            self?.applyFaviconAppearance()
+        }
         if let itemID = session.selectedItemBySpace[resolved] {
             select(itemID)
         }
@@ -76,6 +79,13 @@ final class BrowserModel {
             self?.adoptLiveSpaceIfSelectionGone()
         }
         installPictureInPictureMonitoring()
+    }
+
+    /// Loaded tabs keep their own image. Appearance changes point that image at the matching variant.
+    private func applyFaviconAppearance() {
+        for tab in tabs.values {
+            tab.applyCachedFavicon()
+        }
     }
 
     deinit {

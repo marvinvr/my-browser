@@ -8,6 +8,8 @@ struct FaviconView: View {
     var title: String
     var size: CGFloat = SidebarMetrics.rowIcon
 
+    @Environment(\.colorScheme) private var colorScheme
+
     /// Continuous corner, 24% of the box. Square bitmaps soften; a round or
     /// transparent mark sits inside the curve, so the clip does not shave it.
     private static let cornerFraction: CGFloat = 0.24
@@ -19,12 +21,18 @@ struct FaviconView: View {
     var body: some View {
         Group {
             if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .frame(width: size, height: size)
-                    .clipShape(iconShape)
+                let presentation = FaviconContrast.presentation(for: image, colorScheme: colorScheme)
+                ZStack {
+                    if presentation.plate {
+                        iconShape.fill(plateColor)
+                    }
+                    Image(nsImage: presentation.image)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                }
+                .frame(width: size, height: size)
+                .clipShape(iconShape)
             } else if let letter = SidebarTitle.monogram(url: url, title: title) {
                 Text(letter)
                     .font(.system(size: size * 0.55, weight: .semibold, design: .rounded))
@@ -39,6 +47,13 @@ struct FaviconView: View {
             }
         }
         .accessibilityHidden(true)
+    }
+
+    /// Light chip in dark mode, dark chip in light mode. Solid, so vibrancy does not wash it out.
+    private var plateColor: Color {
+        colorScheme == .dark
+            ? Color(red: 0.93, green: 0.93, blue: 0.94)
+            : Color(red: 0.22, green: 0.22, blue: 0.24)
     }
 
     private var softColor: Color {

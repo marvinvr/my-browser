@@ -174,8 +174,15 @@ final class BrowserTab: NSObject, Identifiable {
 
     /// Shows a previously cached icon immediately, before the page finishes loading.
     func useCachedFavicon() {
-        guard favicon == nil, let url else { return }
-        favicon = faviconStore?.cachedFavicon(for: url)
+        guard favicon == nil else { return }
+        applyCachedFavicon()
+    }
+
+    /// Swaps in the icon for the current appearance, including a dark-mode variant.
+    func applyCachedFavicon() {
+        guard let url, let image = faviconStore?.cachedFavicon(for: url) else { return }
+        guard favicon !== image else { return }
+        favicon = image
     }
 
     /// Points the displayed URL and title at a page without starting a navigation.

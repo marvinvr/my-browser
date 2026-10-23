@@ -5,6 +5,7 @@ import SwiftUI
 /// `WebContentView` fills the card; this view clips and shadows it.
 struct MainWindowView: View {
     @Environment(BrowserModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage(SidebarMetrics.widthDefaultsKey) private var storedSidebarWidth = SidebarMetrics.defaultWidth
     @AppStorage(AddressBarPosition.defaultsKey) private var addressBarPosition: AddressBarPosition = .top
     @State private var draggedWidth: Double?
@@ -59,6 +60,9 @@ struct MainWindowView: View {
             Task { @MainActor in
                 model.prewarmNeighbourSpaces()
             }
+        }
+        .onChange(of: colorScheme, initial: true) { _, scheme in
+            model.favicons.prefersDarkIcons = scheme == .dark
         }
     }
 
