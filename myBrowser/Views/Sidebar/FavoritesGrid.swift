@@ -4,7 +4,7 @@ import SwiftUI
 /// How many favorites sit on each row. Rows are balanced for the width instead of filled left to right.
 nonisolated enum FavoriteGridLayout {
     static let spacing: CGFloat = 6
-    static let tileHeight: CGFloat = 36
+    static let tileHeight: CGFloat = SidebarMetrics.favoriteTileHeight
     /// Smallest tile. The sidebar's minimum width still fits `columnCap` of these.
     static let minimumTileWidth: CGFloat = 32
     /// The previous grid was four across. Wider sidebars grow the tiles; they do not add a column.
@@ -130,7 +130,7 @@ private struct FavoriteTile: View {
                 SidebarInlineField(title: item.title, itemID: item.id)
                     .padding(.horizontal, 4)
             } else {
-                FaviconView(image: favicon, url: item.url, title: title, size: 18)
+                FaviconView(image: favicon, url: item.url, title: title, size: SidebarMetrics.favoriteIcon)
                     .overlay(alignment: .topTrailing) {
                         if isAway {
                             AwayDot()

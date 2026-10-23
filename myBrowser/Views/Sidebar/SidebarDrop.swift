@@ -240,7 +240,7 @@ private struct SidebarDropChrome: View {
                     .fill(Color.accentColor.opacity(0.14))
                     .overlay(alignment: .trailing) {
                         Image(systemName: "rectangle.split.2x1")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: SidebarMetrics.dropSplitSymbol, weight: .semibold))
                             .foregroundStyle(Color.accentColor)
                             .padding(.trailing, 8)
                     }
@@ -313,7 +313,7 @@ struct SidebarInlineField: View {
     var title: String
     var itemID: UUID? = nil
     var spaceID: UUID? = nil
-    var font: NSFont = .systemFont(ofSize: 13)
+    var font: NSFont = .systemFont(ofSize: SidebarMetrics.rowTitle)
 
     @Environment(BrowserModel.self) private var model
     @Environment(SidebarInteraction.self) private var interaction

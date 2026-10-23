@@ -27,7 +27,7 @@ struct CopyLinkButton: View {
             model.copyCurrentLink()
         } label: {
             Image(systemName: confirmed ? "checkmark" : "link")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: SidebarMetrics.addressSymbol, weight: .semibold))
                 .symbolRenderingMode(.monochrome)
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: 22, height: 22)

@@ -18,10 +18,10 @@ struct TabList: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(width: 16, height: 16)
+                        .font(.system(size: SidebarMetrics.newTabSymbol, weight: .semibold))
+                        .frame(width: SidebarMetrics.rowIcon, height: SidebarMetrics.rowIcon)
                     Text("New Tab")
-                        .font(.system(size: 13))
+                        .font(.system(size: SidebarMetrics.rowTitle))
                     Spacer(minLength: 0)
                 }
                 .padding(.leading, 6)

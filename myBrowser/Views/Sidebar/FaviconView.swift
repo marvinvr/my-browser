@@ -6,7 +6,7 @@ struct FaviconView: View {
     var image: NSImage?
     var url: URL?
     var title: String
-    var size: CGFloat = 16
+    var size: CGFloat = SidebarMetrics.rowIcon
 
     var body: some View {
         Group {

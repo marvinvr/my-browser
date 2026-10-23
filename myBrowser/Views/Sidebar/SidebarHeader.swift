@@ -39,8 +39,8 @@ private struct SidebarHeaderButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 13, weight: .medium))
-                .frame(width: 26, height: 26)
+                .font(.system(size: SidebarMetrics.headerSymbol, weight: .medium))
+                .frame(width: SidebarMetrics.toolbarControl, height: SidebarMetrics.toolbarControl)
                 .background {
                     Circle().fill(Color.primary.opacity(hovering ? 0.08 : 0))
                 }

@@ -29,9 +29,9 @@ struct SidebarRow: View {
                     model.close(item.id)
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: SidebarMetrics.closeGlyph, weight: .bold))
                         .foregroundStyle(.secondary)
-                        .frame(width: 22, height: 22)
+                        .frame(width: SidebarMetrics.closeHit, height: SidebarMetrics.closeHit)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -89,7 +89,7 @@ struct SidebarRow: View {
                         model.select(item.id)
                     }
                 } label: {
-                    FaviconView(image: icon, url: iconURL, title: title, size: 16)
+                    FaviconView(image: icon, url: iconURL, title: title, size: SidebarMetrics.rowIcon)
                         .padding(.leading, leading)
                         .padding(.trailing, away && !isEditing ? 0 : 8)
                         .frame(height: SidebarMetrics.rowHeight)
@@ -105,7 +105,7 @@ struct SidebarRow: View {
             } label: {
                 HStack(spacing: item.section == .pinned ? 0 : 8) {
                     if item.section != .pinned {
-                        FaviconView(image: icon, url: iconURL, title: title, size: 16)
+                        FaviconView(image: icon, url: iconURL, title: title, size: SidebarMetrics.rowIcon)
                     }
                     if away, !isEditing {
                         FlatLabel(text: "  /  ", prominence: .quiet, hugs: true)
@@ -135,7 +135,7 @@ struct SidebarRow: View {
                 if index > 0 {
                     Rectangle()
                         .fill(Color.primary.opacity(isSelected ? 0.28 : 0.16))
-                        .frame(width: 1, height: 12)
+                        .frame(width: 1, height: SidebarMetrics.splitDivider)
                         .padding(.horizontal, 4)
                         .accessibilityHidden(true)
                 }
@@ -161,7 +161,7 @@ struct SidebarRow: View {
                     model.select(member.id)
                 }
             } label: {
-                FaviconView(image: icon, url: iconURL, title: title, size: 16)
+                FaviconView(image: icon, url: iconURL, title: title, size: SidebarMetrics.rowIcon)
                     .frame(height: SidebarMetrics.rowHeight)
                     .contentShape(Rectangle())
             }
@@ -260,13 +260,13 @@ private struct FlatLabel: NSViewRepresentable {
     private func apply(to field: FlatLabelField) {
         switch prominence {
         case .regular:
-            field.font = .systemFont(ofSize: 13)
+            field.font = .systemFont(ofSize: SidebarMetrics.rowTitle)
             field.textColor = .labelColor
         case .strong:
-            field.font = .systemFont(ofSize: 13, weight: .medium)
+            field.font = .systemFont(ofSize: SidebarMetrics.rowTitle, weight: .medium)
             field.textColor = .labelColor
         case .quiet:
-            field.font = .systemFont(ofSize: 13)
+            field.font = .systemFont(ofSize: SidebarMetrics.rowTitle)
             field.textColor = .secondaryLabelColor
         }
         let priority: NSLayoutConstraint.Priority = hugs ? .required : .defaultLow

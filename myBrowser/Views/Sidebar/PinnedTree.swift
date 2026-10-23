@@ -72,11 +72,11 @@ private struct EmptyPinned: View {
 
     var body: some View {
         Text("Pinned tabs and folders appear here")
-            .font(.system(size: 12))
+            .font(.system(size: SidebarMetrics.secondaryText))
             .foregroundStyle(.tertiary)
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: SidebarMetrics.emptyRowMinHeight, alignment: .leading)
             .sidebarDropTarget(.tail(spaceID: spaceID, section: .pinned, token: token))
     }
 }
@@ -101,17 +101,17 @@ private struct FolderRow: View {
             // No open-folder symbol. The fill is the expanded state and magic-replaces
             // with the outline on the same spring as the rows below. The frame stays put.
             Image(systemName: item.isExpanded ? "folder.fill" : "folder")
-                .font(.system(size: 13))
+                .font(.system(size: SidebarMetrics.folderSymbol))
                 .foregroundStyle(.secondary)
                 // Replace runs on its own timeline. Double speed finishes with the 0.2s spring.
                 .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp), options: .speed(2)))
-                .frame(width: 16, height: 16)
+                .frame(width: SidebarMetrics.rowIcon, height: SidebarMetrics.rowIcon)
                 .accessibilityHidden(true)
             if isEditing {
                 SidebarInlineField(title: title, itemID: item.id)
             } else {
                 Text(title)
-                    .font(.system(size: 13))
+                    .font(.system(size: SidebarMetrics.rowTitle))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .truncationMode(.tail)

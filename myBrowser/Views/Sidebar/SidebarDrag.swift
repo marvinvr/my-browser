@@ -145,7 +145,7 @@ nonisolated enum SidebarDropGeometry {
     static let rowLeading: CGFloat = 6
 
     static func zone(y: CGFloat, height: CGFloat, treatsMiddleAsInto: Bool, treatsMiddleAsSplit: Bool = false) -> SidebarDropZone {
-        let span = height > 1 ? height : 30
+        let span = height > 1 ? height : SidebarMetrics.rowHeight
         let band = min(8, span * 0.3)
         if y < band { return .before }
         if y > span - band { return .after }

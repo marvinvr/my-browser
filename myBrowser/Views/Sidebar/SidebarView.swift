@@ -65,19 +65,19 @@ struct SidebarView: View {
                     SidebarInlineField(
                         title: name,
                         spaceID: spaceID,
-                        font: .systemFont(ofSize: 11, weight: .semibold)
+                        font: .systemFont(ofSize: SidebarMetrics.sectionHeader, weight: .semibold)
                     )
                     .padding(.horizontal, 8)
-                    .padding(.top, 12)
-                    .padding(.bottom, 2)
+                    .padding(.top, SidebarMetrics.sectionHeaderTop)
+                    .padding(.bottom, SidebarMetrics.sectionHeaderBottom)
                 } else {
                     Text(name)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: SidebarMetrics.sectionHeader, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .padding(.horizontal, 8)
-                        .padding(.top, 12)
-                        .padding(.bottom, 2)
+                        .padding(.top, SidebarMetrics.sectionHeaderTop)
+                        .padding(.bottom, SidebarMetrics.sectionHeaderBottom)
                 }
             }
             PinnedTree(

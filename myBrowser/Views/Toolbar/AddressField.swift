@@ -96,9 +96,9 @@ struct AddressField: View {
     private func insecureBadge(_ style: ToolbarChrome) -> some View {
         HStack(spacing: 3) {
             Image(systemName: "lock.slash")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: SidebarMetrics.addressWarningSymbol, weight: .semibold))
             Text("Not Secure")
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: SidebarMetrics.addressWarningText, weight: .medium))
         }
         .foregroundStyle(presentation == .inline ? AnyShapeStyle(Color.orange) : AnyShapeStyle(style.warning))
         .symbolRenderingMode(.monochrome)
@@ -111,13 +111,13 @@ struct AddressField: View {
         Group {
             if presentation == .inline {
                 Text(display.isEmpty ? "Search or enter URL" : display.plainText)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: SidebarMetrics.addressText, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             } else if display.isEmpty {
                 Text("Search or enter URL")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: SidebarMetrics.addressText, weight: .medium))
                     .foregroundStyle(style.secondaryText)
             } else {
                 Text(attributed(display, style: style))
@@ -135,10 +135,10 @@ struct AddressField: View {
             switch piece.kind {
             case .host:
                 part.foregroundColor = style.primaryText
-                part.font = .system(size: 13, weight: .medium)
+                part.font = .system(size: SidebarMetrics.addressText, weight: .medium)
             case .separator, .path, .ellipsis:
                 part.foregroundColor = style.secondaryText
-                part.font = .system(size: 13, weight: .regular)
+                part.font = .system(size: SidebarMetrics.addressText, weight: .regular)
             }
             line += part
         }

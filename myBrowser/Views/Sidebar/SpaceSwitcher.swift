@@ -9,10 +9,6 @@ struct SpaceSwitcher: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var editorMode: SpaceEditorMode?
 
-    private static let symbolSize: CGFloat = 16
-    private static let target: CGFloat = 26
-    private static let corner: CGFloat = 8
-
     var body: some View {
         VStack(spacing: 0) {
             Rectangle()
@@ -47,11 +43,11 @@ struct SpaceSwitcher: View {
             model.selectSpace(space.id)
         } label: {
             spaceGlyph(space)
-                .frame(width: Self.target, height: Self.target)
+                .frame(width: SidebarMetrics.spaceTarget, height: SidebarMetrics.spaceTarget)
                 .background {
-                    FlatFill(color: chipColor(selected: selected, color: space.color), cornerRadius: Self.corner)
+                    FlatFill(color: chipColor(selected: selected, color: space.color), cornerRadius: SidebarMetrics.spaceCorner)
                 }
-                .contentShape(RoundedRectangle(cornerRadius: Self.corner, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: SidebarMetrics.spaceCorner, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(space.name)
@@ -75,10 +71,10 @@ struct SpaceSwitcher: View {
     private func spaceGlyph(_ space: Space) -> some View {
         if let emoji = space.emoji, !emoji.isEmpty {
             Text(emoji)
-                .font(.system(size: 15))
+                .font(.system(size: SidebarMetrics.spaceEmoji))
         } else {
             Image(systemName: space.symbol)
-                .font(.system(size: Self.symbolSize, weight: .regular))
+                .font(.system(size: SidebarMetrics.spaceSymbol, weight: .regular))
                 .symbolRenderingMode(.monochrome)
                 .foregroundStyle(space.color.color)
         }
@@ -89,10 +85,10 @@ struct SpaceSwitcher: View {
             editorMode = .create
         } label: {
             Image(systemName: "plus")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: SidebarMetrics.spacePlus, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: Self.target, height: Self.target)
-                .contentShape(RoundedRectangle(cornerRadius: Self.corner, style: .continuous))
+                .frame(width: SidebarMetrics.spaceTarget, height: SidebarMetrics.spaceTarget)
+                .contentShape(RoundedRectangle(cornerRadius: SidebarMetrics.spaceCorner, style: .continuous))
         }
         .buttonStyle(.plain)
         .help("New Space")
