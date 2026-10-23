@@ -263,11 +263,11 @@ final class ExtensionManager {
     /// 1Password reads all three while starting. A property set once at evaluation is gone
     /// by the time that async init runs, so the fill is repeated for a few seconds.
     private static let notificationsShimMarker = "/* mb-notifications-shim */"
-    private static let notificationsShimVersion = "/* mb-shim-keep */"
+    private static let notificationsShimVersion = "/* mb-shim-native-port */"
 
     private static let notificationsShimSource = """
     /* mb-notifications-shim */
-    /* mb-shim-keep */
+    /* mb-shim-native-port */
     (() => {
       const event = () => ({
         addListener() {},
@@ -333,10 +333,53 @@ final class ExtensionManager {
           "onTabReplaced"
         ]);
       };
+      // connectNative returns a port before WebKit has connected the native side.
+      // A postMessage in that same turn is queued, and when the port connects WebKit
+      // sends the queue back to the extension instead of to the native host.
+      const deferNativePort = (runtime) => {
+        if (!runtime || typeof runtime.connectNative !== "function") return;
+        if (runtime.connectNative.__mbDeferred) return;
+        const connect = runtime.connectNative.bind(runtime);
+        const wrapped = function (name) {
+          const port = connect(name);
+          if (!port || typeof port.postMessage !== "function" || port.postMessage.__mbDeferred) return port;
+          const post = port.postMessage.bind(port);
+          const queued = [];
+          let open = false;
+          const flush = () => {
+            if (open) return;
+            open = true;
+            const pending = queued.splice(0);
+            for (const message of pending) {
+              try { post(message); } catch (e) {}
+            }
+          };
+          const deferred = function (message) {
+            if (open) return post(message);
+            queued.push(message);
+          };
+          deferred.__mbDeferred = true;
+          try {
+            Object.defineProperty(port, "postMessage", { configurable: true, writable: true, value: deferred });
+          } catch (e) {
+            try { port.postMessage = deferred; } catch (e2) {}
+          }
+          setTimeout(flush, 50);
+          return port;
+        };
+        wrapped.__mbDeferred = true;
+        try {
+          Object.defineProperty(runtime, "connectNative", { configurable: true, writable: true, value: wrapped });
+        } catch (e) {
+          try { runtime.connectNative = wrapped; } catch (e2) {}
+        }
+      };
       const fill = () => {
         try {
           fillNamespace(globalThis.chrome);
           if (globalThis.browser && globalThis.browser !== globalThis.chrome) fillNamespace(globalThis.browser);
+          deferNativePort(globalThis.chrome && globalThis.chrome.runtime);
+          if (globalThis.browser && globalThis.browser !== globalThis.chrome) deferNativePort(globalThis.browser.runtime);
         } catch (e) {}
       };
       fill();

@@ -95,10 +95,11 @@ final class PasskeyBroker {
 
     var footer: String {
         var lines = [
-            "Each Space keeps its own cookies. Passkeys are filled by the system sheet in the tab that asked, from iCloud Keychain, the Passwords app, a credential provider such as 1Password, or a security key.",
+            "Passkeys on a page are handled by the 1Password browser extension. It replaces navigator.credentials in the page, so this does not need Apple's browser entitlement.",
+            "Each Space keeps its own cookies. The system passkey sheet stays off.",
         ]
         if !entitlementInSignature {
-            lines.append("The sheet stays hidden until Apple grants \(Self.entitlement) and it is on the Developer ID profile.")
+            lines.append("The system sheet stays hidden until Apple grants \(Self.entitlement) and it is on the Developer ID profile.")
         } else if access == .denied {
             lines.append("Passkeys are blocked for myBrowser. Allow them to use the system sheet.")
         }

@@ -449,7 +449,14 @@ final class NativeMessagingCenter {
                         self?.processes[key] = nil
                         return
                     }
-                    guard let message else { return }
+                    guard let message else {
+                        nativeMessagingLog.error("Native port message was empty")
+                        return
+                    }
+                    let shape = Self.publicShape(of: message)
+                    if shape.contains("Authoriz") || shape.contains("Browser") || shape.contains("Account") {
+                        nativeMessagingLog.notice("Native port message \(shape, privacy: .public)")
+                    }
                     do {
                         try self?.processes[key]?.send(message)
                     } catch {
@@ -513,6 +520,19 @@ final class NativeMessagingCenter {
             process.stop()
         }
         processes.removeAll()
+    }
+
+    /// Keys and a public invocation name. Message bodies are not logged.
+    private static func publicShape(of message: Any) -> String {
+        guard let dictionary = message as? NSDictionary else { return "non-object" }
+        let keys = dictionary.allKeys.compactMap { $0 as? String }.sorted().joined(separator: ",")
+        guard let invocation = dictionary["invocation"] as? NSDictionary,
+              let type = invocation["type"] as? String,
+              type.count <= 80,
+              type.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || $0 == "_" }) else {
+            return "keys=\(keys)"
+        }
+        return "keys=\(keys) invocation=\(type)"
     }
 
     private func manifest(
