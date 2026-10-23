@@ -1,6 +1,34 @@
 {
   "releases": [
     {
+      "version": "0.6.0",
+      "build": "10",
+      "commit": "e5ee6afedac2e93bc6be5bb3218206a2e258f254",
+      "date": "2026-10-23T13:32:05Z",
+      "url": "https://github.com/marvinvr/my-browser/releases/download/v0.6.0/myBrowser-0.6.0-10.dmg",
+      "length": 5792557,
+      "edSignature": "1/W7J+Y2enWL6kwDbU6+PC0B4koRZukL1D6RNfgI4DXarnDcJroihWJjOMm+abXf3/p2Owh2OkaT3PZkZaoyCQ==",
+      "minimumSystemVersion": "26.0",
+      "notes": [
+        "Shorten the space-switch spring and carry the finger's speed",
+        "Keep low-contrast favicons readable",
+        "Drop an untouched Personal placeholder when iCloud already has spaces",
+        "Show sync as up to date when CloudKit is caught up",
+        "Clear a removed space emoji and cover split sync fields",
+        "Enable iCloud sync in Release builds",
+        "Preview half-card split drops without moving pins",
+        "Show the next Space's page while the sidebar is still moving",
+        "Draw expanded folders with the catalog symbol",
+        "Give each split pane its own toolbar",
+        "Drop the accent outline on a focused split pane",
+        "Show page notifications from open tabs",
+        "Show each split pane as an equal sidebar segment",
+        "Speed up the reload arrow spin",
+        "Dock the Web Inspector on every page"
+      ],
+      "page": "https://github.com/marvinvr/my-browser/releases/tag/v0.6.0"
+    },
+    {
       "version": "0.5.0",
       "build": "9",
       "commit": "b51e507dd7f25351d8f000e1a1cce0eff6262bea",
