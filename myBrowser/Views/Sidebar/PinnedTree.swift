@@ -122,6 +122,7 @@ private struct FolderRow: View {
         .padding(.leading, leading)
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: SidebarMetrics.rowHeight)
         .contentShape(Rectangle())
 
         Group {
@@ -139,12 +140,13 @@ private struct FolderRow: View {
                     label
                 }
                 .buttonStyle(.plain)
+                .contentShape(Rectangle())
             }
         }
-        .frame(height: SidebarMetrics.rowHeight)
         .background {
             SidebarSelectionBackground(isSelected: isSelected, isHovering: hovering)
         }
+        .contentShape(Rectangle())
         .onContinuousHover { phase in
             if interaction.draggingID == item.id { return }
             hovering = if case .active = phase { true } else { false }

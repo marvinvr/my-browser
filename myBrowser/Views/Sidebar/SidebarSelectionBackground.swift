@@ -65,6 +65,10 @@ final class FlatFillView: NSView {
     override var allowsVibrancy: Bool { false }
     override var isOpaque: Bool { false }
 
+    /// Decorative. AppKit still hit-tests this view when SwiftUI turns hits off, and that
+    /// swallows clicks on the padding around the icon and title.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         apply()

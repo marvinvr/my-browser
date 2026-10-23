@@ -35,6 +35,7 @@ struct TabList: View {
                 }
             }
             .buttonStyle(.plain)
+            .contentShape(Rectangle())
             .foregroundStyle(.secondary)
             .onContinuousHover { phase in
                 hoveringNewTab = if case .active = phase { true } else { false }

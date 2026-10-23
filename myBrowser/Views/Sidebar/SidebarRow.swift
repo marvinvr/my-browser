@@ -31,11 +31,12 @@ struct SidebarRow: View {
                     Image(systemName: "xmark")
                         .font(.system(size: SidebarMetrics.closeGlyph, weight: .bold))
                         .foregroundStyle(.secondary)
-                        .frame(width: SidebarMetrics.closeHit, height: SidebarMetrics.closeHit)
+                        .frame(width: SidebarMetrics.closeHit, height: SidebarMetrics.rowHeight)
+                        .padding(.trailing, 2)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .padding(.trailing, 2)
+                .contentShape(Rectangle())
                 .opacity(interaction.draggingID == nil ? 1 : 0)
                 .allowsHitTesting(interaction.draggingID == nil)
                 .accessibilityHidden(interaction.draggingID != nil)
@@ -52,6 +53,8 @@ struct SidebarRow: View {
                 )
             }
         }
+        // The pill is the hit target: padding, the icon gap, and the empty trailing side.
+        .contentShape(Rectangle())
         .onContinuousHover { phase in
             if interaction.draggingID == item.id { return }
             if case .active = phase {
@@ -95,10 +98,12 @@ struct SidebarRow: View {
                     FaviconView(image: icon, url: iconURL, title: title, size: SidebarMetrics.rowIcon)
                         .padding(.leading, leading)
                         .padding(.trailing, away && !isEditing ? 0 : 8)
-                        .frame(height: SidebarMetrics.rowHeight)
+                        .frame(maxHeight: .infinity)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
                 .accessibilityHidden(true)
             }
 
@@ -123,11 +128,14 @@ struct SidebarRow: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.leading, item.section == .pinned ? 0 : leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// One row-height container. Segments share its width; a gap separates them.
@@ -206,6 +214,7 @@ private struct SplitPaneSegment: View {
             )
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
         .onContinuousHover { phase in
             if interaction.draggingID == splitID { return }
             hovering = if case .active = phase { true } else { false }
@@ -218,18 +227,34 @@ private struct SplitPaneSegment: View {
         let title = SidebarTitle.text(for: member, tab: tab)
         let icon = iconImage(tab: tab, away: away)
         let iconURL = member.section == .tabs ? (member.url ?? tab?.url) : member.url
-        return HStack(spacing: showTitle ? 8 : 0) {
-            iconControl(image: icon, url: iconURL, title: title, away: away, fills: !showTitle)
+        return HStack(spacing: 0) {
+            iconControl(
+                image: icon,
+                url: iconURL,
+                title: title,
+                away: away,
+                fills: !showTitle,
+                leading: showTitle ? SidebarDropGeometry.rowLeading : 0,
+                trailing: showTitle ? 8 : 0
+            )
             if showTitle {
-                titleControl(title: title, away: away)
+                titleControl(title: title, away: away, trailing: 4)
             }
         }
-        .padding(.leading, showTitle ? SidebarDropGeometry.rowLeading : 0)
-        .padding(.trailing, showTitle ? 4 : 0)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
     }
 
     /// The icon returns a pin home when the live page has moved. The rest of the segment focuses the pane.
-    private func iconControl(image: NSImage?, url: URL?, title: String, away: Bool, fills: Bool) -> some View {
+    private func iconControl(
+        image: NSImage?,
+        url: URL?,
+        title: String,
+        away: Bool,
+        fills: Bool,
+        leading: CGFloat,
+        trailing: CGFloat
+    ) -> some View {
         Button {
             guard !interaction.shouldIgnoreRowClick() else { return }
             if away {
@@ -240,15 +265,19 @@ private struct SplitPaneSegment: View {
         } label: {
             FaviconView(image: image, url: url, title: title, size: SidebarMetrics.rowIcon)
                 .frame(maxWidth: fills ? .infinity : nil, maxHeight: .infinity)
+                .padding(.leading, leading)
+                .padding(.trailing, trailing)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: fills ? .infinity : nil, maxHeight: .infinity)
+        .contentShape(Rectangle())
         .accessibilityLabel(title)
         .accessibilityHidden(!fills)
         .accessibilityAddTraits(fills && rowSelected && focused ? .isSelected : [])
     }
 
-    private func titleControl(title: String, away: Bool) -> some View {
+    private func titleControl(title: String, away: Bool, trailing: CGFloat) -> some View {
         Button {
             guard !interaction.shouldIgnoreRowClick() else { return }
             model.select(member.id)
@@ -262,11 +291,13 @@ private struct SplitPaneSegment: View {
                 FlatLabel(text: title)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
+            .padding(.trailing, trailing)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
         .accessibilityLabel(title)
         .accessibilityAddTraits(rowSelected && focused ? .isSelected : [])
     }

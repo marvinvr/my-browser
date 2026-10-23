@@ -149,7 +149,7 @@ private struct FavoriteTile: View {
                 baseOpacity: 0.04
             )
         }
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
 
         Group {
             if interaction.editingID == item.id {
@@ -165,9 +165,11 @@ private struct FavoriteTile: View {
                     tile
                 }
                 .buttonStyle(.plain)
+                .contentShape(Rectangle())
             }
         }
         .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
         .help(isAway && title != item.title ? "\(item.title) / \(title)" : title)
         .onContinuousHover { phase in
             if case .active = phase {
