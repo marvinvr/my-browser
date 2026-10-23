@@ -120,63 +120,54 @@ private struct FavoriteTile: View {
     var onNewFolder: () -> Void
 
     @State private var hovering = false
-    @State private var returnHome: Task<Void, Never>?
 
     @Environment(BrowserModel.self) private var model
     @Environment(SidebarInteraction.self) private var interaction
 
     var body: some View {
-        Button {
-            if interaction.editingID == item.id { return }
-            if (NSApp.currentEvent?.clickCount ?? 1) > 1 {
-                returnHome?.cancel()
-                interaction.editingID = item.id
-                return
-            }
-            if isSelected, isAway {
-                // Wait out a double-click, which renames instead of loading the home URL.
-                returnHome?.cancel()
-                returnHome = Task {
-                    try? await Task.sleep(for: .milliseconds(350))
-                    guard !Task.isCancelled else { return }
-                    model.returnToPinnedURL(item.id)
-                }
+        let tile = Group {
+            if interaction.editingID == item.id {
+                SidebarInlineField(title: item.title, itemID: item.id)
+                    .padding(.horizontal, 4)
             } else {
-                model.select(item.id)
-            }
-        } label: {
-            Group {
-                if interaction.editingID == item.id {
-                    SidebarInlineField(itemID: item.id, title: item.title)
-                        .padding(.horizontal, 4)
-                } else {
-                    FaviconView(image: favicon, url: item.url, title: title, size: 18)
-                        .overlay(alignment: .topTrailing) {
-                            if isAway {
-                                AwayDot()
-                                    .frame(width: 5, height: 5)
-                                    .offset(x: 3, y: -3)
-                            }
+                FaviconView(image: favicon, url: item.url, title: title, size: 18)
+                    .overlay(alignment: .topTrailing) {
+                        if isAway {
+                            AwayDot()
+                                .frame(width: 5, height: 5)
+                                .offset(x: 3, y: -3)
                         }
-                }
+                    }
             }
-                .frame(maxWidth: .infinity)
-                .frame(height: FavoriteGridLayout.tileHeight)
-                .background {
-                    SidebarSelectionBackground(
-                        isSelected: isSelected,
-                        isHovering: hovering,
-                        baseOpacity: 0.04
-                    )
-                }
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
-        .simultaneousGesture(TapGesture(count: 2).onEnded {
-            returnHome?.cancel()
-            interaction.editingID = item.id
-        })
+        .frame(height: FavoriteGridLayout.tileHeight)
+        .background {
+            SidebarSelectionBackground(
+                isSelected: isSelected,
+                isHovering: hovering,
+                baseOpacity: 0.04
+            )
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+        Group {
+            if interaction.editingID == item.id {
+                tile
+            } else {
+                Button {
+                    if isSelected, isAway {
+                        model.returnToPinnedURL(item.id)
+                    } else {
+                        model.select(item.id)
+                    }
+                } label: {
+                    tile
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity)
         .help(isAway && title != item.title ? "\(item.title) / \(title)" : title)
         .onContinuousHover { phase in
             if case .active = phase {

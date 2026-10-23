@@ -307,44 +307,219 @@ struct SidebarInsertionLine: View {
     }
 }
 
-/// Inline title editor for a folder or a pin. Escape discards; Return and focus loss commit.
+/// Inline title editor. Return saves, Escape discards, and leaving the field saves.
+/// Focus is retried: a context menu hands first responder back to the row after its action.
 struct SidebarInlineField: View {
-    var itemID: UUID
     var title: String
+    var itemID: UUID? = nil
+    var spaceID: UUID? = nil
+    var font: NSFont = .systemFont(ofSize: 13)
 
     @Environment(BrowserModel.self) private var model
     @Environment(SidebarInteraction.self) private var interaction
-    @State private var draft = ""
-    @State private var armed = false
-    @FocusState private var focused: Bool
 
     var body: some View {
-        TextField("Name", text: $draft)
-            .textFieldStyle(.plain)
-            .font(.system(size: 13))
-            .focused($focused)
-            .onAppear {
-                draft = title
-                focused = true
-                armed = true
-            }
-            .onSubmit(commit)
-            .onExitCommand {
-                interaction.editingID = nil
-            }
-            .onChange(of: focused) { _, isFocused in
-                if armed, !isFocused { commit() }
-            }
+        InlineRenameFieldRepresentable(title: title, font: font, onCommit: commit, onCancel: cancel)
+            .accessibilityIdentifier("sidebar-rename")
     }
 
-    private func commit() {
-        guard interaction.editingID == itemID else { return }
-        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty, trimmed != title {
-            model.rename(itemID, to: trimmed)
+    private func commit(_ raw: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let itemID {
+            if !trimmed.isEmpty, trimmed != title {
+                model.rename(itemID, to: trimmed)
+            }
+            if interaction.editingID == itemID { interaction.editingID = nil }
+        } else if let spaceID {
+            if !trimmed.isEmpty, trimmed != title {
+                model.renameSpace(spaceID, to: trimmed)
+            }
+            if interaction.editingSpaceID == spaceID { interaction.editingSpaceID = nil }
         }
-        interaction.editingID = nil
     }
+
+    private func cancel() {
+        if let itemID, interaction.editingID == itemID { interaction.editingID = nil }
+        if let spaceID, interaction.editingSpaceID == spaceID { interaction.editingSpaceID = nil }
+    }
+}
+
+private struct InlineRenameFieldRepresentable: NSViewRepresentable {
+    var title: String
+    var font: NSFont
+    var onCommit: (String) -> Void
+    var onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(title: title, onCommit: onCommit, onCancel: onCancel)
+    }
+
+    func makeNSView(context: Context) -> InlineRenameTextField {
+        let field = InlineRenameTextField(string: title)
+        field.isEditable = true
+        field.isSelectable = true
+        field.isBordered = false
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = font
+        field.textColor = .labelColor
+        field.lineBreakMode = .byTruncatingTail
+        field.maximumNumberOfLines = 1
+        field.cell?.sendsActionOnEndEditing = false
+        if let cell = field.cell as? NSTextFieldCell {
+            cell.isScrollable = true
+            cell.wraps = false
+            cell.usesSingleLineMode = true
+        }
+        field.delegate = context.coordinator
+        field.setAccessibilityIdentifier("sidebar-rename")
+        context.coordinator.field = field
+        return field
+    }
+
+    func updateNSView(_ field: InlineRenameTextField, context: Context) {
+        context.coordinator.onCommit = onCommit
+        context.coordinator.onCancel = onCancel
+        if field.font != font { field.font = font }
+        guard !context.coordinator.started else { return }
+        context.coordinator.started = true
+        context.coordinator.poke(attempt: 0)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: InlineRenameTextField, context: Context) -> CGSize? {
+        // One line. A flexible stack proposes the leftover column height; taking that
+        // stretches the space-name field over the whole sidebar.
+        let line = max(ceil(font.boundingRectForFont.height), font.pointSize + 2)
+        let cap = line + 24
+        let height: CGFloat
+        if let proposed = proposal.height, proposed.isFinite, proposed > 0, proposed <= cap {
+            height = proposed
+        } else {
+            height = line
+        }
+        return CGSize(width: proposal.width ?? 120, height: height)
+    }
+
+    static func dismantleNSView(_ nsView: InlineRenameTextField, coordinator: Coordinator) {
+        coordinator.stopWatching()
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var onCommit: (String) -> Void
+        var onCancel: () -> Void
+        let initial: String
+        weak var field: NSTextField?
+        var started = false
+        private var finished = false
+        private var didFocus = false
+        private var monitor: Any?
+
+        init(title: String, onCommit: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+            initial = title
+            self.onCommit = onCommit
+            self.onCancel = onCancel
+        }
+
+        func poke(attempt: Int) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(attempt == 0 ? 0 : 40)) { [weak self] in
+                guard let self, !self.finished, attempt < 20 else { return }
+                guard let field = self.field, let window = field.window else {
+                    self.poke(attempt: attempt + 1)
+                    return
+                }
+                self.watchClicks()
+                // Typing means the field is already live. Stop fighting the caret.
+                if field.stringValue != self.initial { return }
+                let editor = field.currentEditor()
+                let focused = editor != nil && window.firstResponder === editor
+                if !focused {
+                    self.didFocus = false
+                    if !window.isKeyWindow {
+                        window.makeKeyAndOrderFront(nil)
+                    }
+                    // `selectText` installs the field editor and selects the title.
+                    // A context menu returns first responder to the row after this runs, so keep retrying.
+                    window.makeFirstResponder(field)
+                    if field.currentEditor() == nil {
+                        field.selectText(nil)
+                    }
+                    self.paint(field.currentEditor() as? NSTextView)
+                    if field.currentEditor() != nil { self.didFocus = true }
+                } else if !self.didFocus {
+                    self.paint(editor as? NSTextView)
+                    self.didFocus = true
+                }
+                if attempt < 19 { self.poke(attempt: attempt + 1) }
+            }
+        }
+
+        /// A click that does not move first responder still ends the edit. Inside the field it does not.
+        private func watchClicks() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                guard let self, !self.finished, let field = self.field else { return event }
+                let inside: Bool
+                if event.window === field.window {
+                    let point = field.convert(event.locationInWindow, from: nil)
+                    inside = field.bounds.contains(point)
+                } else {
+                    inside = false
+                }
+                if !inside { self.finish(save: true) }
+                return event
+            }
+        }
+
+        private func paint(_ editor: NSTextView?) {
+            editor?.textColor = .labelColor
+            editor?.insertionPointColor = .labelColor
+            editor?.selectAll(nil)
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            switch commandSelector {
+            case #selector(NSResponder.cancelOperation(_:)):
+                finish(save: false)
+                return true
+            case #selector(NSResponder.insertNewline(_:)):
+                finish(save: true)
+                return true
+            default:
+                return false
+            }
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard didFocus else { return }
+            finish(save: true)
+        }
+
+        func stopWatching() {
+            guard let monitor else { return }
+            self.monitor = nil
+            NSEvent.removeMonitor(monitor)
+        }
+
+        private func finish(save: Bool) {
+            guard !finished else { return }
+            finished = true
+            let value = field?.stringValue ?? ""
+            let commit = onCommit
+            let cancel = onCancel
+            let field = field
+            stopWatching()
+            DispatchQueue.main.async {
+                field?.window?.makeFirstResponder(nil)
+                if save { commit(value) } else { cancel() }
+            }
+        }
+    }
+}
+
+/// Opaque field. The sidebar material would otherwise wash the insertion point out.
+private final class InlineRenameTextField: NSTextField {
+    override var allowsVibrancy: Bool { false }
 }
 
 /// Delete / forward-delete on the focused folder. Text fields and the page keep the key.

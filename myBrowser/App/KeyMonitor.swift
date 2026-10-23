@@ -43,6 +43,8 @@ final class KeyMonitor {
         // ⌘R is reload. Ctrl+R is eaten so it does not reload and does not reach the page.
         if keyCode == rKey && (flags == .command || flags == .control) { return true }
         if keyCode == pKey, flags == [.command, .shift] { return true }
+        // ⌘⇧J opens Downloads. Eaten so the web view does not also see it.
+        if keyCode == jKey, flags == [.command, .shift] { return true }
         return false
     }
 
@@ -99,9 +101,24 @@ final class KeyMonitor {
             return true
         }
 
+        if keyCode == Self.jKey, flags == [.command, .shift] {
+            if !isRepeat {
+                model.toggleDownloadsPage()
+            }
+            return true
+        }
+
         if keyCode == Self.escapeKey, flags.isEmpty {
             if model.commandBarMode != nil {
                 model.hideCommandBar()
+                return true
+            }
+            if model.downloads.isPagePresented {
+                model.downloads.isPagePresented = false
+                return true
+            }
+            if model.downloads.isPopoverPresented {
+                model.downloads.isPopoverPresented = false
                 return true
             }
             if model.selectedTab?.isLoading == true {
@@ -118,4 +135,5 @@ final class KeyMonitor {
     nonisolated private static let wKey: UInt16 = 13
     nonisolated private static let rKey: UInt16 = 15
     nonisolated private static let pKey: UInt16 = 35
+    nonisolated private static let jKey: UInt16 = 38
 }

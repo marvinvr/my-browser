@@ -18,7 +18,7 @@ myBrowser/
   Model/          Value types: Profile, Space, SidebarItem, SpaceColor, SortKey, SearchEngine, URLInput, URLDisplay
   Persistence/    LibraryStore (synced data), SessionStore (local window/tab session), JSONFileStorage
   Sync/           CKSyncEngine wrapper, record mapping, sync-state.json. Idle unless iCloud Sync is enabled.
-  Browser/        BrowserModel (per-window coordinator), BrowserTab (one WKWebView), ProfileManager, FaviconStore
+  Browser/        BrowserModel (per-window coordinator), BrowserTab (one WKWebView), ProfileManager, FaviconStore, DownloadManager
   Importer/       Chromium and Arc parsers. Pure `ImportPlan` values, no UI
   Extensions/     ExtensionManager (one WKWebExtensionController per profile), CRX/zip install, catalog
   Views/
@@ -28,6 +28,7 @@ myBrowser/
     Settings/     Settings scene: General (search engine, iCloud Sync), Appearance (address bar position, Dock icon), Extensions
     Import/       Import sheet (File → Import…) and the first-launch welcome sheet
     Web/          WebContentView (NSViewRepresentable that swaps the selected tab's WKWebView in)
+    Downloads/    Toolbar downloads button, popover, and the downloads page
     CommandBar/   CommandBarView + CommandBarModel (results)
   Resources/      Assets.xcassets
 myBrowserTests/   Swift Testing unit tests (model, SortKey, store, URL parsing)
@@ -172,6 +173,24 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 - `target=_blank` / `window.open` / Cmd-click: `WKUIDelegate.createWebView` → new `.tabs` item in the same space (Phase 1 opens in a new tab and selects it; Cmd-click opens in background).
 - Back/forward: `allowsBackForwardNavigationGestures = true` (Safari-style two-finger swipe on the page). Decision: **page swipe = back/forward; swipes on the sidebar switch spaces**. `SpaceSwipeContainer` claims a horizontal trackpad swipe on the space column only (`SpaceSwipeTracker`); vertical list scrolling and the web view are left alone. Crossing the space-swipe commit line (30% of the column, or a flick that will commit) ticks the trackpad once. Crossing WebKit's history-swipe completion distance (`min(187.5pt, half the page)`) ticks once. Both go through `Haptics` and do not repeat while the finger stays past the line.
 - Favicons: `FaviconStore` downloads `/favicon.ico` or the page's `<link rel=icon>` (via JS after load) and caches PNGs per host in `Favicons/`. Not synced.
+- File URLs load with `loadFileURL(_:allowingReadAccessTo:)` so a downloaded PDF or image can open in a tab.
+
+## Downloads
+
+`DownloadManager` (one per window model, file `downloads.json` next to `library.json`) records every `WKDownload`. The list is per profile: the popover and the downloads page show the current space's profile. History stays on this Mac and is not synced.
+
+WebKit is asked to download when:
+
+- the navigation action has `shouldPerformDownload` (the `download` attribute),
+- the main-frame response is `Content-Disposition: attachment`,
+- the main frame's MIME type cannot be shown (a zip, a disk image),
+- the context menu creates a download (Download Linked File, Save Image, Download Media). That path is `_webView:contextMenuDidCreateDownload:`.
+
+The file is written to `~/Downloads` as `name.pdf.download`, then renamed to `name.pdf`. A name that is already there becomes `name (1).pdf`. Pause cancels the `WKDownload` and keeps `resumeData`. Resume and retry use a web view on the same profile's data store, so cookies stay with that profile. Closing the tab parks the web view offscreen until its downloads finish. A launch turns an in-progress row into paused when resume data was saved, otherwise failed, and the row stays in the list.
+
+On finish the file gets `com.apple.quarantine` (`0083;<hex time>;myBrowser;<uuid>`) and `com.apple.metadata:kMDItemWhereFroms` (the file URL, then the page). The Downloads stack in the Dock is bounced with `com.apple.DownloadFileFinished`.
+
+The toolbar button (`arrow.down.circle`) sits at the trailing end of the address bar. It appears while a download is active, and for five minutes after one finishes, or until Clear. A ring in the toolbar symbol colour tracks bytes. The popover lists icon, name, size, progress, and speed, with pause, resume, cancel, retry, show in Finder, open, and open in the default app. A finished PDF, image, text, video, or audio file opens in a new tab (`file://` with read access to that file). Other types open in the default app. Cmd+Shift+J opens the downloads page for the current profile, with search.
 - Picture in Picture uses the system panel (the separate "Picture in Picture" window), not a window this app draws. macOS `WKWebViewConfiguration` has no public `allowsPictureInPictureMediaPlayback` (iOS only) and the private preference defaults to off, so each configuration turns `_setAllowsPictureInPictureMediaPlayback` on. `_togglePictureInPicture` is a no-op without a Touch Bar, so enter and exit call `HTMLVideoElement.webkitSetPresentationMode` (`picture-in-picture` / `inline`), falling back to `requestPictureInPicture`. That call has to carry a user-gesture bit or WebKit changes the presentation mode and never opens the panel; public `evaluateJavaScript` does not set the bit, so the app uses WebKit's `withUserGesture` script entry point. A page script (all frames, including shadow roots) reports a playing video only when it is at least 160×90 and does not set `disablePictureInPicture` — otherwise there is no toolbar button. `pip.enter` sits in the address row while that is true (⌘⇧P, View menu, sidebar site menu). Automatic Picture in Picture is on by default (Settings → General, `autoPictureInPicture`): leaving the tab or the window moves a playing video into the panel, and selecting that tab again, or focusing the window after a focus-triggered PiP, returns it inline. The panel's return control ends PiP and selects that tab and its space. The web view stays attached behind the current page for the whole session, because detaching it closes the panel.
 
 ## Web extensions
@@ -182,6 +201,7 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 - `BrowserTab` adopts `WKWebExtensionTab` (`Browser/BrowserTab+Extension.swift`). The main window is one `WKWebExtensionWindow`. Open, activate, close, and property changes are forwarded to the controller. An extension that opens a tab goes through `BrowserModel.openTabForExtension`, which returns the live tab. Extension pages (options, extension URLs) use that extension context's `webViewConfiguration`.
 - A click calls `performAction(for:)`. When the action presents a popup, the controller delegate shows `action.popupPopover` anchored to the toolbar button. Permission requests are an Allow / Don't Allow sheet. The choice is written into `extensions.json` and applied with `setPermissionStatus` before the context loads.
 - Enabling an extension that injects scripts reloads that profile's open http(s) pages so the scripts run. Launching the app loads the extension without reloading pages that are already open.
+- A package that requests `privacy` or `webRequestBlocking` gets `ExtensionWebKitCompat` at install. WebKit has neither API, and it ignores `{cancel:true}` from `webRequest`, so the shim only fills the missing objects (`privacy`, a few `webNavigation` / `runtime` events, `alarms.create`, illegal menu patterns) and leaves the real `browser` object in place. uBlock Origin's cosmetic filters then run. Scriptlets use the same `tabs.executeScript` path. Network blocking does not. See `docs/ubo-network-blocking.md`.
 
 ## Command bar
 
@@ -212,7 +232,8 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 | Cmd+Shift+- | Separate the focused pane. The split dissolves when one pane would remain |
 | Cmd+Shift+\ | Swap the two panes. No-op unless the split has exactly two |
 | Ctrl+Opt+→ / ← | Focus the next / previous pane, wrapping. No-op unless a split is selected |
-| Esc | Close command bar / stop loading |
+| Cmd+Shift+J | Downloads |
+| Esc | Close command bar, downloads, or stop loading |
 | Delete | Delete the focused folder. A non-empty folder asks first. Ignored while a field, the page, or the command bar is focused. |
 
 ## Sidebar drag and drop
@@ -327,9 +348,11 @@ Do not flip those switches before the container and the profile exist. A Release
 - 2026-10-23: folder rows drag as plain buttons. A link drop reads `NSURL` from the pasteboard and falls back to the plain-text URL. The row close button hides for the duration of a drag without leaving the layout.
 - 2026-10-23: Chrome-family bookmarks and Arc sidebars import through an `ImportPlan` applied in one `LibraryStore` batch. Arc favorites (`topApps`) are copied onto every imported space of that profile. `Space.emoji` is optional so older library files still open.
 - 2026-10-23: web extensions use `WKWebExtensionController`, one controller per profile id. Packages are unpacked under `Application Support/myBrowser/Extensions`.
+- 2026-10-23: uBlock Origin (MV2, Chromium zip) installs through Settings → Extensions. Cosmetic filters run. Scriptlets use `tabs.executeScript`. Blocking `webRequest` does not, and there is no content-rule bridge yet (`docs/ubo-network-blocking.md`).
 - 2026-10-23: trackpad haptics use `NSHapticFeedbackManager` through `Haptics`. One pulse per state change: space-swipe detent, history-swipe threshold, drop slot, pin/unpin, folder auto-expand, space drop target, and the drop.
 - 2026-10-23: folder disclosure is a 0.2s no-bounce spring. Sidebar views read per-parent `SidebarSiblingList`s, so one toggle does not refresh the rest of the column.
 - 2026-10-23: a split is one sidebar row (`SidebarItem.kind = .split`) whose panes are ordinary `.site` children, 2...4, ordered by `sortKey`. It lives in pinned or tabs, and may sit in a pinned folder. No nested splits, no folders inside a split. Dropping to one member dissolves the split: that site takes the split's place, a pinned split is tombstoned, and a tabs split is hard-deleted. Deleting the split deletes its members. `splitFraction` nil means equal widths; `splitAxis` nil means horizontal. Both are omitted from older `library.json` files. Focused pane is session-only (`focusedPaneBySplit`). Keyboard, Cmd+1…9, and extensions walk panes; the sidebar draws one row. `displayedContent` does not load web views. The first show of a split loads every pane; a later focus change does not resurrect an unloaded sibling. Remote apply does not dissolve a partial split. Unpinning into `.tabs` still does not emit a CloudKit delete. The content card lays those panes out, resizes them, and accepts a sidebar site dropped on an edge or between panes.
 - 2026-10-23: the split row shows each pane's favicon and title. The middle of a row drop groups two sites, or adds a site to a split. ⌃⌘S opens a split with a new empty tab. The sidebar selects one row.
 - 2026-10-23: the favorites grid balances rows (`ceil(n / maxPerRow)`, remainder on the earlier rows) so six icons are 3+3. Tiles in a row share its width. At most four per row, same as before.
 - 2026-10-23: sidebar folders drop the disclosure chevron. Closed is `folder`, expanded is `folder.fill`, with a magic symbol replace in a fixed frame so rows stay aligned.
+- 2026-10-23: downloads use `WKDownload` into `~/Downloads` (`file (1).pdf`, a `.download` partial, then a rename). The toolbar button shows active and recent items for the current profile. PDF, image, text, video, and audio open in a tab. Other types open in the default app.

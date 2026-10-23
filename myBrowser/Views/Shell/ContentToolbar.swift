@@ -90,6 +90,7 @@ struct ContentToolbar: View {
                 .frame(minWidth: 40, maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(-1)
                 .padding(.leading, 6)
+            DownloadsToolbarButton(symbol: shown.symbol)
             PictureInPictureButton(symbol: shown.symbol)
             ExtensionButtons()
                 .layoutPriority(1)
@@ -108,6 +109,7 @@ struct ContentToolbar: View {
                     .accessibilityHidden(true)
                 NavigationButtons(chrome: chrome)
                 Spacer(minLength: 4)
+                DownloadsToolbarButton(symbol: chrome.symbol)
                 ToolbarIconButton(systemName: "sidebar.left", help: "Hide Sidebar", symbol: chrome.symbol) {
                     model.toggleSidebar()
                 }

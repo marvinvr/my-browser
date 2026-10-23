@@ -14,7 +14,7 @@ struct SidebarRow: View {
 
     var body: some View {
         let isSelected = model.selectedItemID == item.id && !model.sidebarFocusIsFolder
-        let isEditing = interaction.editingID == item.id && item.section != .tabs && !item.isSplit
+        let isEditing = interaction.editingID == item.id && !item.isSplit
         let leading = SidebarDropGeometry.rowLeading + CGFloat(depth) * SidebarDropGeometry.indent
 
         HStack(spacing: 0) {
@@ -82,6 +82,7 @@ struct SidebarRow: View {
         return HStack(spacing: 0) {
             if item.section == .pinned {
                 Button {
+                    guard !interaction.shouldIgnoreRowClick() else { return }
                     if away {
                         model.returnToPinnedURL(item.id)
                     } else {
@@ -99,6 +100,7 @@ struct SidebarRow: View {
             }
 
             Button {
+                guard !interaction.shouldIgnoreRowClick() else { return }
                 model.select(item.id)
             } label: {
                 HStack(spacing: item.section == .pinned ? 0 : 8) {
@@ -111,7 +113,7 @@ struct SidebarRow: View {
                             .accessibilityHidden(true)
                     }
                     if isEditing {
-                        SidebarInlineField(itemID: item.id, title: item.title)
+                        SidebarInlineField(title: item.title, itemID: item.id)
                     } else {
                         FlatLabel(text: title)
                     }
@@ -122,10 +124,6 @@ struct SidebarRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .simultaneousGesture(TapGesture(count: 2).onEnded {
-                guard item.section != .tabs else { return }
-                interaction.editingID = item.id
-            })
         }
     }
 

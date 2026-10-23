@@ -4,32 +4,48 @@ import WebKit
 
 /// Hosts the selected site, or every pane of the selected split.
 /// Web views are created once and moved between panes. A resize does not rebuild them.
+/// The downloads page is a SwiftUI sibling of this view. A web view's layer paints over that
+/// sibling, so the canvas comes down while the page is open and an in-flight download is parked.
 struct WebContentView: View {
     @Environment(BrowserModel.self) private var model
 
     var body: some View {
         let content = model.displayedContent
+        let downloadsOpen = model.downloads.isPagePresented
+        if downloadsOpen {
+            parkActiveDownloads()
+        }
         return ZStack {
             PictureInPicturePark(tabID: model.pictureInPictureTabID, model: model)
                 .frame(width: 1, height: 1)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
-            if let content {
+            if let content, !downloadsOpen {
                 SplitCanvas(content: content)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(.opacity)
-            } else {
+            } else if content == nil {
                 emptyState
                     .transition(.opacity)
             }
         }
         .animation(.spring(duration: 0.35, bounce: 0.2), value: content == nil)
+        .animation(.spring(duration: 0.35, bounce: 0.2), value: downloadsOpen)
         .background {
             NavigationSwipeMonitor()
                 .allowsHitTesting(false)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// A downloading web view has to stay in some window. Parking happens before the canvas leaves.
+    private func parkActiveDownloads() {
+        for tab in model.tabs.values {
+            if let webView = tab.webView {
+                model.downloads.parkIfNeeded(webView)
+            }
+        }
     }
 
     private var emptyState: some View {

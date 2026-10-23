@@ -97,44 +97,49 @@ private struct FolderRow: View {
         let isEditing = interaction.editingID == item.id
         let leading = SidebarDropGeometry.rowLeading + CGFloat(depth) * SidebarDropGeometry.indent
 
-        // A plain button, same as a site row. `onTapGesture` takes the mouse-down and the
-        // row never starts a drag session, so a folder could not be moved.
-        Button {
-            guard !interaction.shouldIgnoreRowClick() else { return }
-            model.focusSidebarItem(item.id)
-            NSApp.keyWindow?.makeFirstResponder(nil)
-            model.toggleExpanded(item.id)
-        } label: {
-            HStack(spacing: 8) {
-                // No open-folder symbol. The fill is the expanded state and magic-replaces
-                // with the outline on the same spring as the rows below. The frame stays put.
-                Image(systemName: item.isExpanded ? "folder.fill" : "folder")
+        let label = HStack(spacing: 8) {
+            // No open-folder symbol. The fill is the expanded state and magic-replaces
+            // with the outline on the same spring as the rows below. The frame stays put.
+            Image(systemName: item.isExpanded ? "folder.fill" : "folder")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                // Replace runs on its own timeline. Double speed finishes with the 0.2s spring.
+                .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp), options: .speed(2)))
+                .frame(width: 16, height: 16)
+                .accessibilityHidden(true)
+            if isEditing {
+                SidebarInlineField(title: title, itemID: item.id)
+            } else {
+                Text(title)
                     .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    // Replace runs on its own timeline. Double speed finishes with the 0.2s spring.
-                    .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp), options: .speed(2)))
-                    .frame(width: 16, height: 16)
-                    .accessibilityHidden(true)
-                if isEditing {
-                    SidebarInlineField(itemID: item.id, title: item.title)
-                } else {
-                    Text(title)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                Spacer(minLength: 0)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
-            .padding(.leading, leading)
-            .padding(.trailing, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
-        .simultaneousGesture(TapGesture(count: 2).onEnded {
-            interaction.editingID = item.id
-        })
+        .padding(.leading, leading)
+        .padding(.trailing, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+
+        Group {
+            if isEditing {
+                label
+            } else {
+                // A plain button, same as a site row. `onTapGesture` takes the mouse-down and the
+                // row never starts a drag session, so a folder could not be moved.
+                Button {
+                    guard !interaction.shouldIgnoreRowClick() else { return }
+                    model.focusSidebarItem(item.id)
+                    NSApp.keyWindow?.makeFirstResponder(nil)
+                    model.toggleExpanded(item.id)
+                } label: {
+                    label
+                }
+                .buttonStyle(.plain)
+            }
+        }
         .frame(height: SidebarMetrics.rowHeight)
         .background {
             SidebarSelectionBackground(isSelected: isSelected, isHovering: hovering)

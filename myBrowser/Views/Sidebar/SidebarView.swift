@@ -61,13 +61,24 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 0) {
             FavoritesGrid(spaceID: spaceID, onRename: askRename, onNewFolder: { askNewFolder(nil) })
             if let name = model.library.space(spaceID)?.name {
-                Text(name)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if interaction.editingSpaceID == spaceID {
+                    SidebarInlineField(
+                        title: name,
+                        spaceID: spaceID,
+                        font: .systemFont(ofSize: 11, weight: .semibold)
+                    )
                     .padding(.horizontal, 8)
                     .padding(.top, 12)
                     .padding(.bottom, 2)
+                } else {
+                    Text(name)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 12)
+                        .padding(.bottom, 2)
+                }
             }
             PinnedTree(
                 spaceID: spaceID,
@@ -88,7 +99,7 @@ struct SidebarView: View {
     }
 
     private func askRename(_ item: SidebarItem) {
-        guard item.isFolder || item.section != .tabs else { return }
+        interaction.editingSpaceID = nil
         interaction.editingID = item.id
     }
 
