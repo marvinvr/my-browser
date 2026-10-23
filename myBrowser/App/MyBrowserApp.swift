@@ -21,6 +21,7 @@ struct MyBrowserApp: App {
                 .environment(appDelegate.model)
                 .environment(appDelegate.extensions)
                 .environment(appDelegate.passkeys)
+                .environment(appDelegate.sync)
         }
     }
 }
@@ -370,10 +371,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     #endif
 
-    /// `MYBROWSER_DEBUG_LIBRARY` points snapshot runs at a throwaway directory.
+    /// `MYBROWSER_LIBRARY_DIR` replaces Application Support for a throwaway library (Release included).
+    /// `MYBROWSER_DEBUG_LIBRARY` is the Debug snapshot path.
     private static func storageDirectory() -> URL {
+        let env = ProcessInfo.processInfo.environment
+        if let override = env["MYBROWSER_LIBRARY_DIR"], !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
         #if DEBUG
-        if let override = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_LIBRARY"], !override.isEmpty {
+        if let override = env["MYBROWSER_DEBUG_LIBRARY"], !override.isEmpty {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
         #endif

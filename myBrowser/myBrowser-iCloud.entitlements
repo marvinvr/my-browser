@@ -2,10 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Not referenced by project.yml. Switching Release to this file replaces
-	     myBrowser.entitlements, so the JIT exception has to stay here.
-	     aps-environment is production because CKSyncEngine listens for pushes
-	     and this file is the Developer ID release set. -->
+	<!-- Release only. Replaces myBrowser.entitlements, so the JIT exception stays.
+	     Developer ID uses the production CloudKit environment. No ubiquity
+	     container: the library syncs as CloudKit records, not iCloud Documents. -->
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
 	<!-- Do not add com.apple.developer.web-browser.public-key-credential here.
@@ -21,6 +20,8 @@
 	<array>
 		<string>CloudKit</string>
 	</array>
+	<key>com.apple.developer.icloud-container-environment</key>
+	<string>Production</string>
 	<key>com.apple.developer.aps-environment</key>
 	<string>production</string>
 </dict>

@@ -1,0 +1,43 @@
+DEFINE SCHEMA
+
+    RECORD TYPE Profile (
+        "___recordID" REFERENCE QUERYABLE,
+        name STRING,
+        modifiedAt TIMESTAMP,
+        deletedAt TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud"
+    );
+
+    RECORD TYPE Space (
+        "___recordID" REFERENCE QUERYABLE,
+        name STRING,
+        symbol STRING,
+        emoji STRING,
+        color STRING,
+        profileID STRING,
+        sortKey STRING,
+        modifiedAt TIMESTAMP,
+        deletedAt TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud"
+    );
+
+    RECORD TYPE SidebarItem (
+        "___recordID" REFERENCE QUERYABLE,
+        spaceID STRING,
+        section STRING,
+        kind STRING,
+        parentID STRING,
+        title STRING,
+        url STRING,
+        sortKey STRING,
+        isExpanded INT64,
+        splitFraction DOUBLE,
+        splitAxis STRING,
+        createdAt TIMESTAMP,
+        modifiedAt TIMESTAMP,
+        deletedAt TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud"
+    );

@@ -1,11 +1,21 @@
 import AppKit
 import Foundation
+import Observation
+import os
 
 /// Starts iCloud sync only when the user flag, the container key, and an iCloud account are all present.
 /// Otherwise it does not create a `CKContainer` or a `CKSyncEngine`.
+@Observable
 final class SyncController {
     static let enabledDefaultsKey = "iCloudSyncEnabled"
     static let containerInfoKey = "MBCloudKitContainer"
+    static let signedOutStatus = "iCloud account is signed out. Sync is off."
+    static let syncingStatus = "Syncing with iCloud…"
+    static let idleStatus = "Up to date."
+    static let pausedStatus = "Sync paused. Will retry."
+    static let offStatus = "Sync is off on this Mac."
+
+    private static let log = Logger(subsystem: "ch.marvinvr.mybrowser", category: "Sync")
 
     enum AccountChoice: Sendable {
         case sync
@@ -27,26 +37,33 @@ final class SyncController {
         return !containerIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Settings footer. Empty when the container is not configured.
+    private(set) var statusText = ""
+
     private let library: LibraryStore
     private var engine: SyncEngine?
-    private nonisolated(unsafe) var defaultsObserver: NSObjectProtocol?
-    private nonisolated(unsafe) var identityObserver: NSObjectProtocol?
+    private var probeStarted = false
+    /// Nonisolated so `deinit` can remove the observers. The box is only touched on the main actor and in `deinit`.
+    private nonisolated let observers = SyncObserverBox()
 
     init(library: LibraryStore) {
         self.library = library
+        if Self.isContainerConfigured, UserDefaults.standard.object(forKey: Self.enabledDefaultsKey) == nil {
+            UserDefaults.standard.set(true, forKey: Self.enabledDefaultsKey)
+        }
         startIfEnabled()
         let restart: @Sendable (Notification) -> Void = { [weak self] _ in
             Task { @MainActor in
                 self?.startIfEnabled()
             }
         }
-        defaultsObserver = NotificationCenter.default.addObserver(
+        observers.defaults = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,
             queue: .main,
             using: restart
         )
-        identityObserver = NotificationCenter.default.addObserver(
+        observers.identity = NotificationCenter.default.addObserver(
             forName: .NSUbiquityIdentityDidChange,
             object: nil,
             queue: .main,
@@ -55,11 +72,11 @@ final class SyncController {
     }
 
     deinit {
-        if let defaultsObserver {
-            NotificationCenter.default.removeObserver(defaultsObserver)
+        if let defaults = observers.defaults {
+            NotificationCenter.default.removeObserver(defaults)
         }
-        if let identityObserver {
-            NotificationCenter.default.removeObserver(identityObserver)
+        if let identity = observers.identity {
+            NotificationCenter.default.removeObserver(identity)
         }
     }
 
@@ -68,24 +85,53 @@ final class SyncController {
         let enabled = UserDefaults.standard.bool(forKey: Self.enabledDefaultsKey)
         guard enabled else {
             engine?.stop()
+            engine = nil
+            statusText = Self.isContainerConfigured ? Self.offStatus : ""
             return
         }
         guard let identifier = Self.containerIdentifier else {
             engine?.stop()
+            engine = nil
+            statusText = ""
             return
         }
-        guard FileManager.default.ubiquityIdentityToken != nil else { return }
-        if engine == nil {
-            let created = SyncEngine(library: library, containerIdentifier: identifier)
-            created.resolveAccountSwitch = { [weak self] in
-                self?.askAccountSwitch() ?? .turnOff
-            }
-            created.onTurnOff = {
-                UserDefaults.standard.set(false, forKey: Self.enabledDefaultsKey)
-            }
-            engine = created
+        if Self.forcedSignedOut || FileManager.default.ubiquityIdentityToken == nil {
+            let hadEngine = engine != nil
+            engine?.stop(resetting: hadEngine)
+            engine = nil
+            statusText = Self.signedOutStatus
+            Self.log.info("Sync off: no iCloud account")
+            return
         }
-        engine?.start()
+        guard engine == nil else { return }
+        let created = SyncEngine(library: library, containerIdentifier: identifier)
+        created.resolveAccountSwitch = { [weak self] in
+            self?.askAccountSwitch() ?? .turnOff
+        }
+        created.onTurnOff = {
+            UserDefaults.standard.set(false, forKey: Self.enabledDefaultsKey)
+        }
+        created.onStatus = { [weak self] text in
+            self?.statusText = text
+        }
+        engine = created
+        statusText = Self.syncingStatus
+        created.start()
+        startProbeIfRequested()
+    }
+
+    /// `MYBROWSER_SYNC_FORCE_SIGNED_OUT=1` exercises the signed-out gate without signing the Mac out.
+    private static var forcedSignedOut: Bool {
+        ProcessInfo.processInfo.environment["MYBROWSER_SYNC_FORCE_SIGNED_OUT"] == "1"
+    }
+
+    private func startProbeIfRequested() {
+        guard !probeStarted, SyncProbe.isRequested else { return }
+        probeStarted = true
+        let library = self.library
+        Task { @MainActor in
+            await SyncProbe.run(controller: self, library: library)
+        }
     }
 
     private func askAccountSwitch() -> AccountChoice {
@@ -97,4 +143,10 @@ final class SyncController {
         NSApp.activate(ignoringOtherApps: true)
         return alert.runModal() == .alertFirstButtonReturn ? .sync : .turnOff
     }
+}
+
+/// Holds notification tokens so `SyncController.deinit` can remove them without touching main-actor state.
+private nonisolated final class SyncObserverBox: @unchecked Sendable {
+    var defaults: NSObjectProtocol?
+    var identity: NSObjectProtocol?
 }

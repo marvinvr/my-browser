@@ -19,6 +19,8 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_APPROACHABLE_CONCURRENCY: YES
     DEAD_CODE_STRIPPING: YES
+    # Empty in Debug so the Info.plist key is blank and sync stays off. Release overrides it.
+    MB_CLOUDKIT_CONTAINER: ""
 
 targets:
   myBrowser:
@@ -48,8 +50,15 @@ targets:
       configs:
         Release:
           ENABLE_HARDENED_RUNTIME: YES
-          CODE_SIGN_ENTITLEMENTS: myBrowser/myBrowser.entitlements
+          # Debug stays ad-hoc (base CODE_SIGN_IDENTITY "-"). Release embeds the
+          # Developer ID profile so the iCloud entitlements are allowed at launch.
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          DEVELOPMENT_TEAM: WZ6VURTF6A
+          PROVISIONING_PROFILE_SPECIFIER: "myBrowser Developer ID (Molty)"
+          CODE_SIGN_ENTITLEMENTS: myBrowser/myBrowser-iCloud.entitlements
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+          MB_CLOUDKIT_CONTAINER: iCloud.ch.marvinvr.mybrowser
     dependencies:
       - package: Sparkle
     info:
@@ -62,6 +71,7 @@ targets:
         SUEnableAutomaticChecks: true
         SUScheduledCheckInterval: 86400
         SUVerifyUpdateBeforeExtraction: true
+        MBCloudKitContainer: $(MB_CLOUDKIT_CONTAINER)
         # Required before Apple will grant com.apple.developer.web-browser.public-key-credential.
         CFBundleURLTypes:
           - CFBundleURLName: ch.marvinvr.mybrowser.web

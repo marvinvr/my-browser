@@ -24,6 +24,7 @@ private struct GeneralSettingsView: View {
     @AppStorage(PictureInPictureSettings.autoDefaultsKey) private var autoPictureInPicture = true
     @AppStorage(SyncController.enabledDefaultsKey) private var iCloudSyncEnabled = false
     @Environment(PasskeyBroker.self) private var passkeys
+    @Environment(SyncController.self) private var sync
 
     private var iCloudSync: Binding<Bool> {
         Binding(
@@ -76,9 +77,7 @@ private struct GeneralSettingsView: View {
                 Toggle("iCloud Sync (beta)", isOn: iCloudSync)
                     .disabled(!SyncController.isContainerConfigured)
             } footer: {
-                if !SyncController.isContainerConfigured {
-                    Text("Requires iCloud container — coming soon")
-                }
+                Text(syncCaption)
             }
 
             Section {
@@ -96,6 +95,14 @@ private struct GeneralSettingsView: View {
             .onAppear { passkeys.refresh() }
         }
         .formStyle(.grouped)
+    }
+
+    private var syncCaption: String {
+        guard SyncController.isContainerConfigured else {
+            return "Requires iCloud container — coming soon"
+        }
+        guard iCloudSyncEnabled else { return SyncController.offStatus }
+        return sync.statusText.isEmpty ? SyncController.syncingStatus : sync.statusText
     }
 }
 

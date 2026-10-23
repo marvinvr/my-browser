@@ -321,9 +321,9 @@ iCloud sync uses `CKSyncEngine` on the private database, custom zone `Library` (
 
 `SyncController` (`AppDelegate` owns one) starts the engine only when all of these are true:
 
-1. `UserDefaults` `iCloudSyncEnabled` is true. The default is false. Settings → General shows **iCloud Sync (beta)**.
-2. Info.plist contains a non-empty `MBCloudKitContainer` (the container id, `iCloud.ch.marvinvr.mybrowser`). That key is absent until the container exists, and the toggle stays disabled with the caption "Requires iCloud container — coming soon".
-3. `FileManager.default.ubiquityIdentityToken != nil` (an iCloud account is signed in).
+1. `UserDefaults` `iCloudSyncEnabled` is true. On a build whose Info.plist has `MBCloudKitContainer`, the first launch writes that default as true. Settings → General shows **iCloud Sync (beta)** and the user can turn it off. The footer then says "Sync is off on this Mac."
+2. Info.plist contains a non-empty `MBCloudKitContainer` (the container id, `iCloud.ch.marvinvr.mybrowser`). Release sets that key. Debug does not, so the toggle stays disabled with the caption "Requires iCloud container — coming soon" and no `CKContainer` is created.
+3. `FileManager.default.ubiquityIdentityToken != nil` (an iCloud account is signed in). Signed out, the engine is not created and the footer says "iCloud account is signed out. Sync is off."
 
 The flag is checked first. A false flag returns before the account token is read.
 
@@ -385,15 +385,24 @@ Same Application Support directory as `library.json`, via `JSONFileStorage` (sch
 
 ### Enabling the container
 
-`myBrowser/myBrowser-iCloud.entitlements` is **not** referenced by `project.yml`. Debug and Release keep building and shipping without iCloud. When the container and a Developer ID provisioning profile exist, switch these on together:
+Release is wired to the container. Debug stays ad-hoc and does not sync.
 
-1. Apple Developer: on the App ID `ch.marvinvr.mybrowser`, create the iCloud container `iCloud.ch.marvinvr.mybrowser` and enable CloudKit and Push Notifications. `CKSyncEngine` uses silent pushes, so the release entitlements include `com.apple.developer.aps-environment` = `production`.
-2. Create a Developer ID provisioning profile for that App ID that includes the container, CloudKit, and Push. Download it.
-3. `project.yml`, Release only: set `CODE_SIGN_ENTITLEMENTS` to `myBrowser/myBrowser-iCloud.entitlements`. That file replaces `myBrowser/myBrowser.entitlements` and already includes `com.apple.security.cs.allow-jit`. It does not include the passkey entitlement. If passkeys are approved as well, add `com.apple.developer.web-browser.public-key-credential` to this file only when the same Developer ID profile grants it (see Passkeys). Leave Debug ad-hoc, with no iCloud entitlements.
-4. `project.yml` `info.properties`: add `MBCloudKitContainer: iCloud.ch.marvinvr.mybrowser`. Without this key the toggle stays disabled and `SyncController` does not start.
-5. `scripts/release.sh`: sign the app with `myBrowser/myBrowser-iCloud.entitlements` (the `sign_sparkle` `codesign` line). Embed the Developer ID profile at `Contents/embedded.provisionprofile`. The export fallback that treats "No profiles for" as success has to require this profile instead. Keep rejecting `get-task-allow`. Keep requiring `allow-jit`.
+- App ID `ch.marvinvr.mybrowser`, container `iCloud.ch.marvinvr.mybrowser`, CloudKit and Push. Profile "myBrowser Developer ID (Molty)" (`9d84df52-1fe2-4b88-87b1-7c733aa485a5`), team `WZ6VURTF6A`.
+- `project.yml` Release: `CODE_SIGN_ENTITLEMENTS` is `myBrowser/myBrowser-iCloud.entitlements` (JIT, CloudKit, container, `icloud-container-environment` = Production, `aps-environment` = production). No ubiquity / iCloud Documents entitlement. No passkey entitlement: `com.apple.developer.web-browser.public-key-credential` stays out of this file until the same Developer ID profile grants it (see Passkeys). `MBCloudKitContainer` comes from `MB_CLOUDKIT_CONTAINER`, set to the container id on Release and left empty on Debug. Signing is manual: identity "Developer ID Application", `PROVISIONING_PROFILE_SPECIFIER` "myBrowser Developer ID (Molty)".
+- `scripts/release.sh` signs Sparkle with that entitlements file and requires `Contents/embedded.provisionprofile` in the stapled app. An export that reports "No profiles for" still has to embed this profile before it is treated as success. Keep rejecting `get-task-allow`. Keep requiring `allow-jit`.
+- Schema for `Profile`, `Space`, and `SidebarItem` lives in `scripts/cloudkit-schema.ckdb`. `SidebarItem` also has `splitFraction` (DOUBLE) and `splitAxis` (STRING). Import with `xcrun cktool import-schema`, then deploy Development to Production. A Developer ID build talks to Production. A save that sets a field Production does not have yet is rejected, so those two fields have to be deployed before a split share or a vertical axis can sync. The `Library` zone is created at runtime.
+- `MYBROWSER_LIBRARY_DIR` points a launch at another directory so a sync check does not read `~/Library/Application Support/myBrowser`. `MYBROWSER_SYNC_PROBE` is a directory: the app uploads, renames the first space to "Sync Probe", adds, moves, and deletes a pinned item, then writes `probe-result.json`. `MYBROWSER_SYNC_PROBE_MODE=cleanup` deletes every space and waits for that push. `MYBROWSER_SYNC_FORCE_SIGNED_OUT=1` shows the signed-out footer and does not create a `CKContainer`.
 
-Do not flip those switches before the container and the profile exist. A Release build signed with the iCloud entitlements and no matching profile fails to launch.
+A Release build signed with the iCloud entitlements and no matching embedded profile fails to launch.
+
+### Still needs a second Mac
+
+One Mac can upload, edit, wipe the local library, and restore from iCloud. It cannot show two devices at once. These stay unverified until a second Mac is signed into the same iCloud account:
+
+- Concurrent edits of one record (`serverRecordChanged`, last-writer-wins, including a tombstone racing a live edit).
+- A silent push that wakes a running app on the other Mac and fetches. Quitting and relaunching on one Mac only proves a fetch that the app itself starts.
+- The account-switch prompt ("Sync" / "Turn Off") across two Apple IDs.
+- A zone deleted, purged, or reset on one device and uploaded again from the other.
 
 ## Decisions log
 - 2026-10-22: JSON + Codable store instead of SwiftData (see Sync readiness).
@@ -409,7 +418,7 @@ Do not flip those switches before the container and the profile exist. A Release
 - 2026-10-22: collapsed sidebar draws the content card edge to edge. Traffic lights stay vertically centred on the toolbar in both modes.
 - 2026-10-22: bundle id `ch.marvinvr.mybrowser`; Sparkle feed on `main`; releases via `scripts/release.sh`.
 - 2026-10-23: Dock icon is the light AppIcon unless Settings → Appearance picks dark. Applied at launch and on change with `NSApp.applicationIconImage` only. `NSWorkspace.setIcon` is not used; it modifies the signed bundle and breaks the code signature and Sparkle updates.
-- 2026-10-23: CloudKit sync (`CKSyncEngine`, private zone `Library`) is in the app and off by default. It starts only when `iCloudSyncEnabled`, Info.plist `MBCloudKitContainer`, and an iCloud account are all present. The container and the iCloud entitlements file are not wired into the build yet.
+- 2026-10-23: CloudKit sync (`CKSyncEngine`, private zone `Library`) starts when `iCloudSyncEnabled`, Info.plist `MBCloudKitContainer`, and an iCloud account are all present. Release ships that container key, the iCloud entitlements, and the Developer ID profile, and turns the flag on until the user disables it. Debug stays ad-hoc with no container key, so sync does not start. Concurrent edits and push-triggered fetch still need a second Mac.
 - 2026-10-23: a space switch shows the target page on the input. A click or shortcut reveals that space's selected web view immediately and the sidebar animates beside it. A sidebar swipe slides the page with the finger and selects the neighbour when the drag passes the commit line, not when the settle spring ends. The selected web view of each neighbouring space is created after launch and kept attached under the current page. `SpaceSwitch` signposts record input-to-visible time (`MYBROWSER_SPACE_SWITCH_LOG` appends the same lines to a file).
 - 2026-10-23: sidebar drag and drop uses `LibraryStore.move` (one batch, subtree included). A drop on a space icon keeps a site's section; folders land in pinned. A live tab that changes space is unloaded. An unpinned tab keeps its page URL. A pinned or favorite site keeps its home URL. A space swipe that is still tracking settles on a new outside touch, resign-key, or resign-active.
 - 2026-10-23: folder rows drag as plain buttons. A link drop reads `NSURL` from the pasteboard and falls back to the plain-text URL. The row close button hides for the duration of a drag without leaving the layout.

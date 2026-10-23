@@ -23,6 +23,9 @@ repo=marvinvr/my-browser
 feed_url="https://raw.githubusercontent.com/$repo/main/appcast.xml"
 identity=${CODESIGN_IDENTITY:-"Developer ID Application: Marvin von Rappard (WZ6VURTF6A)"}
 team=WZ6VURTF6A
+profile_name=${PROVISIONING_PROFILE_SPECIFIER:-"myBrowser Developer ID (Molty)"}
+profile_uuid=${PROVISIONING_PROFILE_UUID:-9d84df52-1fe2-4b88-87b1-7c733aa485a5}
+entitlements_file=myBrowser/myBrowser-iCloud.entitlements
 key_file=${SPARKLE_ED_KEY_FILE:-$HOME/.config/my-browser/sparkle/ed25519.key}
 version=""
 dry_run=0
@@ -127,7 +130,19 @@ sign_sparkle() {
   done
   sign_item "$fw"
   codesign --force --options runtime --timestamp --sign "$identity" \
-    --entitlements "myBrowser/myBrowser.entitlements" "$app"
+    --entitlements "$entitlements_file" "$app"
+}
+
+# The Developer ID profile must be inside the bundle or macOS kills the app at launch.
+embed_profile() {
+  local app=$1
+  local dest="$app/Contents/embedded.provisionprofile"
+  if [[ -f "$dest" ]]; then
+    return 0
+  fi
+  local src="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/${profile_uuid}.provisionprofile"
+  [[ -f "$src" ]] || { echo "Provisioning profile is not installed: $src" >&2; exit 1; }
+  cp "$src" "$dest"
 }
 
 verify_signed() {
@@ -235,6 +250,8 @@ else
     CODE_SIGN_STYLE=Manual \
     "CODE_SIGN_IDENTITY=$identity" \
     "DEVELOPMENT_TEAM=$team" \
+    "PROVISIONING_PROFILE_SPECIFIER=$profile_name" \
+    CODE_SIGN_ENTITLEMENTS="$entitlements_file" \
     ENABLE_HARDENED_RUNTIME=YES \
     CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
     "MARKETING_VERSION=$version" \
@@ -256,6 +273,11 @@ else
   <key>teamID</key><string>$team</string>
   <key>signingStyle</key><string>manual</string>
   <key>signingCertificate</key><string>Developer ID Application</string>
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>ch.marvinvr.mybrowser</key>
+    <string>$profile_name</string>
+  </dict>
   <key>destination</key><string>export</string>
 </dict>
 </plist>
@@ -268,11 +290,10 @@ PLIST
     -exportPath "$work/export" \
     -exportOptionsPlist "$work/ExportOptions.plist" > "$work/export.log" 2>&1
   then
-    # A non-sandboxed app with only the JIT entitlement has no provisioning profile.
-    # Export then stops with "No profiles"; the archived app is already Developer ID signed
-    # and sign_sparkle below applies the timestamp.
+    # Export can fail to copy a manually specified Developer ID profile. The archived
+    # app is already signed; embed that profile before sign_sparkle seals it.
     if grep -q "No profiles for" "$work/export.log"; then
-      echo "Export has no provisioning profile; signing the archived app directly."
+      echo "Export did not embed a profile; copying the archive and embedding ${profile_name}."
       mkdir -p "$work/export"
       ditto "$work/myBrowser.xcarchive/Products/Applications/myBrowser.app" "$app"
     else
@@ -282,6 +303,8 @@ PLIST
     fi
   fi
   [[ -d "$app" ]] || { echo "Export did not produce $app" >&2; exit 1; }
+  embed_profile "$app"
+  [[ -f "$app/Contents/embedded.provisionprofile" ]] || { echo "Release app is missing Contents/embedded.provisionprofile." >&2; exit 1; }
 
   echo "Signing Sparkle components…"
   sign_sparkle "$app"
@@ -293,9 +316,14 @@ PLIST
   verify_signed "$app"
   codesign --verify --deep --strict --verbose=2 "$app"
 
+  [[ -f "$app/Contents/embedded.provisionprofile" ]] || { echo "Release app is missing Contents/embedded.provisionprofile." >&2; exit 1; }
   entitlements=$(codesign -d --entitlements :- "$app" 2>/dev/null || true)
   grep -q "get-task-allow" <<<"$entitlements" && { echo "Release app is signed with get-task-allow." >&2; exit 1; }
   grep -q "com.apple.security.cs.allow-jit" <<<"$entitlements" || { echo "Release app is missing the JIT entitlement." >&2; exit 1; }
+  grep -q "iCloud.ch.marvinvr.mybrowser" <<<"$entitlements" || { echo "Release app is missing the iCloud container entitlement." >&2; exit 1; }
+  grep -q "com.apple.developer.icloud-services" <<<"$entitlements" || { echo "Release app is missing the CloudKit entitlement." >&2; exit 1; }
+  grep -q "com.apple.developer.icloud-container-environment" <<<"$entitlements" || { echo "Release app is missing the iCloud environment entitlement." >&2; exit 1; }
+  grep -q "com.apple.developer.aps-environment" <<<"$entitlements" || { echo "Release app is missing the push entitlement." >&2; exit 1; }
   if grep -a -R -F -q "ch.marvinvr.mybrowser.debug.snapshot" "$app/Contents/MacOS"; then
     echo "DEBUG snapshot hook is present in the Release binary." >&2
     exit 1
@@ -313,6 +341,7 @@ PLIST
   notarize "$work/myBrowser.zip"
   xcrun stapler staple "$app"
   xcrun stapler validate "$app"
+  [[ -f "$app/Contents/embedded.provisionprofile" ]] || { echo "Stapled app lost Contents/embedded.provisionprofile." >&2; exit 1; }
 
   stage=$work/stage
   rm -rf "$stage"

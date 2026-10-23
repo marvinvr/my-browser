@@ -1,5 +1,6 @@
 import CloudKit
 import Foundation
+import os
 
 /// Wraps `CKSyncEngine` for the private `Library` zone.
 /// Created only by `SyncController` after the flag, container key, and iCloud account all pass.
@@ -7,6 +8,9 @@ import Foundation
 final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
     var resolveAccountSwitch: (() -> SyncController.AccountChoice)?
     var onTurnOff: (() -> Void)?
+    var onStatus: ((String) -> Void)?
+
+    private static let log = Logger(subsystem: "ch.marvinvr.mybrowser", category: "Sync")
 
     private let library: LibraryStore
     private let state: SyncState
@@ -91,8 +95,12 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
                 handleSentRecords(changes, syncEngine: syncEngine)
             case .didFetchRecordZoneChanges(let fetched):
                 handleZoneFetchFinished(fetched, syncEngine: syncEngine)
-            case .sentDatabaseChanges, .willFetchChanges, .willFetchRecordZoneChanges,
-                 .didFetchChanges, .willSendChanges, .didSendChanges:
+            case .willFetchChanges, .willFetchRecordZoneChanges, .willSendChanges:
+                onStatus?(SyncController.syncingStatus)
+            case .didFetchChanges, .didSendChanges:
+                onStatus?(SyncController.idleStatus)
+                Self.log.info("Sync idle")
+            case .sentDatabaseChanges:
                 break
             @unknown default:
                 break
@@ -103,6 +111,8 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
     private func handleAccount(_ change: CKSyncEngine.Event.AccountChange) {
         switch change.changeType {
         case .signOut:
+            Self.log.info("iCloud account signed out")
+            onStatus?(SyncController.signedOutStatus)
             Task { @MainActor in
                 self.stop(resetting: true)
             }
@@ -201,6 +211,7 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
             state.removeSystemFields(for: id)
         }
 
+        Self.log.info("Fetched \(changes.modifications.count, privacy: .public) records, \(changes.deletions.count, privacy: .public) deletions")
         library.applyRemote(upserts: update, deletions: deletions)
         if !upload.isEmpty {
             syncEngine.state.add(pendingRecordZoneChanges: upload)
@@ -212,6 +223,7 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
         _ changes: CKSyncEngine.Event.SentRecordZoneChanges,
         syncEngine: CKSyncEngine
     ) {
+        Self.log.info("Sent \(changes.savedRecords.count, privacy: .public) saves, \(changes.deletedRecordIDs.count, privacy: .public) deletes, \(changes.failedRecordSaves.count, privacy: .public) failed saves")
         for record in changes.savedRecords {
             guard let id = UUID(uuidString: record.recordID.recordName) else { continue }
             state.setSystemFields(RecordSystemFields.encode(record), for: id)
@@ -252,7 +264,11 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
             return
         }
 
-        guard error.code == .unknownItem || error.code == .zoneNotFound else { return }
+        guard error.code == .unknownItem || error.code == .zoneNotFound else {
+            Self.log.error("Save failed \(error.code.rawValue, privacy: .public)")
+            onStatus?(SyncController.pausedStatus)
+            return
+        }
         let outcome = SyncConflict.resolveMissingServerRecord(
             local: library.syncSide(for: id),
             lastKnownServerModification: modificationDate(inSystemFieldsFor: id)
@@ -345,6 +361,7 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
     private func enqueueFullUpload() {
         guard let ck else { return }
         ck.state.add(pendingDatabaseChanges: [.saveZone(SyncSchema.zone)])
+        Self.log.info("Queued Library zone save")
         let ids = Set(library.profiles.keys)
             .union(library.spaces.keys)
             .union(library.items.keys)
