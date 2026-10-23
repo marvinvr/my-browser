@@ -218,6 +218,13 @@ nonisolated enum ExtensionWebKitCompat {
       fillEvents(root.runtime, ['onUpdateAvailable', 'onSuspend', 'onSuspendCanceled']);
       fillEvents(root.webNavigation, ['onCreatedNavigationTarget', 'onBeforeNavigate', 'onDOMContentLoaded', 'onCompleted', 'onErrorOccurred', 'onHistoryStateUpdated', 'onReferenceFragmentUpdated', 'onTabReplaced']);
       fillEvents(root.webRequest, ['onAuthRequired', 'onBeforeRedirect']);
+      // A content script can message the worker. The worker cannot message itself.
+      // 1Password only starts the desktop trust prompt after authorize-browser.
+      if (root.runtime.id === "aeblfdkhhhdcdjpifhhbdiojplfjncoa") {
+        setTimeout(() => {
+          try { root.runtime.sendMessage({ name: "authorize-browser" }); } catch (e) {}
+        }, 1500);
+      }
     })();
     """
 }
