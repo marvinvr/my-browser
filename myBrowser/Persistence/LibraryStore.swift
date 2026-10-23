@@ -53,10 +53,28 @@ final class LibraryStore {
     func item(_ id: UUID) -> SidebarItem? { items[id].flatMap { $0.deletedAt == nil ? $0 : nil } }
 
     /// Sorted children of `parentID` (nil = root) in one section of a space.
+    ///
+    /// A site whose folder or split has not arrived yet is listed at the section root.
+    /// Its stored `parentID` is left alone, so it nests again when that container arrives.
     func children(of parentID: UUID?, section: SidebarItem.Section, in spaceID: UUID) -> [SidebarItem] {
+        items.values
+            .filter { $0.deletedAt == nil && $0.spaceID == spaceID && $0.section == section && listedParentID(of: $0) == parentID }
+            .sorted { ($0.sortKey, $0.id.uuidString) < ($1.sortKey, $1.id.uuidString) }
+    }
+
+    /// Children by the stored `parentID`, including rows whose container is not here yet.
+    /// Ordering keys use this so a root insert does not rewrite an orphan pane's key.
+    func storedChildren(of parentID: UUID?, section: SidebarItem.Section, in spaceID: UUID) -> [SidebarItem] {
         items.values
             .filter { $0.deletedAt == nil && $0.spaceID == spaceID && $0.section == section && $0.parentID == parentID }
             .sorted { ($0.sortKey, $0.id.uuidString) < ($1.sortKey, $1.id.uuidString) }
+    }
+
+    /// Parent the sidebar lists this item under. Missing folder or split means the section root.
+    func listedParentID(of item: SidebarItem) -> UUID? {
+        guard let parentID = item.parentID else { return nil }
+        guard let parent = items[parentID], parent.deletedAt == nil else { return nil }
+        return parentID
     }
 
     /// The observed child list for one parent. Reading it does not subscribe the caller to `items`.
@@ -253,7 +271,7 @@ final class LibraryStore {
 
     func sortKey(for position: Position, parentID: UUID?, section: SidebarItem.Section, spaceID: UUID, excluding: UUID? = nil) -> String {
         renormalizeSiblings(parentID: parentID, section: section, spaceID: spaceID, excluding: excluding)
-        let siblings = children(of: parentID, section: section, in: spaceID).filter { $0.id != excluding }
+        let siblings = storedChildren(of: parentID, section: section, in: spaceID).filter { $0.id != excluding }
         switch position {
         case .start:
             return SortKey.between(nil, siblings.first?.sortKey)
@@ -271,7 +289,7 @@ final class LibraryStore {
     /// Rewrites a sibling run whose keys collide or run backwards, in current display order.
     /// `children` stays a pure read; only this insert path mutates.
     private func renormalizeSiblings(parentID: UUID?, section: SidebarItem.Section, spaceID: UUID, excluding: UUID?) {
-        let siblings = children(of: parentID, section: section, in: spaceID).filter { $0.id != excluding }
+        let siblings = storedChildren(of: parentID, section: section, in: spaceID).filter { $0.id != excluding }
         let keys = siblings.map(\.sortKey)
         let strictlyIncreasing = zip(keys, keys.dropFirst()).allSatisfy { $0 < $1 }
         guard !strictlyIncreasing else { return }
@@ -399,7 +417,7 @@ final class LibraryStore {
     func refreshSiblingLists() {
         var grouped: [SidebarSiblingKey: [SidebarItem]] = [:]
         for item in items.values where item.deletedAt == nil {
-            let key = SidebarSiblingKey(spaceID: item.spaceID, section: item.section, parentID: item.parentID)
+            let key = SidebarSiblingKey(spaceID: item.spaceID, section: item.section, parentID: listedParentID(of: item))
             grouped[key, default: []].append(item)
         }
         var seen: Set<SidebarSiblingKey> = []

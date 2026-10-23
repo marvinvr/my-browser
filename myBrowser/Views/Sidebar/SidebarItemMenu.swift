@@ -81,6 +81,9 @@ struct SidebarItemMenu: ViewModifier {
             if members.count == 2 {
                 Button("Swap Panes") { model.swapPanes(splitID: item.id, 0, 1) }
             }
+            Button(item.resolvedSplitAxis == .vertical ? "Side by Side" : "Stack Vertically") {
+                model.toggleSplitAxis(splitID: item.id)
+            }
             Button("Separate All") { model.separateAllPanes(of: item.id) }
         }
         Divider()

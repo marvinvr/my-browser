@@ -66,12 +66,14 @@ nonisolated enum RecordMapper {
         set(record, Field.url, item.url?.absoluteString)
         set(record, Field.sortKey, item.sortKey)
         set(record, Field.isExpanded, item.isExpanded ? 1 : 0)
-        if let fraction = item.splitFraction, fraction.isFinite, fraction > 0 {
-            set(record, Field.splitFraction, fraction)
-        }
-        if let axis = item.splitAxis {
-            set(record, Field.splitAxis, axis.rawValue)
-        }
+        // Always assign, including nil. `baseRecord` reuses the last server record, and a skipped
+        // key is not in `changedKeys`, so the old share or axis would stay on the server.
+        let fraction: Double? = {
+            guard let value = item.splitFraction, value.isFinite, value > 0 else { return nil }
+            return value
+        }()
+        set(record, Field.splitFraction, fraction)
+        set(record, Field.splitAxis, item.splitAxis?.rawValue)
         set(record, Field.createdAt, item.createdAt)
         set(record, Field.modifiedAt, item.modifiedAt)
         set(record, Field.deletedAt, item.deletedAt)

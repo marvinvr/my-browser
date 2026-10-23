@@ -35,12 +35,14 @@ extension BrowserModel {
     /// is focused. The first selection of a split loads every pane. A later focus change
     /// loads the focused pane only, so a closed pinned pane stays unloaded until then.
     /// Selecting the split again after leaving it loads any pane that is not already loaded.
+    /// A split with only one pane so far still returns that pane. It does not return nil.
     func displayedContent(for itemID: UUID?) -> DisplayedContent? {
         let id = itemID ?? selectedItemID
         guard let id, let item = library.item(id) else { return nil }
         if let split = splitItem(containing: item) {
             let members = library.splitMembers(of: split.id)
-            guard members.count >= SidebarItem.minimumSplitMembers else { return nil }
+            // A remote split can arrive with one pane. Show that pane instead of the empty state.
+            guard !members.isEmpty else { return nil }
             let fractions = SidebarItem.displayFractions(for: members)
             let panes = zip(members, fractions).map { member, fraction in
                 DisplayedPane(id: member.id, fraction: fraction, tab: ensureTab(for: member))
@@ -67,16 +69,17 @@ extension BrowserModel {
         )
     }
 
-    /// Groups 2...4 sites into one split at the first site's place and selects it.
+    /// Groups 2...4 sites into one split at the anchor's place and selects it.
     ///
-    /// Focus is the site that was current when it is one of the members, otherwise the first pane.
-    /// Returns nil when `LibraryStore.createSplit` rejects the ids. See that method for the rules.
+    /// `anchoredOn` nil uses the first id. Focus is the site that was current when it is one of
+    /// the members, otherwise the first pane. Returns nil when `LibraryStore.createSplit` rejects
+    /// the ids. See that method for the rules.
     @discardableResult
-    func createSplit(tabIDs: [UUID], axis: SidebarItem.SplitAxis = .horizontal) -> SidebarItem? {
+    func createSplit(tabIDs: [UUID], axis: SidebarItem.SplitAxis = .horizontal, anchoredOn anchorID: UUID? = nil) -> SidebarItem? {
         let previous = selectedItemID
         let previousFocus = previous.flatMap { library.item($0)?.isSplit == true ? resolvedFocus(in: $0) : $0 }
         let storedAxis: SidebarItem.SplitAxis? = axis == .horizontal ? nil : axis
-        guard let split = library.createSplit(tabIDs: tabIDs, axis: storedAxis) else { return nil }
+        guard let split = library.createSplit(tabIDs: tabIDs, axis: storedAxis, anchoredOn: anchorID) else { return nil }
         let members = library.splitMembers(of: split.id)
         let focus = members.first { $0.id == previousFocus }?.id ?? members.first?.id
         if let focus {
@@ -155,6 +158,36 @@ extension BrowserModel {
         library.setSplitAxis(splitID: splitID, axis)
     }
 
+    /// Flips the split between side by side and stacked.
+    func toggleSplitAxis(splitID: UUID) {
+        guard let item = library.item(splitID), item.isSplit else { return }
+        let next: SidebarItem.SplitAxis = item.resolvedSplitAxis == .vertical ? .horizontal : .vertical
+        setSplitAxis(splitID: splitID, next)
+    }
+
+    /// Flips the selected split. No-op when the selection is not a split.
+    func toggleSelectedSplitAxis() {
+        guard let id = selectedItemID else { return }
+        toggleSplitAxis(splitID: id)
+    }
+
+    /// View menu title for the selected split. A horizontal split offers stacking.
+    var splitAxisMenuTitle: String {
+        guard let id = selectedItemID,
+              let item = library.item(id),
+              item.isSplit,
+              item.resolvedSplitAxis == .vertical else {
+            return "Stack Vertically"
+        }
+        return "Side by Side"
+    }
+
+    /// The selection is a split, so the View menu can change its axis.
+    var canToggleSplitAxis: Bool {
+        guard let id = selectedItemID else { return false }
+        return library.item(id)?.isSplit == true
+    }
+
     /// Selects the member's split and makes this pane the one the toolbar drives.
     /// No-op when `tabID` is not inside a split.
     func focusPane(tabID: UUID) {
@@ -194,7 +227,7 @@ extension BrowserModel {
     func selectedSplitPartner(for itemID: UUID) -> SidebarItem? {
         guard canStartSplit(from: itemID), let item = library.item(itemID) else { return nil }
         guard let selected = selectedItemID, selected != itemID, let partner = library.item(selected) else { return nil }
-        guard canStartSplit(from: partner.id), partner.spaceID == item.spaceID else { return nil }
+        guard canStartSplit(from: partner.id), partner.spaceID == item.spaceID, partner.section == item.section else { return nil }
         return partner
     }
 
@@ -202,7 +235,7 @@ extension BrowserModel {
     func selectedSplitToJoin(for itemID: UUID) -> SidebarItem? {
         guard canStartSplit(from: itemID), let item = library.item(itemID) else { return nil }
         guard let selected = selectedItemID, let split = library.item(selected), split.isSplit else { return nil }
-        guard split.spaceID == item.spaceID else { return nil }
+        guard split.spaceID == item.spaceID, split.section == item.section else { return nil }
         guard library.splitMembers(of: split.id).count < SidebarItem.maximumSplitMembers else { return nil }
         return split
     }
@@ -242,7 +275,7 @@ extension BrowserModel {
             return addBlankPane(to: split.id)
         }
         guard canStartSplit(from: itemID) else { return false }
-        guard let blank = makeBlankTab(in: item.spaceID) else { return false }
+        guard let blank = makeBlankTab(in: item.spaceID, section: item.section) else { return false }
         guard createSplit(tabIDs: [item.id, blank.id]) != nil else {
             library.deleteItem(blank.id)
             return false
@@ -290,7 +323,7 @@ extension BrowserModel {
         guard let split = library.item(splitID), split.isSplit else { return false }
         let members = library.splitMembers(of: splitID)
         guard members.count < SidebarItem.maximumSplitMembers else { return false }
-        guard let blank = makeBlankTab(in: split.spaceID) else { return false }
+        guard let blank = makeBlankTab(in: split.spaceID, section: split.section) else { return false }
         guard addToSplit(tabID: blank.id, splitID: splitID, at: members.count) != nil else {
             library.deleteItem(blank.id)
             return false
@@ -300,11 +333,12 @@ extension BrowserModel {
         return true
     }
 
-    private func makeBlankTab(in spaceID: UUID) -> SidebarItem? {
-        guard library.space(spaceID) != nil else { return nil }
+    /// A new empty pane in `section`, so a pinned split does not adopt a `.tabs` row.
+    private func makeBlankTab(in spaceID: UUID, section: SidebarItem.Section) -> SidebarItem? {
+        guard section == .pinned || section == .tabs, library.space(spaceID) != nil else { return nil }
         return library.addItem(
             spaceID: spaceID,
-            section: .tabs,
+            section: section,
             kind: .site,
             title: "New Tab",
             url: nil,

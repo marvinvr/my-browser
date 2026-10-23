@@ -611,11 +611,27 @@ enum DebugSnapshot {
         }
 
         // cacheDisplay leaves WKWebView blank, including an extension popup's page.
+        // The page image is then painted over the pane, which hides controls that sit
+        // on top of it (the split hover pill). Those smaller siblings are drawn again after.
         var pages: [(NSImage, NSRect)] = []
+        var pageChrome: [(NSImage, NSRect)] = []
         for webView in webViews(in: content) where webView.bounds.width > 1 && webView.bounds.height > 1 {
             guard let shot = await snapshotOrTimeout(webView) else { continue }
             let frame = webView.convert(webView.bounds, to: content)
             pages.append((shot, imageRect(for: frame, in: content)))
+            guard let parent = webView.superview, let index = parent.subviews.firstIndex(of: webView) else { continue }
+            for sibling in parent.subviews.dropFirst(index + 1) {
+                guard !sibling.isHidden, sibling.alphaValue > 0.01 else { continue }
+                let coversPage = sibling.bounds.width > webView.bounds.width * 0.85
+                    && sibling.bounds.height > webView.bounds.height * 0.85
+                if coversPage { continue }
+                guard let rep = sibling.bitmapImageRepForCachingDisplay(in: sibling.bounds) else { continue }
+                sibling.cacheDisplay(in: sibling.bounds, to: rep)
+                let image = NSImage(size: sibling.bounds.size)
+                image.addRepresentation(rep)
+                let chromeFrame = sibling.convert(sibling.bounds, to: content)
+                pageChrome.append((image, imageRect(for: chromeFrame, in: content)))
+            }
         }
         let sheetImage = attachedSheetImage(on: window, content: content)
         let commandFill = commandBarFill(for: window)
@@ -666,6 +682,9 @@ enum DebugSnapshot {
         }
         for (shot, frame) in pages {
             shot.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
+        }
+        for (image, frame) in pageChrome {
+            image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
         }
         if let sheet = sheetImage {
             // The sheet material cacheDisplays clear, so the title and buttons would sit on the page.

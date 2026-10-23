@@ -132,7 +132,7 @@ final class SplitCanvasView: NSView {
             }
             installWebView(pane, in: container)
             configure(pill, pane: pane, index: index, content: content)
-            let hovered = content.isSplit && hoveredID == pane.id
+            let hovered = content.isSplit && (hoveredID == pane.id || snapshotHover(pane.id, content: content))
             container.apply(
                 split: content.isSplit,
                 focused: content.isSplit && pane.id == content.focusedID,
@@ -179,7 +179,7 @@ final class SplitCanvasView: NSView {
         pill.vertical = content.axis == .vertical
         pill.canMovePrevious = index > 0
         pill.canMoveNext = index < content.panes.count - 1
-        pill.visible = content.isSplit && hoveredID == pane.id
+        pill.visible = content.isSplit && (hoveredID == pane.id || snapshotHover(pane.id, content: content))
         let tabID = pane.id
         pill.onClose = { [weak self] in self?.model?.close(tabID) }
         pill.onSeparate = { [weak self] in self?.model?.separate(tabID: tabID) }
@@ -242,16 +242,23 @@ final class SplitCanvasView: NSView {
         model?.focusPane(tabID: tabID)
     }
 
+    /// Locked-screen snapshots cannot move the pointer. The env var shows the focused pane's pill.
+    private func snapshotHover(_ paneID: UUID, content: DisplayedContent) -> Bool {
+        ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SPLIT_HOVER"] == "1"
+            && paneID == content.focusedID
+    }
+
     private func setHovered(_ id: UUID?) {
         guard hoveredID != id else { return }
         hoveredID = id
         guard let content, content.isSplit else { return }
         for pane in content.panes {
-            pills[pane.id]?.visible = pane.id == id
+            let show = pane.id == id || snapshotHover(pane.id, content: content)
+            pills[pane.id]?.visible = show
             containers[pane.id]?.apply(
                 split: true,
                 focused: pane.id == content.focusedID,
-                hovered: pane.id == id,
+                hovered: show,
                 title: pane.tab.title
             )
         }
@@ -267,8 +274,10 @@ final class SplitCanvasView: NSView {
             model?.addToSplit(tabID: tabID, splitID: content.itemID, at: index)
             model?.focusPane(tabID: tabID)
         } else {
+            // Visual order can put the drop on the leading edge. The open page stays the anchor,
+            // so its section, folder, and place are the ones the split keeps.
             let ids = index == 0 ? [tabID, content.itemID] : [content.itemID, tabID]
-            guard model?.createSplit(tabIDs: ids) != nil else { return }
+            guard model?.createSplit(tabIDs: ids, anchoredOn: content.itemID) != nil else { return }
             model?.focusPane(tabID: tabID)
         }
     }
@@ -287,7 +296,9 @@ final class SplitCanvasView: NSView {
     private func canAccept(_ tabID: UUID) -> Bool {
         guard let model, let content else { return false }
         guard let item = model.library.item(tabID), item.kind == .site, item.section != .favorites else { return false }
-        guard let host = model.library.item(content.itemID), item.spaceID == host.spaceID else { return false }
+        guard let host = model.library.item(content.itemID),
+              item.spaceID == host.spaceID,
+              item.section == host.section else { return false }
         if let container = model.library.splitContainer(of: tabID) {
             return content.isSplit && container.id == content.itemID
         }

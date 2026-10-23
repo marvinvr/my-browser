@@ -90,7 +90,7 @@ enum PictureInPictureParking {
         guard let content = (window ?? webView.window)?.contentView else { return }
         let host = host(in: content)
         guard webView.superview !== host else { return }
-        webView.removeFromSuperview()
+        // `addSubview` reparents. Removing first drops the view out of any window for a turn and closes PiP.
         webView.translatesAutoresizingMaskIntoConstraints = true
         webView.frame = host.bounds
         host.addSubview(webView)

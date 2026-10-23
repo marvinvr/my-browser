@@ -41,15 +41,19 @@ struct SplitViewTests {
         let (store, space) = makeStore()
         let folder = store.addItem(spaceID: space.id, section: .pinned, kind: .folder, title: "Folder", at: .end)
         let left = site(store, spaceID: space.id, title: "Left", section: .pinned, parentID: folder.id)
-        let right = site(store, spaceID: space.id, title: "Right", section: .tabs)
-        let extra = site(store, spaceID: space.id, title: "Extra", section: .favorites)
+        let right = site(store, spaceID: space.id, title: "Right", section: .pinned)
+        let favorite = site(store, spaceID: space.id, title: "Favorite", section: .favorites)
+        let extra = site(store, spaceID: space.id, title: "Extra", section: .pinned)
         let loose = site(store, spaceID: space.id, title: "Loose", section: .pinned)
+        let tab = site(store, spaceID: space.id, title: "Tab", section: .tabs)
         let otherSpace = store.createSpace(name: "Work")
         let foreign = site(store, spaceID: otherSpace.id, title: "Foreign", section: .tabs)
 
         #expect(store.createSplit(tabIDs: [left.id]) == nil)
         #expect(store.createSplit(tabIDs: [left.id, left.id]) == nil)
-        #expect(store.createSplit(tabIDs: [left.id, extra.id]) == nil)
+        #expect(store.createSplit(tabIDs: [left.id, favorite.id]) == nil)
+        #expect(store.createSplit(tabIDs: [left.id, tab.id]) == nil)
+        #expect(store.createSplit(tabIDs: [tab.id, left.id]) == nil)
         #expect(store.createSplit(tabIDs: [left.id, foreign.id]) == nil)
         #expect(store.createSplit(tabIDs: [folder.id, left.id]) == nil)
 
@@ -71,16 +75,20 @@ struct SplitViewTests {
         #expect(store.createSplit(tabIDs: [left.id, loose.id]) == nil)
         #expect(store.addToSplit(tabID: foreign.id, splitID: splitID, at: 0) == nil)
         #expect(store.addToSplit(tabID: folder.id, splitID: splitID, at: 0) == nil)
+        #expect(store.addToSplit(tabID: favorite.id, splitID: splitID, at: 0) == nil)
+        #expect(store.addToSplit(tabID: tab.id, splitID: splitID, at: 0) == nil)
+        #expect(store.item(tab.id)?.section == .tabs)
+        #expect(store.item(favorite.id)?.section == .favorites)
         store.setFractions(splitID: splitID, [1, 1])
         #expect(store.addToSplit(tabID: extra.id, splitID: splitID, at: 0)?.id == extra.id)
         #expect(store.splitMembers(of: splitID).map(\.title) == ["Extra", "Left", "Right"])
         #expect(store.splitMembers(of: splitID).allSatisfy { $0.splitFraction == nil })
         #expect(store.item(extra.id)?.section == .pinned)
 
-        let fourth = site(store, spaceID: space.id, title: "Fourth", section: .tabs)
+        let fourth = site(store, spaceID: space.id, title: "Fourth", section: .pinned)
         #expect(store.addToSplit(tabID: fourth.id, splitID: splitID, at: 99)?.id == fourth.id)
         #expect(store.splitMembers(of: splitID).map(\.title) == ["Extra", "Left", "Right", "Fourth"])
-        let fifth = site(store, spaceID: space.id, title: "Fifth", section: .tabs)
+        let fifth = site(store, spaceID: space.id, title: "Fifth", section: .pinned)
         #expect(store.addToSplit(tabID: fifth.id, splitID: splitID, at: 0) == nil)
         store.moveItem(loose.id, to: .pinned, parentID: splitID)
         #expect(store.splitContainer(of: loose.id) == nil)
@@ -338,6 +346,216 @@ struct SplitViewTests {
         #expect(bareRecord[RecordMapper.Field.splitAxis] == nil)
         #expect(bareRecord[RecordMapper.Field.splitFraction] == nil)
         #expect(RecordMapper.item(from: bareRecord)?.splitAxis == nil)
+    }
+
+    @Test func recordMapperClearsNilSplitFieldsOnAReusedRecord() throws {
+        let created = Date(timeIntervalSince1970: 1_700_000_000)
+        var item = SidebarItem(
+            spaceID: UUID(),
+            section: .pinned,
+            kind: .split,
+            title: "Split",
+            sortKey: "a0",
+            splitFraction: 0.4,
+            splitAxis: .vertical,
+            createdAt: created
+        )
+        item.modifiedAt = created
+        let original = try #require(RecordMapper.record(for: item))
+        let systemFields = RecordSystemFields.encode(original)
+        item.splitFraction = nil
+        item.splitAxis = nil
+        let cleared = try #require(RecordMapper.record(for: item, systemFields: systemFields))
+        #expect(cleared[RecordMapper.Field.splitFraction] == nil)
+        #expect(cleared[RecordMapper.Field.splitAxis] == nil)
+        // A skipped nil is not a change, so the server would keep the old share and axis.
+        #expect(cleared.changedKeys().contains(RecordMapper.Field.splitFraction))
+        #expect(cleared.changedKeys().contains(RecordMapper.Field.splitAxis))
+    }
+
+    @Test func createSplitKeepsOneSectionAndTheRequestedAnchor() throws {
+        let (store, space) = makeStore()
+        let folder = store.addItem(spaceID: space.id, section: .pinned, kind: .folder, title: "Folder")
+        let pinned = site(store, spaceID: space.id, title: "Pinned", section: .pinned, parentID: folder.id)
+        let other = site(store, spaceID: space.id, title: "Other", section: .pinned)
+        let tab = site(store, spaceID: space.id, title: "Tab", section: .tabs)
+        let anchorKey = try #require(store.item(pinned.id)?.sortKey)
+
+        #expect(store.createSplit(tabIDs: [other.id, tab.id]) == nil)
+        #expect(store.createSplit(tabIDs: [tab.id, pinned.id], anchoredOn: pinned.id) == nil)
+        #expect(store.item(tab.id)?.section == .tabs)
+        #expect(store.item(tab.id)?.parentID == nil)
+
+        let missing = UUID()
+        #expect(store.createSplit(tabIDs: [other.id, pinned.id], anchoredOn: missing) == nil)
+
+        let split = try #require(store.createSplit(tabIDs: [other.id, pinned.id], anchoredOn: pinned.id))
+        #expect(split.section == .pinned)
+        #expect(split.parentID == folder.id)
+        #expect(split.sortKey == anchorKey)
+        #expect(store.splitMembers(of: split.id).map(\.id) == [other.id, pinned.id])
+        #expect(store.splitMembers(of: split.id).allSatisfy { $0.section == .pinned })
+        #expect(store.addToSplit(tabID: tab.id, splitID: split.id, at: 0) == nil)
+        #expect(store.item(tab.id)?.section == .tabs)
+
+        let (model, library, _) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let pin = site(library, spaceID: spaceID, title: "Pin", section: .pinned)
+        let partner = site(library, spaceID: spaceID, title: "Partner", section: .pinned)
+        let loose = site(library, spaceID: spaceID, title: "Loose")
+        model.select(loose.id)
+        #expect(model.selectedSplitPartner(for: pin.id) == nil)
+        model.select(pin.id)
+        #expect(model.selectedSplitPartner(for: partner.id)?.id == pin.id)
+        #expect(model.selectedSplitPartner(for: loose.id) == nil)
+        let joined = try #require(model.createSplit(tabIDs: [pin.id, partner.id]))
+        model.select(joined.id)
+        #expect(model.selectedSplitToJoin(for: loose.id) == nil)
+        #expect(model.selectedSplitToJoin(for: partner.id) == nil)
+    }
+
+    @Test func blankPaneInAPinnedSplitIsDeletedOnClose() throws {
+        let (model, library, _) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let pin = site(library, spaceID: spaceID, title: "Pin", section: .pinned)
+        model.select(pin.id)
+        #expect(model.openInSplitView())
+        let splitID = try #require(model.selectedItemID)
+        let members = library.splitMembers(of: splitID)
+        #expect(members.map(\.id).first == pin.id)
+        let blank = try #require(members.last)
+        #expect(blank.id != pin.id)
+        #expect(blank.section == .pinned)
+        #expect(blank.url == nil)
+        #expect(blank.title == "New Tab")
+        #expect(model.resolvedFocus(in: splitID) == blank.id)
+
+        model.close(blank.id)
+        #expect(library.item(blank.id) == nil)
+        #expect(library.items[blank.id]?.deletedAt != nil)
+        #expect(library.item(splitID)?.isSplit != true)
+        #expect(library.item(pin.id)?.parentID == nil)
+        #expect(library.item(pin.id)?.section == .pinned)
+        #expect(model.selectedItemID == pin.id)
+    }
+
+    @Test func remotePartialSplitStaysAndAMemberLossReconciles() throws {
+        let (model, library, _) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let created = Date(timeIntervalSince1970: 1_700_000_000)
+        var split = SidebarItem(
+            spaceID: spaceID,
+            section: .pinned,
+            kind: .split,
+            title: "Partial",
+            sortKey: "m",
+            createdAt: created
+        )
+        split.modifiedAt = created
+        var only = SidebarItem(
+            spaceID: spaceID,
+            section: .pinned,
+            kind: .site,
+            parentID: split.id,
+            title: "Only",
+            url: URL(string: "https://only.example"),
+            sortKey: "a0",
+            createdAt: created
+        )
+        only.modifiedAt = created
+        var pending = SidebarItem(
+            spaceID: spaceID,
+            section: .pinned,
+            kind: .site,
+            parentID: split.id,
+            title: "Later",
+            url: URL(string: "https://later.example"),
+            sortKey: "a1",
+            createdAt: created
+        )
+        pending.modifiedAt = created
+        pending.deletedAt = created
+
+        library.applyRemote(upserts: RemoteLibraryUpdate(items: [split, only, pending]), deletions: [])
+        #expect(library.item(split.id)?.isSplit == true)
+        #expect(library.splitMembers(of: split.id).map(\.id) == [only.id])
+        let shown = try #require(model.displayedContent(for: split.id))
+        #expect(shown.isSplit)
+        #expect(shown.panes.map(\.id) == [only.id])
+        #expect(shown.panes.map(\.id) != [])
+
+        let left = site(library, spaceID: spaceID, title: "Left", section: .pinned)
+        let right = site(library, spaceID: spaceID, title: "Right", section: .pinned)
+        let full = try #require(library.createSplit(tabIDs: [left.id, right.id]))
+        library.applyRemote(upserts: RemoteLibraryUpdate(), deletions: [left.id])
+        #expect(library.item(full.id) == nil)
+        #expect(library.items[full.id]?.deletedAt != nil)
+        #expect(library.item(right.id)?.parentID == nil)
+        #expect(library.item(right.id)?.splitFraction == nil)
+
+        let kept = site(library, spaceID: spaceID, title: "Kept", section: .pinned)
+        let gone = site(library, spaceID: spaceID, title: "Gone", section: .pinned)
+        let tombstoned = try #require(library.createSplit(tabIDs: [kept.id, gone.id]))
+        var dead = try #require(library.items[gone.id])
+        dead.deletedAt = created
+        library.applyRemote(upserts: RemoteLibraryUpdate(items: [dead]), deletions: [])
+        #expect(library.item(tombstoned.id) == nil)
+        #expect(library.item(kept.id)?.parentID == nil)
+        #expect(library.items[gone.id]?.deletedAt != nil)
+    }
+
+    @Test func orphanSplitMemberIsListedAtTheRootUntilTheContainerArrives() throws {
+        let (store, space) = makeStore()
+        let created = Date(timeIntervalSince1970: 1_700_000_000)
+        let splitID = UUID()
+        var member = SidebarItem(
+            spaceID: space.id,
+            section: .pinned,
+            kind: .site,
+            parentID: splitID,
+            title: "Early",
+            url: URL(string: "https://early.example"),
+            sortKey: "a0",
+            createdAt: created
+        )
+        member.modifiedAt = created
+        let folderID = UUID()
+        var child = SidebarItem(
+            spaceID: space.id,
+            section: .pinned,
+            kind: .site,
+            parentID: folderID,
+            title: "Loose child",
+            url: URL(string: "https://child.example"),
+            sortKey: "b0",
+            createdAt: created
+        )
+        child.modifiedAt = created
+
+        store.applyRemote(upserts: RemoteLibraryUpdate(items: [member, child]), deletions: [])
+        #expect(store.item(member.id)?.parentID == splitID)
+        #expect(store.children(of: nil, section: .pinned, in: space.id).map(\.id).contains(member.id))
+        #expect(store.children(of: splitID, section: .pinned, in: space.id).isEmpty)
+        #expect(store.siblings(of: nil, section: .pinned, in: space.id).items.map(\.id).contains(member.id))
+        #expect(store.children(of: nil, section: .pinned, in: space.id).map(\.id).contains(child.id))
+        #expect(store.item(child.id)?.parentID == folderID)
+
+        var split = SidebarItem(
+            id: splitID,
+            spaceID: space.id,
+            section: .pinned,
+            kind: .split,
+            title: "Early",
+            sortKey: "m",
+            createdAt: created
+        )
+        split.modifiedAt = created
+        store.applyRemote(upserts: RemoteLibraryUpdate(items: [split]), deletions: [])
+        #expect(store.item(splitID)?.isSplit == true)
+        #expect(store.splitMembers(of: splitID).map(\.id) == [member.id])
+        #expect(store.children(of: nil, section: .pinned, in: space.id).map(\.id).contains(member.id) == false)
+        #expect(store.children(of: nil, section: .pinned, in: space.id).map(\.id).contains(splitID))
+        #expect(store.item(member.id)?.parentID == splitID)
     }
 
     // MARK: Browser model

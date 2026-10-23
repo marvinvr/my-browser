@@ -2,7 +2,8 @@ import AppKit
 
 extension BrowserModel {
     func togglePictureInPicture(_ itemID: UUID? = nil) {
-        let id = itemID ?? selectedItemID
+        // A selected split's sidebar id is the container. Picture in Picture follows the focused pane.
+        let id = itemID ?? selectedTab?.id
         guard let id, let tab = tabs[id], tab.showsPictureInPictureButton else { return }
         let active = tab.isPictureInPictureActive || pictureInPictureSession?.tabID == id
         let (session, effects) = PictureInPicturePolicy.toggle(
@@ -97,7 +98,7 @@ extension BrowserModel {
             )
             applyPictureInPicture(session: session, effects: effects)
         }
-        if tab.id == selectedItemID {
+        if tab.id == selectedTab?.id {
             refreshNavigationState()
         }
     }

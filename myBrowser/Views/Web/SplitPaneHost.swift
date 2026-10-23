@@ -113,9 +113,11 @@ private struct PanePill: View {
             pillButton("arrow.up.right.square", help: "Separate", enabled: true, action: state.onSeparate)
             pillButton("xmark", help: "Close Pane", enabled: true, action: state.onClose)
         }
-        .padding(.horizontal, 3)
-        .padding(.vertical, 2)
+        .padding(.horizontal, 2)
+        .padding(.vertical, 1)
         .glassEffect(.regular, in: Capsule())
+        // Hug the controls. A hosting view that takes the pane width keeps them centered.
+        .fixedSize()
         .opacity(state.visible ? 1 : 0)
         .animation(.easeOut(duration: 0.16), value: state.visible)
     }
@@ -128,12 +130,12 @@ private struct PanePill: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 11, weight: .semibold))
-                .frame(width: 24, height: 22)
+                .font(.system(size: 9, weight: .medium))
+                .frame(width: 16, height: 16)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.primary)
+        .foregroundStyle(.secondary)
         .opacity(enabled ? 1 : 0.28)
         .disabled(!enabled)
         .help(help)
@@ -210,7 +212,10 @@ final class SplitPaneContainer: NSView {
 
     override func layout() {
         super.layout()
-        webView?.frame = bounds
+        placePill()
+        // A fullscreen video's window is not this pane. Resizing it here would pull it back.
+        guard let webView, webView.window === window else { return }
+        webView.frame = bounds
     }
 
     func apply(split: Bool, focused: Bool, hovered: Bool, title: String) {
@@ -237,15 +242,30 @@ final class SplitPaneContainer: NSView {
     private func ensurePill() {
         guard pillHost == nil, let pillState else { return }
         let host = PillHostingView(rootView: PanePill(state: pillState))
-        host.translatesAutoresizingMaskIntoConstraints = false
+        // Frame, not constraints. A wide hosting view pinned on its trailing edge
+        // still centers the controls in the pane.
+        host.translatesAutoresizingMaskIntoConstraints = true
         host.sizingOptions = [.intrinsicContentSize]
+        host.setContentHuggingPriority(.required, for: .horizontal)
+        host.setContentHuggingPriority(.required, for: .vertical)
         host.passesThrough = true
         addSubview(host)
-        NSLayoutConstraint.activate([
-            host.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            host.centerXAnchor.constraint(equalTo: centerXAnchor),
-        ])
         pillHost = host
+        placePill()
+    }
+
+    /// Top trailing corner, inset 6pt. The container is flipped, so y grows downward.
+    private func placePill() {
+        guard let pillHost, bounds.width > 1, bounds.height > 1 else { return }
+        pillHost.layoutSubtreeIfNeeded()
+        var size = pillHost.fittingSize
+        if size.width < 8 || size.height < 8 || size.width > 160 {
+            let intrinsic = pillHost.intrinsicContentSize
+            if intrinsic.width >= 8, intrinsic.width <= 160 { size = intrinsic }
+        }
+        let width = min(max(size.width, 8), min(160, bounds.width - 12))
+        let height = min(max(size.height, 8), min(40, bounds.height - 12))
+        pillHost.frame = CGRect(x: bounds.maxX - width - 6, y: 6, width: width, height: height)
     }
 
     private func applyChrome(animated: Bool) {

@@ -166,6 +166,37 @@ final class SessionStore {
     }
 }
 
+/// `[UUID: Value]` on disk is either an alternating array (what `JSONEncoder` writes) or a JSON object with UUID string keys (what an empty `{}` and some older files are).
+private nonisolated struct UUIDKeyedValues<Value: Decodable>: Decodable {
+    var values: [UUID: Value]
+
+    init(from decoder: Decoder) throws {
+        if var pairs = try? decoder.unkeyedContainer() {
+            var values: [UUID: Value] = [:]
+            while !pairs.isAtEnd {
+                let id = try pairs.decode(UUID.self)
+                values[id] = try pairs.decode(Value.self)
+            }
+            self.values = values
+            return
+        }
+        let object = try decoder.container(keyedBy: JSONObjectKey.self)
+        var values: [UUID: Value] = [:]
+        for key in object.allKeys {
+            guard let id = UUID(uuidString: key.stringValue) else { continue }
+            values[id] = try object.decode(Value.self, forKey: key)
+        }
+        self.values = values
+    }
+}
+
+private nonisolated struct JSONObjectKey: CodingKey {
+    var stringValue: String
+    var intValue: Int?
+    init?(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { nil }
+}
+
 nonisolated private struct SessionSnapshot: Codable, Sendable {
     var schemaVersion: Int
     var selectedSpaceID: UUID?
@@ -216,13 +247,14 @@ nonisolated private struct SessionSnapshot: Codable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
         selectedSpaceID = try container.decodeIfPresent(UUID.self, forKey: .selectedSpaceID)
-        selectedItemBySpace = try container.decodeIfPresent([UUID: UUID].self, forKey: .selectedItemBySpace) ?? [:]
-        interactionStates = try container.decodeIfPresent([UUID: Data].self, forKey: .interactionStates) ?? [:]
+        selectedItemBySpace = try container.decodeIfPresent(UUIDKeyedValues<UUID>.self, forKey: .selectedItemBySpace)?.values ?? [:]
+        interactionStates = try container.decodeIfPresent(UUIDKeyedValues<Data>.self, forKey: .interactionStates)?.values ?? [:]
         closedTabs = try container.decodeIfPresent([SessionStore.ClosedTab].self, forKey: .closedTabs) ?? []
         isSidebarVisible = try container.decodeIfPresent(Bool.self, forKey: .isSidebarVisible) ?? true
         // Older session files predate split focus and the archive. Missing keys stay empty.
-        focusedPaneBySplit = try container.decodeIfPresent([UUID: UUID].self, forKey: .focusedPaneBySplit) ?? [:]
-        lastActiveAt = try container.decodeIfPresent([UUID: Date].self, forKey: .lastActiveAt) ?? [:]
+        // UUID maps accept the encoder's array form and a JSON object (`{}` included).
+        focusedPaneBySplit = try container.decodeIfPresent(UUIDKeyedValues<UUID>.self, forKey: .focusedPaneBySplit)?.values ?? [:]
+        lastActiveAt = try container.decodeIfPresent(UUIDKeyedValues<Date>.self, forKey: .lastActiveAt)?.values ?? [:]
         archivedTabs = try container.decodeIfPresent([SessionStore.ArchivedTab].self, forKey: .archivedTabs) ?? []
     }
 

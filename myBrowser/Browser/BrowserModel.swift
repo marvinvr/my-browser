@@ -257,6 +257,14 @@ final class BrowserModel {
             extensions?.tabActivated(focused, previous: previous)
         }
         refreshNavigationState()
+        // Moving between panes that are still on screen must not send the other pane to Picture in Picture.
+        // Leaving a tab that this split does not show still does.
+        let previousStillVisible = previous.map { tab in members.contains { $0.id == tab.id } } ?? false
+        if previousStillVisible {
+            pictureInPictureForegroundID = focus
+        } else {
+            syncPictureInPictureForeground()
+        }
     }
 
     /// Stamps `itemID` as viewed. A split also stamps its unpinned panes, which stay on screen while that row is selected.
@@ -388,6 +396,10 @@ final class BrowserModel {
                 ))
             }
             session.lastActiveAt[item.id] = nil
+            session.interactionStates[item.id] = nil
+            library.deleteItem(item.id)
+        } else if item.url == nil {
+            // A blank pane opened into a pin has no home URL. Unloading it would leave "New Tab" in the row.
             session.interactionStates[item.id] = nil
             library.deleteItem(item.id)
         } else {

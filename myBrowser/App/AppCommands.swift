@@ -48,6 +48,8 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(after: .sidebar) {
+            SplitAxisCommand(model: model)
+            Divider()
             Button("Downloads") { model.toggleDownloadsPage() }
                 .keyboardShortcut("j", modifiers: [.command, .shift])
             Divider()
@@ -84,12 +86,16 @@ struct AppCommands: Commands {
                 .keyboardShortcut("s", modifiers: [.command, .control])
             Button("Separate Pane") { model.separateFocusedPane() }
                 .keyboardShortcut("-", modifiers: [.command, .shift])
+                .disabled(!model.canSeparatePane)
             Button("Swap Panes") { model.swapFocusedPanes() }
                 .keyboardShortcut("\\", modifiers: [.command, .shift])
+                .disabled(!model.canSwapPanes)
             Button("Focus Next Pane") { model.focusAdjacentPane(offset: 1) }
                 .keyboardShortcut(.rightArrow, modifiers: [.control, .option])
+                .disabled(!model.canSeparatePane)
             Button("Focus Previous Pane") { model.focusAdjacentPane(offset: -1) }
                 .keyboardShortcut(.leftArrow, modifiers: [.control, .option])
+                .disabled(!model.canSeparatePane)
             Divider()
             Button("Next Space") { model.selectNextSpace() }
                 .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
@@ -108,21 +114,8 @@ enum NavigationCommands {
         func walk(_ menu: NSMenu) {
             var ownsNavigation = false
             for item in menu.items {
-                switch item.title {
-                case "Reload":
-                    item.isEnabled = model.canReload
+                if retarget(item, model: model) {
                     ownsNavigation = true
-                case "Back":
-                    item.isEnabled = model.canGoBack
-                    ownsNavigation = true
-                case "Forward":
-                    item.isEnabled = model.canGoForward
-                    ownsNavigation = true
-                case "Enter Picture in Picture", "Exit Picture in Picture":
-                    item.isEnabled = model.canPictureInPicture
-                    ownsNavigation = true
-                default:
-                    break
                 }
                 if let submenu = item.submenu {
                     walk(submenu)
@@ -134,33 +127,67 @@ enum NavigationCommands {
         }
         walk(menu)
     }
+
+    /// Points the item at `NavigationMenuFixer` so a shortcut reads the live model.
+    /// SwiftUI's `disabled` flag goes stale, and a live shortcut would still fire.
+    @discardableResult
+    static func retarget(_ item: NSMenuItem, model: BrowserModel) -> Bool {
+        switch item.title {
+        case "Reload":
+            item.isEnabled = model.canReload
+        case "Back":
+            item.isEnabled = model.canGoBack
+        case "Forward":
+            item.isEnabled = model.canGoForward
+        case "Enter Picture in Picture", "Exit Picture in Picture":
+            item.title = model.pictureInPictureActive ? "Exit Picture in Picture" : "Enter Picture in Picture"
+            item.isEnabled = model.canPictureInPicture
+        case "Separate Pane":
+            item.isEnabled = model.canSeparatePane
+        case "Swap Panes":
+            item.isEnabled = model.canSwapPanes
+        case "Focus Next Pane", "Focus Previous Pane":
+            item.isEnabled = model.canSeparatePane
+        case "Stack Vertically", "Side by Side":
+            item.title = model.splitAxisMenuTitle
+            item.isEnabled = model.canToggleSplitAxis
+        default:
+            return false
+        }
+        item.target = NavigationMenuFixer.shared
+        item.action = #selector(NavigationMenuFixer.performItem(_:))
+        return true
+    }
 }
 
 @MainActor
 final class NavigationMenuFixer: NSObject, NSMenuDelegate {
     static let shared = NavigationMenuFixer()
-    private var prior: NSMenuDelegate?
+    /// One prior delegate per menu. The View menu and the Tabs menu both install this fixer.
+    private var priors: [ObjectIdentifier: NSObject] = [:]
     private weak var model: BrowserModel?
 
     func install(on menu: NSMenu, model: BrowserModel) {
         self.model = model
         guard menu.delegate !== self else { return }
-        prior = menu.delegate
+        if let prior = menu.delegate as? NSObject {
+            priors[ObjectIdentifier(menu)] = prior
+        }
         menu.delegate = self
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        prior?.menuNeedsUpdate?(menu)
+        prior(of: menu)?.menuNeedsUpdate?(menu)
         reapply(menu)
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        prior?.menuWillOpen?(menu)
+        prior(of: menu)?.menuWillOpen?(menu)
         reapply(menu)
     }
 
     func menuDidClose(_ menu: NSMenu) {
-        prior?.menuDidClose?(menu)
+        prior(of: menu)?.menuDidClose?(menu)
     }
 
     /// `menu.update()` validates each item against its target and puts SwiftUI's stale
@@ -173,6 +200,12 @@ final class NavigationMenuFixer: NSObject, NSMenuDelegate {
         case "Forward": return model?.canGoForward == true
         case "Enter Picture in Picture", "Exit Picture in Picture":
             return model?.canPictureInPicture == true
+        case "Separate Pane", "Focus Next Pane", "Focus Previous Pane":
+            return model?.canSeparatePane == true
+        case "Swap Panes":
+            return model?.canSwapPanes == true
+        case "Stack Vertically", "Side by Side":
+            return model?.canToggleSplitAxis == true
         default: return true
         }
     }
@@ -184,24 +217,23 @@ final class NavigationMenuFixer: NSObject, NSMenuDelegate {
         case "Forward": model?.selectedTab?.goForward()
         case "Enter Picture in Picture", "Exit Picture in Picture":
             model?.togglePictureInPicture()
+        case "Separate Pane": model?.separateFocusedPane()
+        case "Swap Panes": model?.swapFocusedPanes()
+        case "Focus Next Pane": model?.focusAdjacentPane(offset: 1)
+        case "Focus Previous Pane": model?.focusAdjacentPane(offset: -1)
+        case "Stack Vertically", "Side by Side": model?.toggleSelectedSplitAxis()
         default: break
         }
+    }
+
+    private func prior(of menu: NSMenu) -> NSMenuDelegate? {
+        priors[ObjectIdentifier(menu)] as? NSMenuDelegate
     }
 
     private func reapply(_ menu: NSMenu) {
         guard let model else { return }
         for item in menu.items {
-            switch item.title {
-            case "Reload": item.isEnabled = model.canReload
-            case "Back": item.isEnabled = model.canGoBack
-            case "Forward": item.isEnabled = model.canGoForward
-            case "Enter Picture in Picture", "Exit Picture in Picture":
-                item.title = model.pictureInPictureActive ? "Exit Picture in Picture" : "Enter Picture in Picture"
-                item.isEnabled = model.canPictureInPicture
-            default: continue
-            }
-            item.target = self
-            item.action = #selector(performItem(_:))
+            NavigationCommands.retarget(item, model: model)
         }
     }
 }
@@ -231,6 +263,16 @@ extension FocusedValues {
     var sidebarIsVisible: Bool? {
         get { self[SidebarVisibleKey.self] }
         set { self[SidebarVisibleKey.self] = newValue }
+    }
+}
+
+/// View menu. No shortcut: ⌘S is the sidebar, and ⌘⌥ arrows switch spaces.
+private struct SplitAxisCommand: View {
+    var model: BrowserModel
+
+    var body: some View {
+        Button(model.splitAxisMenuTitle) { model.toggleSelectedSplitAxis() }
+            .disabled(!model.canToggleSplitAxis)
     }
 }
 

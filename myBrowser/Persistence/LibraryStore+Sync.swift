@@ -24,10 +24,29 @@ extension LibraryStore {
     /// `onChange` is cleared for the call (`applyingRemote`) so the sync engine does not upload the same rows back.
     /// Deletions run after upserts. A `.tabs` row is left untouched.
     /// An invalid `sortKey` is replaced with a key after the last valid sibling.
+    ///
+    /// A split that already existed reconciles when one of its members is deleted or tombstoned.
+    /// A container that arrives in this batch with only some of its members is not dissolved.
     func applyRemote(upserts: RemoteLibraryUpdate, deletions: Set<UUID>) {
+        let existingLiveSplits = Set(items.values.compactMap { item -> UUID? in
+            guard item.kind == .split, item.deletedAt == nil else { return nil }
+            return item.id
+        })
+        var splitsLosingAMember: Set<UUID> = []
+        func noteMemberLoss(_ item: SidebarItem?) {
+            guard let item, item.kind == .site, let parentID = item.parentID else { return }
+            splitsLosingAMember.insert(parentID)
+        }
+        for id in deletions {
+            noteMemberLoss(items[id])
+        }
+        for item in upserts.items where item.section != .tabs && item.deletedAt != nil {
+            noteMemberLoss(item)
+            noteMemberLoss(items[item.id])
+        }
+
         let savedChangeHandler = onChange
         onChange = nil
-        defer { onChange = savedChangeHandler }
 
         var changed = false
         for profile in upserts.profiles {
@@ -54,9 +73,13 @@ extension LibraryStore {
             if spaces.removeValue(forKey: id) != nil { changed = true }
             if items.removeValue(forKey: id) != nil { changed = true }
         }
+        onChange = savedChangeHandler
         if changed {
             refreshSiblingLists()
             scheduleSave()
+        }
+        for splitID in splitsLosingAMember where existingLiveSplits.contains(splitID) {
+            reconcileSplit(splitID)
         }
     }
 
@@ -135,7 +158,7 @@ extension LibraryStore {
 
     /// A valid key after the last live sibling of `item` (same space, section, and parent).
     private func sortKeyAfterLastSibling(of item: SidebarItem) -> String {
-        let last = children(of: item.parentID, section: item.section, in: item.spaceID)
+        let last = storedChildren(of: item.parentID, section: item.section, in: item.spaceID)
             .last { $0.id != item.id && SortKey.isValid($0.sortKey) }
         return SortKey.between(last?.sortKey, nil)
     }

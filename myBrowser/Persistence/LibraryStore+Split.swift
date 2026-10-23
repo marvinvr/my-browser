@@ -14,14 +14,15 @@ extension LibraryStore {
         return parent
     }
 
-    /// Groups 2...4 sites from the same space into one split.
+    /// Groups 2...4 sites from the same space and section into one split.
     ///
-    /// The split takes the first site's section, folder (pinned only), and sort key.
-    /// Every id must be a live site in that space, not a favorite, and not already in a split.
-    /// Members are reparented in `tabIDs` order and share the anchor's section. Returns nil
-    /// when the ids cannot form a split. An empty `axis` (and `.horizontal`) stores no axis.
+    /// The split takes `anchoredOn`'s section, folder (pinned only), and sort key.
+    /// When `anchoredOn` is nil, the first id is the anchor. Every id must be a live site
+    /// in that space and section, not a favorite, and not already in a split. A mix of
+    /// sections returns nil; members are not moved into the anchor's section. Members are
+    /// reparented in `tabIDs` order. An empty `axis` (and `.horizontal`) stores no axis.
     @discardableResult
-    func createSplit(tabIDs: [UUID], axis: SidebarItem.SplitAxis? = nil) -> SidebarItem? {
+    func createSplit(tabIDs: [UUID], axis: SidebarItem.SplitAxis? = nil, anchoredOn anchorID: UUID? = nil) -> SidebarItem? {
         var ordered: [UUID] = []
         var seen: Set<UUID> = []
         for id in tabIDs where seen.insert(id).inserted {
@@ -31,11 +32,10 @@ extension LibraryStore {
         let sites = ordered.compactMap { item($0) }
         guard sites.count == ordered.count else { return nil }
         guard sites.allSatisfy({ $0.kind == .site }) else { return nil }
-        guard sites.allSatisfy({ $0.section != .favorites }) else { return nil }
         guard sites.allSatisfy({ splitContainer(of: $0.id) == nil }) else { return nil }
-        let anchor = sites[0]
+        guard let anchor = sites.first(where: { $0.id == (anchorID ?? ordered[0]) }) else { return nil }
         guard anchor.section == .pinned || anchor.section == .tabs else { return nil }
-        guard sites.allSatisfy({ $0.spaceID == anchor.spaceID }) else { return nil }
+        guard sites.allSatisfy({ $0.section == anchor.section && $0.spaceID == anchor.spaceID }) else { return nil }
         guard space(anchor.spaceID) != nil else { return nil }
 
         let parentID = splitParent(for: anchor)
@@ -71,12 +71,14 @@ extension LibraryStore {
     /// Inserts a loose site into a split at `index` (0 = leftmost). Out-of-range indexes clamp.
     ///
     /// Already-member sites are reordered instead. Returns nil when the split is missing,
-    /// full (4), or the site is in another space, another split, or not a site. Adding a
-    /// member clears every fraction back to equal widths.
+    /// full (4), or the site is in another space, another section, another split, or not a site.
+    /// A different section is rejected rather than rewritten. Adding a member clears every
+    /// fraction back to equal widths.
     @discardableResult
     func addToSplit(tabID: UUID, splitID: UUID, at index: Int) -> SidebarItem? {
         guard let split = item(splitID), split.isSplit else { return nil }
         guard let tab = item(tabID), tab.kind == .site, tab.spaceID == split.spaceID else { return nil }
+        guard tab.section == split.section else { return nil }
         if tab.parentID == splitID {
             movePane(tabID: tabID, to: index)
             return item(tabID)
