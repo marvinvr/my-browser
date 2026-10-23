@@ -10,6 +10,7 @@ struct MyBrowserApp: App {
             MainWindowView()
                 .environment(appDelegate.model)
                 .environment(appDelegate.extensions)
+                .environment(appDelegate.passkeys)
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
@@ -19,6 +20,7 @@ struct MyBrowserApp: App {
             SettingsView()
                 .environment(appDelegate.model)
                 .environment(appDelegate.extensions)
+                .environment(appDelegate.passkeys)
         }
     }
 }
@@ -30,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model: BrowserModel
     let sync: SyncController
     let extensions: ExtensionManager
+    let passkeys = PasskeyBroker()
     let updater = Updater()
 
     override init() {
@@ -52,6 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppIconApplier.apply()
         updater.start()
+        model.startArchiveMonitoring()
+        passkeys.requestAccessIfEntitled()
         #if DEBUG
         applyDebugAppearance()
         applyDebugAddressBar()
@@ -59,11 +64,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_COMMAND_BAR"] == "1" {
             model.showCommandBar(.newTab)
         }
+        if let raw = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_OPEN_URL"],
+           let url = URL(string: raw),
+           let scheme = url.scheme?.lowercased(),
+           scheme == "http" || scheme == "https" {
+            model.openInCurrentTab(url)
+        }
         if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SETTINGS"] == "1" {
             openSettingsForDebug()
         }
+        if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_ARCHIVE"] == "1" {
+            seedDebugArchive()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                self.model.isPresentingArchive = true
+            }
+        }
+        if let raw = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_WINDOW_X"], let x = Double(raw) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                for window in NSApp.windows where window.canBecomeKey {
+                    var frame = window.frame
+                    frame.origin.x = x
+                    window.setFrame(frame, display: true)
+                }
+            }
+        }
         installDebugExtensionsIfRequested()
+        // On the main thread, not a later MainActor task: distributed-notification observers
+        // only fire on the thread that registered them.
         DebugSnapshot.install(model: model)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            Task { @MainActor in
+                await self.extensions.loadEnabledExtensions()
+                DebugSnapshot.reregister()
+            }
+        }
         installDebugToggle()
         #endif
     }
@@ -89,7 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     await extensions.installFromChromeWebStore(storeID)
                 }
                 if let filePath, !filePath.isEmpty {
-                    await extensions.install(from: URL(fileURLWithPath: filePath))
+                    let preferred = env["MYBROWSER_DEBUG_EXTENSION_ID"]
+                    await extensions.install(from: URL(fileURLWithPath: filePath), preferredID: preferred)
                 }
                 if wantsPopup {
                     try? await Task.sleep(for: .milliseconds(500))
@@ -169,6 +204,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if empty {
                 model.deleteSpace(space.id)
             }
+        }
+    }
+
+    /// Sample archived tabs for a snapshot. Only when the library is a throwaway directory.
+    private func seedDebugArchive() {
+        guard ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_LIBRARY"] != nil else { return }
+        guard model.session.archivedTabs.isEmpty else { return }
+        let spaceID = model.selectedSpaceID
+        let now = Date.now
+        let samples: [(String, String, TimeInterval)] = [
+            ("The Verge", "https://www.theverge.com", -18 * 86_400),
+            ("Wikipedia", "https://en.wikipedia.org/wiki/MacOS", -6 * 86_400),
+            ("Swift Forums", "https://forums.swift.org", -2 * 86_400),
+        ]
+        for (title, raw, age) in samples {
+            guard let url = URL(string: raw) else { continue }
+            let item = SidebarItem(
+                spaceID: spaceID,
+                section: .tabs,
+                kind: .site,
+                title: title,
+                url: url,
+                sortKey: "a0",
+                createdAt: now.addingTimeInterval(age)
+            )
+            model.session.archivedTabs.append(SessionStore.ArchivedTab(
+                item: item,
+                interactionState: nil,
+                archivedAt: now.addingTimeInterval(age),
+                lastActiveAt: now.addingTimeInterval(age - 3_600)
+            ))
         }
     }
 
@@ -316,8 +382,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         restoreDebugAddressBar()
         #endif
+        extensions.stopNativeHosts()
         extensions.save()
         model.saveState()
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let pages = urls.filter { url in
+            guard let scheme = url.scheme?.lowercased() else { return false }
+            return scheme == "http" || scheme == "https"
+        }
+        guard !pages.isEmpty else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        for url in pages.dropLast() {
+            model.openInNewTab(url, inBackground: true)
+        }
+        if let last = pages.last {
+            model.openInNewTab(last)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

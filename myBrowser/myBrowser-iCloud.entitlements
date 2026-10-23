@@ -8,6 +8,11 @@
 	     and this file is the Developer ID release set. -->
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
+	<!-- Do not add com.apple.developer.web-browser.public-key-credential here.
+	     Switching Release to this file would SIGKILL launch (exit 137) unless the
+	     Developer ID profile also grants that key. When both iCloud and passkeys
+	     are approved, add the key to this file and use a profile that includes both.
+	     See docs/architecture.md, Passkeys. -->
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
 		<string>iCloud.ch.marvinvr.mybrowser</string>

@@ -6,5 +6,10 @@
 	     Not sandboxed, so no provisioning profile is required for this entitlement. -->
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
+	<!-- Do not add com.apple.developer.web-browser.public-key-credential here.
+	     scripts/release.sh signs this file. On macOS 27 an ad-hoc hardened-runtime
+	     binary with that key and no provisioning profile is SIGKILL (exit 137)
+	     before main. The switch-on file is myBrowser-passkeys.entitlements.
+	     See docs/architecture.md, Passkeys. -->
 </dict>
 </plist>

@@ -56,6 +56,8 @@ final class CommandBarModel {
         /// A favorite, pin or tab in the current space.
         case tab(SidebarItem)
         case action(Action)
+        /// Opens the Archived Tabs list.
+        case archivedTabs
 
         var id: String {
             switch self {
@@ -63,6 +65,7 @@ final class CommandBarModel {
             case .search: "search"
             case .tab(let item): "tab-\(item.id.uuidString)"
             case .action(let action): "action-\(action.rawValue)"
+            case .archivedTabs: "archived-tabs"
             }
         }
 
@@ -71,6 +74,7 @@ final class CommandBarModel {
             case .open(let title, _, _), .search(let title, _): title
             case .tab(let item): item.title
             case .action(let action): action.title
+            case .archivedTabs: "Archived Tabs"
             }
         }
 
@@ -78,7 +82,7 @@ final class CommandBarModel {
             switch self {
             case .open(_, let url, _), .search(_, let url): url
             case .tab(let item): item.url
-            case .action: nil
+            case .action, .archivedTabs: nil
             }
         }
     }
@@ -151,6 +155,9 @@ final class CommandBarModel {
         case .action(let action):
             let keepOpen = action == .openInSplit && browser.openInSplitView()
             if !keepOpen { browser.hideCommandBar() }
+        case .archivedTabs:
+            browser.isPresentingArchive = true
+            browser.hideCommandBar()
         }
     }
 
@@ -221,6 +228,9 @@ final class CommandBarModel {
                 let url = engine.searchURL(for: text)
                 next.append(.search(title: "Search \(engine.displayName) for '\(text)'", url: url))
             }
+            if Self.wantsArchivedTabs(trimmed) {
+                next.append(.archivedTabs)
+            }
             if case .search = next.first {
                 let actions = Self.matchingActions(query: trimmed, browser: browser)
                 let actionRoom = max(0, Self.maxVisibleRows - next.count)
@@ -261,6 +271,14 @@ final class CommandBarModel {
         return browser.library.items.values.filter { item in
             item.deletedAt == nil && item.spaceID == spaceID && item.kind == .site
         }
+    }
+
+    /// "archive", "archived", "archived tabs", and a prefix of that title ("arch").
+    static func wantsArchivedTabs(_ query: String) -> Bool {
+        let folded = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard folded.count >= 3 else { return false }
+        if folded.contains("archive") { return true }
+        return "archived tabs".hasPrefix(folded)
     }
 
     private func openTabs() -> [SidebarItem] {

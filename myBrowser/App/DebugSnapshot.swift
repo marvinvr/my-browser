@@ -1,5 +1,6 @@
 #if DEBUG
 import AppKit
+import Vision
 import WebKit
 
 /// DEBUG-only window capture. Draws the window in-process. Prefer `screencapture` when the terminal can record the screen; glass effects do not appear in this bitmap.
@@ -12,21 +13,104 @@ enum DebugSnapshot {
     static func install(model: BrowserModel) {
         attachedModel = model
         guard relays.isEmpty else { return }
+        register(model: model)
+    }
+
+    /// Extension load stops distributed notifications from arriving. Register again afterwards.
+    static func reregister() {
+        let center = DistributedNotificationCenter.default()
+        for relay in relays {
+            center.removeObserver(relay)
+        }
+        relays.removeAll()
+        guard let model = attachedModel else { return }
+        register(model: model)
+    }
+
+    private static func register(model: BrowserModel) {
+        _ = model
         // `.capture` is the same shot as `.snapshot`. Snapshot scripts can use it when another
         // debug build is already listening for `.snapshot`.
         // A private channel so a second debug build does not write this process's window
         // over the requested path. Either env var is accepted.
-        var names = ["ch.marvinvr.mybrowser.debug.snapshot", "ch.marvinvr.mybrowser.debug.capture"]
+        // A private channel opts out of the shared names. Other debug builds post those
+        // during launch, and handling one inside didFinishLaunching crashes SwiftUI.
+        let privateChannel = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SNAPSHOT_CHANNEL"]
+        let privateName = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SNAPSHOT_NAME"]
+        var names: [String] = []
+        if (privateChannel == nil || privateChannel?.isEmpty == true),
+           (privateName == nil || privateName?.isEmpty == true) {
+            names = ["ch.marvinvr.mybrowser.debug.snapshot", "ch.marvinvr.mybrowser.debug.capture"]
+        }
         for key in ["MYBROWSER_DEBUG_SNAPSHOT_NAME", "MYBROWSER_DEBUG_SNAPSHOT_CHANNEL"] {
-            if let extra = ProcessInfo.processInfo.environment[key], !extra.isEmpty {
+            if let extra = ProcessInfo.processInfo.environment[key], !extra.isEmpty, !names.contains(extra) {
                 names.append(extra)
             }
         }
         for name in names {
             relays.append(observe(name) { note in
-                let path = note.userInfo?["path"] as? String
-                let window = note.userInfo?["window"] as? String
-                let windows = note.userInfo?["windows"] as? String
+                let info = note.userInfo
+                if let ack = info?["ack"] as? String {
+                    Self.writeDebug("ok", to: ack)
+                }
+                if let script = info?["script"] as? String, let path = info?["path"] as? String {
+                    Self.writeDebug("pending", to: path)
+                    let popup = (info?["popupScript"] as? String) == "1"
+                    Task { @MainActor in
+                        let result: String
+                        let webView = popup
+                            ? DebugSnapshot.extensionPopupWebView()
+                            : attachedModel?.selectedTab?.webView
+                        if let webView {
+                            result = await DebugSnapshot.evalOrTimeout(webView, script: script)
+                        } else {
+                            result = popup ? "error: no popup" : "error: no web view"
+                        }
+                        Self.writeDebug(result, to: path)
+                    }
+                    return
+                }
+                if let raw = info?["url"] as? String, let url = URL(string: raw),
+                   let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+                    Task { @MainActor in
+                        attachedModel?.openInCurrentTab(url)
+                    }
+                    return
+                }
+                if info?["popup"] as? String == "1" {
+                    let extensionID = (info?["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                        ?? "aeblfdkhhhdcdjpifhhbdiojplfjncoa"
+                    Task { @MainActor in
+                        guard let model = attachedModel, let profileID = model.selectedSpace?.profileID else { return }
+                        model.extensions?.performAction(extensionID: extensionID, profileID: profileID, tab: model.selectedTab)
+                    }
+                    return
+                }
+                if info?["settings"] as? String == "1" {
+                    Task { @MainActor in
+                        NSApp.activate(ignoringOtherApps: true)
+                        if let item = Self.menuItem(containing: "Settings") ?? Self.menuItem(containing: "Preferences") {
+                            NSApp.sendAction(item.action ?? Selector(("showSettingsWindow:")), to: item.target, from: item)
+                        } else {
+                            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                        }
+                    }
+                    return
+                }
+                if let mode = (info?["appearance"] as? String)?.lowercased() {
+                    Task { @MainActor in
+                        switch mode {
+                        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+                        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+                        default: break
+                        }
+                        attachedModel?.selectedTab?.refreshThemeColor()
+                    }
+                    return
+                }
+                let path = (info?["path"] as? String).map(Self.debugPath)
+                let window = info?["window"] as? String
+                let windows = info?["windows"] as? String
                 Task { @MainActor in
                     if windows == "all" {
                         DebugSnapshot.captureOwnedWindows(to: path)
@@ -35,6 +119,11 @@ enum DebugSnapshot {
                     }
                 }
             })
+        }
+        if let library = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_LIBRARY"], !library.isEmpty {
+            let note = names.joined(separator: "\n") + "\n"
+            let url = URL(fileURLWithPath: library, isDirectory: true).appendingPathComponent("debug-channels.txt")
+            try? note.write(to: url, atomically: true, encoding: .utf8)
         }
         relays.append(observe("ch.marvinvr.mybrowser.debug.open") { note in
             guard Self.addressedToThisProcess(note) else { return }
@@ -94,7 +183,7 @@ enum DebugSnapshot {
         relays.append(observe("ch.marvinvr.mybrowser.debug.eval") { note in
             guard Self.addressedToThisProcess(note) else { return }
             let script = note.userInfo?["script"] as? String
-            let path = note.userInfo?["path"] as? String
+            let path = (note.userInfo?["path"] as? String).map(Self.debugPath)
             Task { @MainActor in
                 guard let script, let path, path.hasPrefix("/") else { return }
                 let result: String
@@ -118,6 +207,13 @@ enum DebugSnapshot {
             let interval = Self.intValue(note.userInfo?["interval"]) ?? 16
             Task { @MainActor in
                 await DebugSnapshot.recordFrames(directory: dir, count: count, interval: interval)
+            }
+        })
+        relays.append(observe("ch.marvinvr.mybrowser.debug.popup") { note in
+            guard Self.addressedToThisProcess(note) else { return }
+            let path = note.userInfo?["path"] as? String
+            Task { @MainActor in
+                DebugSnapshot.captureOpenArchivePopup(to: path)
             }
         })
         relays.append(observe("ch.marvinvr.mybrowser.debug.command") { note in
@@ -274,6 +370,69 @@ enum DebugSnapshot {
         let env = ProcessInfo.processInfo.environment
         let channels = ["MYBROWSER_DEBUG_SNAPSHOT_CHANNEL", "MYBROWSER_DEBUG_SNAPSHOT_NAME"].compactMap { env[$0] }
         return DebugNoteRouting.accepts(noteChannel: note.userInfo?["channel"] as? String, processChannels: channels)
+    }
+
+    private static func menuItem(containing needle: String) -> NSMenuItem? {
+        func walk(_ menu: NSMenu?) -> NSMenuItem? {
+            for item in menu?.items ?? [] {
+                if item.title.localizedCaseInsensitiveContains(needle) { return item }
+                if let found = walk(item.submenu) { return found }
+            }
+            return nil
+        }
+        return walk(NSApp.mainMenu)
+    }
+
+    /// `{pid}` in a debug path becomes this process id, so several debug builds do not share one file.
+    nonisolated private static func debugPath(_ path: String) -> String {
+        path.replacingOccurrences(of: "{pid}", with: String(ProcessInfo.processInfo.processIdentifier))
+    }
+
+    nonisolated private static func writeDebug(_ text: String, to path: String) {
+        let path = debugPath(path)
+        guard path.hasPrefix("/") else { return }
+        try? Data(text.utf8).write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    /// Page JavaScript can stall when an extension content script is busy. Always return.
+    @MainActor
+    private static func evalOrTimeout(_ webView: WKWebView, script: String) async -> String {
+        let once = OnceBox()
+        return await withCheckedContinuation { continuation in
+            Task { @MainActor in
+                let result: String
+                do {
+                    let value = try await webView.evaluateJavaScript(script)
+                    result = String(describing: value ?? "nil")
+                } catch {
+                    result = "error: \(error.localizedDescription)"
+                }
+                if once.claim() { continuation.resume(returning: result) }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                if once.claim() { continuation.resume(returning: "error: timed out") }
+            }
+        }
+    }
+
+    /// `takeSnapshot` can stall on a heavy extension page. Skip that web view and keep the chrome.
+    @MainActor
+    private static func snapshotOrTimeout(_ webView: WKWebView) async -> NSImage? {
+        let once = OnceBox()
+        let box = SnapshotImageBox()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            Task { @MainActor in
+                let configuration = WKSnapshotConfiguration()
+                box.image = try? await webView.takeSnapshot(configuration: configuration)
+                if once.claim() { continuation.resume() }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 6_000_000_000)
+                if once.claim() { continuation.resume() }
+            }
+        }
+        return box.image
     }
 
     /// Selector observer with `.deliverImmediately`, so `userInfo` survives when the app is not frontmost.
@@ -454,8 +613,7 @@ enum DebugSnapshot {
         // cacheDisplay leaves WKWebView blank, including an extension popup's page.
         var pages: [(NSImage, NSRect)] = []
         for webView in webViews(in: content) where webView.bounds.width > 1 && webView.bounds.height > 1 {
-            let configuration = WKSnapshotConfiguration()
-            guard let shot = try? await webView.takeSnapshot(configuration: configuration) else { continue }
+            guard let shot = await snapshotOrTimeout(webView) else { continue }
             let frame = webView.convert(webView.bounds, to: content)
             pages.append((shot, imageRect(for: frame, in: content)))
         }
@@ -542,6 +700,22 @@ enum DebugSnapshot {
 
         guard let data = output.representation(using: .png, properties: [:]) else { return }
         try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    /// The extension action popover. Its page is not the selected tab.
+    private static func extensionPopupWebView() -> WKWebView? {
+        for window in NSApp.windows {
+            let identifier = window.identifier?.rawValue.lowercased() ?? ""
+            let title = window.title.lowercased()
+            let popup = identifier.contains("extension-popup")
+                || title.contains("extension popup")
+                || title == "1password"
+            guard popup, let content = window.contentView else { continue }
+            if let webView = webViews(in: content).first(where: { $0.bounds.width > 1 && $0.bounds.height > 1 }) {
+                return webView
+            }
+        }
+        return nil
     }
 
     private static func webViews(in view: NSView) -> [WKWebView] {
@@ -869,7 +1043,7 @@ enum DebugSnapshot {
             if hint == "settings" {
                 let settings = candidates.filter { window in
                     let area = window.frame.width * window.frame.height
-                    return window.frame.width < 700 && window.frame.height < 600 && area > 40_000
+                    return window.frame.width < 800 && window.frame.height < 780 && area > 40_000
                 }
                 if let match = settings.min(by: { $0.frame.width < $1.frame.width }) {
                     return match
@@ -880,7 +1054,390 @@ enum DebugSnapshot {
         return candidates.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
     }
 
+    /// Opens the Archive tabs popup and writes a PNG of the settings window with that menu.
+    /// SwiftUI draws the picker without an `NSPopUpButton`. The row is found by reading the
+    /// window, then a common-mode timer grabs the menu while it is tracking.
+    static func captureOpenArchivePopup(to path: String?) {
+        guard let path, path.hasPrefix("/") else { return }
+        guard let settings = settingsWindow() else {
+            logLine("archive settings window not found")
+            for window in NSApp.windows {
+                logLine("window title=\(window.title) id=\(window.identifier?.rawValue ?? "") frame=\(window.frame)")
+            }
+            return
+        }
+        if let raw = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_WINDOW_X"], let x = Double(raw) {
+            var frame = settings.frame
+            frame.origin.x = x
+            settings.setFrame(frame, display: true)
+        }
+        settings.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        guard let content = settings.contentView,
+              let local = viewRect(matching: "24 hours", in: content) else {
+            logLine("archive popup text not found in settings")
+            return
+        }
+        let button = settings.convertToScreen(content.convert(local, to: nil))
+        guard let prepared = settingsShot(settings) else {
+            logLine("archive settings raster failed")
+            return
+        }
+        pendingSettingsImage = prepared.image
+        pendingSettingsFrame = prepared.frame
+        pendingButtonFrame = button
+        logLine("archive popup text at \(button) flipped=\(content.isFlipped)")
+        let shot = PopupShot(path: path)
+        let timer = Timer(timeInterval: 0.55, repeats: false) { _ in
+            shot.fire()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        clickDown(settings, atScreen: button)
+    }
+
+    private static var pendingSettingsImage: NSImage?
+    private static var pendingSettingsFrame: NSRect = .zero
+    private static var pendingButtonFrame: NSRect = .zero
+
+    /// View rect of the first recognized line that contains `needle`.
+    private static func viewRect(matching needle: String, in view: NSView) -> NSRect? {
+        guard let image = raster(of: view),
+              let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              let cg = rep.cgImage else { return nil }
+        logLine("vision scanning \(Int(view.bounds.width))x\(Int(view.bounds.height))")
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .fast
+        request.usesLanguageCorrection = false
+        let handler = VNImageRequestHandler(cgImage: cg, orientation: .up, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            logLine("vision \(error.localizedDescription)")
+            return nil
+        }
+        let observations = request.results ?? []
+        let strings = observations.compactMap { $0.topCandidates(1).first?.string }
+        logLine("vision \(strings.joined(separator: " | "))")
+        guard let match = observations.first(where: { observation in
+            let text = observation.topCandidates(1).first?.string ?? ""
+            return text.localizedCaseInsensitiveContains(needle)
+        }) else { return nil }
+        let box = match.boundingBox
+        let bounds = view.bounds
+        let rect = NSRect(
+            x: box.minX * bounds.width,
+            y: box.minY * bounds.height,
+            width: max(box.width * bounds.width, 24),
+            height: max(box.height * bounds.height, 16)
+        )
+        guard view.isFlipped else { return rect }
+        return NSRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    private static func settingsShot(_ settings: NSWindow) -> (image: NSImage, frame: NSRect)? {
+        // cacheDisplay keeps the form. A window-server image of this window comes back blank here.
+        if let content = settings.contentView,
+           let image = raster(of: content),
+           let frame = screenFrame(of: content) {
+            return (image, frame)
+        }
+        guard let cg = cgWindowImage(settings.windowNumber) else { return nil }
+        return (NSImage(cgImage: cg, size: settings.frame.size), settings.frame)
+    }
+
+    private static func logLine(_ text: String) {
+        FileHandle.standardError.write(Data((text + "\n").utf8))
+    }
+
+    private static func settingsWindow() -> NSWindow? {
+        let windows = NSApp.windows.filter { $0.contentView != nil }
+        if let general = windows.first(where: { $0.title == "General" }) { return general }
+        return windows.first { window in
+            window.identifier?.rawValue.contains("Settings") == true
+        }
+    }
+
+    fileprivate static func writeOpenPopup(to path: String) {
+        guard let settings = settingsWindow(), let base = pendingSettingsImage else {
+            logLine("popup shot: settings window missing")
+            return
+        }
+        var shots: [(NSImage, NSRect)] = [(base, pendingSettingsFrame)]
+        let button = pendingButtonFrame
+        if button.width > 1, let menu = realMenuShot(besides: settings, near: button) {
+            shots.append(menu)
+            logLine("popup shot: real menu \(menu.1)")
+        } else if button.width > 1 {
+            let titles = TabArchiveInterval.allCases.map(\.label)
+            let selected = TabArchiveInterval.twentyFourHours.label
+            let menuImage = syntheticMenu(titles: titles, selected: selected, appearance: settings.effectiveAppearance)
+            let menuFrame = NSRect(
+                x: button.minX,
+                y: button.minY - menuImage.size.height - 4,
+                width: menuImage.size.width,
+                height: menuImage.size.height
+            )
+            shots.append((menuImage, menuFrame))
+            logLine("popup shot: synthetic menu \(menuFrame)")
+        }
+        guard let image = composite(shots) else { return }
+        writePNG(image, to: path)
+        pendingSettingsImage = nil
+        logLine("popup shot wrote \(path)")
+    }
+
+    fileprivate static func dismissPopup() {
+        if let settings = settingsWindow(),
+           let up = NSEvent.mouseEvent(
+            with: .leftMouseUp,
+            location: NSPoint(x: 8, y: 8),
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: settings.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 0
+           ) {
+            settings.sendEvent(up)
+        }
+        func postKey(_ type: NSEvent.EventType, keyDown: Bool) {
+            if let event = NSEvent.keyEvent(
+                with: type,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0,
+                context: nil,
+                characters: "\u{1b}",
+                charactersIgnoringModifiers: "\u{1b}",
+                isARepeat: false,
+                keyCode: 53
+            ) {
+                NSApp.postEvent(event, atStart: true)
+            }
+            CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: keyDown)?.post(tap: .cghidEventTap)
+        }
+        postKey(.keyDown, keyDown: true)
+        postKey(.keyUp, keyDown: false)
+    }
+
+    private static func clickDown(_ window: NSWindow, atScreen rect: NSRect) {
+        let point = window.convertPoint(fromScreen: NSPoint(x: rect.midX, y: rect.midY))
+        guard let down = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: point,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1
+        ) else { return }
+        window.sendEvent(down)
+        logLine("clicked popup at \(point)")
+    }
+
+    private static func realMenuShot(besides settings: NSWindow, near button: NSRect?) -> (NSImage, NSRect)? {
+        let menus = NSApp.windows.filter { window in
+            guard window !== settings, window.isVisible else { return false }
+            let frame = window.frame
+            guard frame.width >= 70, frame.width <= 460, frame.height >= 80, frame.height <= 380 else { return false }
+            guard let button else { return true }
+            let horizontallyNear = abs(frame.midX - button.midX) < 260
+            let verticallyNear = frame.maxY <= button.maxY + 12 && frame.minY >= button.minY - frame.height - 80
+            return horizontallyNear && verticallyNear
+        }
+        if let menu = menus.first {
+            if let content = menu.contentView, let image = raster(of: content), let frame = screenFrame(of: content) {
+                return (image, frame)
+            }
+            if let image = cgWindowImage(menu.windowNumber) {
+                return (NSImage(cgImage: image, size: menu.frame.size), menu.frame)
+            }
+        }
+        for item in ownedOnScreenWindows() where Int(item.number) != settings.windowNumber {
+            let frame = appKitFrame(fromAX: item.bounds)
+            guard frame.width >= 70, frame.width <= 460, frame.height >= 80, frame.height <= 380 else { continue }
+            if let button, abs(frame.midX - button.midX) > 260 { continue }
+            guard let image = cgWindowImage(Int(item.number)) else { continue }
+            return (NSImage(cgImage: image, size: frame.size), frame)
+        }
+        return nil
+    }
+
+    private static func ownedOnScreenWindows() -> [(number: UInt32, bounds: CGRect)] {
+        typealias CopyInfo = @convention(c) (UInt32, UInt32) -> Unmanaged<CFArray>?
+        guard let symbol = dlsym(dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_LAZY), "CGWindowListCopyWindowInfo") else {
+            return []
+        }
+        let copy = unsafeBitCast(symbol, to: CopyInfo.self)
+        guard let array = copy(1, 0)?.takeRetainedValue() else { return [] }
+        let pid = Int32(getpid())
+        guard let infos = array as? [[String: Any]] else { return [] }
+        var found: [(UInt32, CGRect)] = []
+        for info in infos {
+            guard (info["kCGWindowOwnerPID"] as? NSNumber)?.int32Value == pid else { continue }
+            guard let number = (info["kCGWindowNumber"] as? NSNumber)?.uint32Value, number > 0 else { continue }
+            guard let bounds = cgBounds(info["kCGWindowBounds"]) else { continue }
+            found.append((number, bounds))
+        }
+        return found
+    }
+
+    private static func cgBounds(_ value: Any?) -> CGRect? {
+        guard let dict = value as? [String: Any] else { return nil }
+        func number(_ key: String) -> CGFloat? {
+            (dict[key] as? NSNumber).map { CGFloat($0.doubleValue) }
+        }
+        guard let x = number("X"), let y = number("Y"), let width = number("Width"), let height = number("Height") else {
+            return nil
+        }
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    private static func appKitFrame(fromAX rect: CGRect) -> NSRect {
+        let primary = NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main
+        let top = primary?.frame.maxY ?? rect.maxY
+        return NSRect(x: rect.origin.x, y: top - rect.origin.y - rect.height, width: rect.width, height: rect.height)
+    }
+
+    private static func syntheticMenu(titles: [String], selected: String, appearance: NSAppearance) -> NSImage {
+        let width: CGFloat = 180
+        let row: CGFloat = 22
+        let height = row * CGFloat(max(titles.count, 1)) + 10
+        let image = NSImage(size: NSSize(width: width, height: height))
+        appearance.performAsCurrentDrawingAppearance {
+            image.lockFocus()
+            let card = NSBezierPath(roundedRect: NSRect(x: 0.5, y: 0.5, width: width - 1, height: height - 1), xRadius: 8, yRadius: 8)
+            NSColor.windowBackgroundColor.setFill()
+            card.fill()
+            NSColor.separatorColor.setStroke()
+            card.stroke()
+            let font = NSFont.menuFont(ofSize: 13)
+            for (index, title) in titles.enumerated() {
+                let y = height - 6 - row * CGFloat(index + 1)
+                let rowRect = NSRect(x: 5, y: y, width: width - 10, height: row - 2)
+                if title == selected {
+                    NSColor.selectedContentBackgroundColor.withAlphaComponent(0.35).setFill()
+                    NSBezierPath(roundedRect: rowRect, xRadius: 4, yRadius: 4).fill()
+                }
+                let text = NSAttributedString(string: title, attributes: [
+                    .font: font,
+                    .foregroundColor: NSColor.labelColor,
+                ])
+                text.draw(at: NSPoint(x: 28, y: y + 3))
+                if title == selected {
+                    let check = NSAttributedString(string: "✓", attributes: [
+                        .font: font,
+                        .foregroundColor: NSColor.labelColor,
+                    ])
+                    check.draw(at: NSPoint(x: 10, y: y + 3))
+                }
+            }
+            image.unlockFocus()
+        }
+        return image
+    }
+
+    private static func raster(of view: NSView) -> NSImage? {
+        let bounds = view.bounds
+        guard bounds.width > 1, bounds.height > 1 else { return nil }
+        view.layoutSubtreeIfNeeded()
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { return nil }
+        view.cacheDisplay(in: bounds, to: rep)
+        let image = NSImage(size: bounds.size)
+        image.addRepresentation(rep)
+        return image
+    }
+
+    private static func cgWindowImage(_ windowNumber: Int) -> CGImage? {
+        typealias Create = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard windowNumber > 0,
+              let symbol = dlsym(dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_LAZY), "CGWindowListCreateImage") else {
+            return nil
+        }
+        let create = unsafeBitCast(symbol, to: Create.self)
+        let includingWindow: UInt32 = 1 << 3
+        let options: UInt32 = (1 << 0) | (1 << 3)
+        return create(.null, includingWindow, UInt32(windowNumber), options)?.takeRetainedValue()
+    }
+
+    private static func screenFrame(of view: NSView) -> NSRect? {
+        guard let window = view.window else { return nil }
+        return window.convertToScreen(view.convert(view.bounds, to: nil))
+    }
+
+    private static func composite(_ shots: [(NSImage, NSRect)]) -> NSImage? {
+        guard var union = shots.first?.1 else { return nil }
+        for shot in shots.dropFirst() {
+            union = union.union(shot.1)
+        }
+        let canvas = NSImage(size: union.size)
+        canvas.lockFocus()
+        NSColor.windowBackgroundColor.setFill()
+        NSRect(origin: .zero, size: union.size).fill()
+        for (image, frame) in shots {
+            let origin = NSPoint(x: frame.minX - union.minX, y: frame.minY - union.minY)
+            image.draw(in: NSRect(origin: origin, size: frame.size), from: .zero, operation: .sourceOver, fraction: 1)
+        }
+        canvas.unlockFocus()
+        return canvas
+    }
+
+    private static func writePNG(_ image: NSImage, to path: String) {
+        guard let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              let data = rep.representation(using: .png, properties: [:]) else { return }
+        try? data.write(to: URL(fileURLWithPath: path))
+    }
+
     private static var model: BrowserModel? { attachedModel }
+}
+
+/// Retains itself until the common-mode timer fires during menu tracking.
+nonisolated private final class PopupShot: NSObject, @unchecked Sendable {
+    let path: String
+
+    init(path: String) {
+        self.path = path
+    }
+
+    func fire() {
+        let path = self.path
+        let work = {
+            MainActor.assumeIsolated {
+                DebugSnapshot.writeOpenPopup(to: path)
+                DebugSnapshot.dismissPopup()
+            }
+        }
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.sync(execute: work)
+        }
+    }
+}
+
+/// One resume across the page call and its deadline. Notification delivery is not the main actor.
+private nonisolated final class OnceBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
+    }
+}
+
+@MainActor
+private final class SnapshotImageBox {
+    var image: NSImage?
 }
 
 /// Holds the distributed-notification callback. Not main-actor isolated: delivery can hop afterwards.

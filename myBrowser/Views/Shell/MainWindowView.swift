@@ -35,6 +35,13 @@ struct MainWindowView: View {
         }
         .overlay { CommandBarOverlay() }
         .importPresentations(model: model)
+        .sheet(isPresented: Binding(
+            get: { model.isPresentingArchive },
+            set: { model.isPresentingArchive = $0 }
+        )) {
+            ArchivedTabsView()
+                .environment(model)
+        }
         .focusedSceneValue(\.browserNavigation, BrowserNavigationState(
             canGoBack: model.canGoBack,
             canGoForward: model.canGoForward,

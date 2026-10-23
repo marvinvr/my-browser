@@ -44,6 +44,8 @@ final class BrowserModel {
     private(set) var commandBarGeneration = 0
     /// File → Import… presents the import sheet from the main window.
     var isPresentingImport = false
+    /// History → Archived Tabs… presents the archive sheet.
+    var isPresentingArchive = false
 
     init(library: LibraryStore, session: SessionStore, extensions: ExtensionManager? = nil) {
         self.library = library
@@ -71,7 +73,11 @@ final class BrowserModel {
     }
 
     deinit {
+        archiveLoop?.cancel()
         for token in pictureInPictureObservers {
+            NotificationCenter.default.removeObserver(token)
+        }
+        for token in archiveObservers {
             NotificationCenter.default.removeObserver(token)
         }
     }
@@ -117,6 +123,8 @@ final class BrowserModel {
     @ObservationIgnored var pictureInPictureWindowFocused: Bool?
     @ObservationIgnored var pictureInPictureFocusTask: Task<Void, Never>?
     @ObservationIgnored nonisolated(unsafe) var pictureInPictureObservers: [NSObjectProtocol] = []
+    @ObservationIgnored nonisolated(unsafe) var archiveObservers: [NSObjectProtocol] = []
+    @ObservationIgnored nonisolated(unsafe) var archiveLoop: Task<Void, Never>?
 
     /// Sites in sidebar order: favorites, pinned (depth-first, expanded folders only), tabs.
     /// A split is replaced by its panes, so each page is one stop and the container is not a second one.
@@ -173,6 +181,12 @@ final class BrowserModel {
     /// A split selects that row and shows its panes. A member selects the split and focuses that pane.
     func select(_ itemID: UUID) {
         guard let item = library.item(itemID) else { return }
+        // The tab being left was viewed until this moment, so its idle time starts now.
+        // A split stamps its unpinned panes too, because the selected row is the container.
+        if let previous = session.selectedItemBySpace[item.spaceID], previous != itemID {
+            noteViewed(previous)
+        }
+        noteViewed(itemID)
         if item.isSplit {
             selectSplit(item, focus: nil)
             return
@@ -245,6 +259,15 @@ final class BrowserModel {
         refreshNavigationState()
     }
 
+    /// Stamps `itemID` as viewed. A split also stamps its unpinned panes, which stay on screen while that row is selected.
+    private func noteViewed(_ itemID: UUID, at date: Date = .now) {
+        session.lastActiveAt[itemID] = date
+        guard library.item(itemID)?.isSplit == true else { return }
+        for member in library.splitMembers(of: itemID) where member.section == .tabs {
+            session.lastActiveAt[member.id] = date
+        }
+    }
+
     /// Opens `url` in a new `.tabs` item at the top of the current space. Background leaves the selection alone.
     /// `httpsFirst` may fall back to HTTP once if that load fails.
     func openInNewTab(_ url: URL, inBackground: Bool = false, httpsFirst: Bool = false) {
@@ -270,14 +293,20 @@ final class BrowserModel {
     }
 
     func close(_ itemID: UUID) {
+        close(itemID, archivingAt: nil)
+    }
+
+    /// `archivingAt` also records the tab in Archived Tabs. Manual closes pass nil.
+    /// Closing a split closes its focused pane. Closing a pane leaves the split, and dissolves it at one member.
+    func close(_ itemID: UUID, archivingAt: Date?) {
         guard let item = library.item(itemID) else { return }
         if item.isSplit {
             guard let focus = resolvedFocus(in: item.id) else { return }
-            close(focus)
+            close(focus, archivingAt: archivingAt)
             return
         }
         if item.kind == .site, let split = library.splitContainer(of: itemID) {
-            closeSplitMember(item, split: split)
+            closeSplitMember(item, split: split, archivingAt: archivingAt)
             return
         }
         guard item.kind == .site else { return }
@@ -297,6 +326,16 @@ final class BrowserModel {
             if session.closedTabs.count > Self.closedTabLimit {
                 session.closedTabs.removeFirst(session.closedTabs.count - Self.closedTabLimit)
             }
+            if let archivingAt {
+                session.archivedTabs.removeAll { $0.item.id == itemID }
+                session.archivedTabs.append(SessionStore.ArchivedTab(
+                    item: snapshot,
+                    interactionState: state,
+                    archivedAt: archivingAt,
+                    lastActiveAt: session.lastActiveAt[itemID] ?? archivingAt
+                ))
+            }
+            session.lastActiveAt[itemID] = nil
             session.interactionStates[itemID] = nil
             library.deleteItem(itemID)
         } else {
@@ -320,7 +359,8 @@ final class BrowserModel {
 
     /// Close one pane. A tabs pane is removed and remembered for reopen. A pinned pane unloads and stays.
     /// Removing a tabs pane dissolves the split when one member would be left.
-    private func closeSplitMember(_ item: SidebarItem, split: SidebarItem) {
+    /// `archivingAt` also records a tabs pane in Archived Tabs.
+    private func closeSplitMember(_ item: SidebarItem, split: SidebarItem, archivingAt: Date? = nil) {
         let members = library.splitMembers(of: split.id)
         let wasFocused = resolvedFocus(in: split.id) == item.id
         let splitSelected = session.selectedItemBySpace[split.spaceID] == split.id
@@ -338,6 +378,16 @@ final class BrowserModel {
             if session.closedTabs.count > Self.closedTabLimit {
                 session.closedTabs.removeFirst(session.closedTabs.count - Self.closedTabLimit)
             }
+            if let archivingAt {
+                session.archivedTabs.removeAll { $0.item.id == item.id }
+                session.archivedTabs.append(SessionStore.ArchivedTab(
+                    item: snapshot,
+                    interactionState: state,
+                    archivedAt: archivingAt,
+                    lastActiveAt: session.lastActiveAt[item.id] ?? archivingAt
+                ))
+            }
+            session.lastActiveAt[item.id] = nil
             session.interactionStates[item.id] = nil
             library.deleteItem(item.id)
         } else {
@@ -425,6 +475,7 @@ final class BrowserModel {
 
         for id in removed {
             session.interactionStates[id] = nil
+            session.lastActiveAt[id] = nil
             unloadTab(id)
         }
         if let focus = sidebarFocusID, focus == itemID || subtree.contains(focus) || removed.contains(focus) {
@@ -447,20 +498,36 @@ final class BrowserModel {
     }
 
     /// Cmd+Shift+T. Restores the item at the top of `.tabs` with its back/forward history and selects it.
+    /// An archived tab reopened this way leaves the archive, so it is not listed twice.
     func reopenClosedTab() {
         while let closed = session.closedTabs.last {
             session.closedTabs.removeLast()
-            guard library.space(closed.item.spaceID) != nil else { continue }
-            let item = library.restoreItem(closed.item, at: .start)
-            if let state = closed.interactionState {
-                session.interactionStates[item.id] = state
-            }
-            if selectedSpaceID != item.spaceID {
-                adoptSpace(item.spaceID)
-            }
-            select(item.id)
+            session.archivedTabs.removeAll { $0.item.id == closed.item.id }
+            guard restoreClosed(closed.item, interactionState: closed.interactionState) else { continue }
             return
         }
+    }
+
+    /// Puts an archived tab back at the top of its space and selects it.
+    func reopenArchivedTab(_ id: UUID) {
+        guard let index = session.archivedTabs.lastIndex(where: { $0.item.id == id }) else { return }
+        let archived = session.archivedTabs.remove(at: index)
+        session.closedTabs.removeAll { $0.item.id == id }
+        _ = restoreClosed(archived.item, interactionState: archived.interactionState)
+    }
+
+    @discardableResult
+    private func restoreClosed(_ snapshot: SidebarItem, interactionState: Data?) -> Bool {
+        guard library.space(snapshot.spaceID) != nil else { return false }
+        let item = library.restoreItem(snapshot, at: .start)
+        if let interactionState {
+            session.interactionStates[item.id] = interactionState
+        }
+        if selectedSpaceID != item.spaceID {
+            adoptSpace(item.spaceID)
+        }
+        select(item.id)
+        return true
     }
 
     /// Cmd+1…8 (index 0…7). Cmd+9 passes `nil`, which selects the last navigable item.
@@ -801,30 +868,38 @@ final class BrowserModel {
         linkCopyGeneration &+= 1
     }
 
-    /// window.open / target=_blank. The new web view uses `configuration` with the 60fps page cap off, is inserted at the top of `.tabs`, and is selected.
+    /// window.open / target=_blank, and an extension page opened as a tab.
+    /// The new web view uses `configuration` with the 60fps page cap off and is inserted at the top of `.tabs`.
+    /// An extension URL is loaded here. A normal page URL is left for WebKit, which navigates the view it asked for.
     @discardableResult
-    func presentPopup(configuration: WKWebViewConfiguration, url: URL?, spaceID: UUID) -> WKWebView? {
+    func presentPopup(configuration: WKWebViewConfiguration, url: URL?, spaceID: UUID, selectTab: Bool = true) -> WKWebView? {
         guard library.space(spaceID) != nil else { return nil }
         configuration.upgradeKnownHostsToHTTPS = false
         configuration.defaultWebpagePreferences.preferredHTTPSNavigationPolicy = .keepAsRequested
         PictureInPictureWebKit.enable(configuration.preferences)
         PageRenderingRate.apply(to: configuration.preferences)
         let pageURL = url.flatMap { BrowserTab.isPageURL($0) ? $0 : nil }
-        let title = pageURL.map { Self.fallbackTitle(for: $0) } ?? "New Tab"
+        let extensionURL = url.flatMap { BrowserTab.isExtensionPageURL($0) ? $0 : nil }
+        let storedURL = pageURL ?? extensionURL
+        let title = storedURL.map { Self.fallbackTitle(for: $0) } ?? "New Tab"
         let item = library.addItem(
             spaceID: spaceID,
             section: .tabs,
             kind: .site,
             title: title,
-            url: pageURL,
+            url: storedURL,
             at: .start
         )
         let profileID = library.space(spaceID)?.profileID ?? spaceID
         let webView = WKWebView(frame: .zero, configuration: configuration)
-        let tab = BrowserTab(id: item.id, profileID: profileID, title: title, url: pageURL, adopting: webView)
+        let tab = BrowserTab(id: item.id, profileID: profileID, title: title, url: storedURL, adopting: webView)
         wire(tab, spaceID: spaceID)
         tabs[item.id] = tab
         extensions?.tabOpened(tab)
+        if let extensionURL {
+            webView.load(URLRequest(url: extensionURL))
+        }
+        guard selectTab else { return tab.webView }
         if selectedSpaceID != spaceID {
             adoptSpace(spaceID)
         }
@@ -894,6 +969,7 @@ final class BrowserModel {
         if httpsFirst {
             ensureTab(for: item).wantsHTTPSFirst = true
         }
+        session.lastActiveAt[item.id] = .now
         guard !inBackground else { return }
         if selectedSpaceID != spaceID {
             adoptSpace(spaceID)

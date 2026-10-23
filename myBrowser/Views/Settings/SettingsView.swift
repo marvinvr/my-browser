@@ -1,6 +1,7 @@
+import AuthenticationServices
 import SwiftUI
 
-/// Settings scene (⌘,). General holds the search engine; Appearance holds the address bar and Dock icon; Extensions holds installed web extensions.
+/// Settings scene (⌘,). General holds the search engine, tab archive, and iCloud Sync; Appearance holds the address bar and Dock icon; Extensions holds installed web extensions.
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -11,14 +12,16 @@ struct SettingsView: View {
             ExtensionsSettingsView()
                 .tabItem { Label("Extensions", systemImage: "puzzlepiece.extension") }
         }
-        .frame(width: 520, height: 520)
+        .frame(width: 560, height: 560)
     }
 }
 
 private struct GeneralSettingsView: View {
     @AppStorage(SearchEngine.defaultsKey) private var searchEngine: SearchEngine = .google
+    @AppStorage(TabArchiveInterval.defaultsKey) private var archiveAfter: TabArchiveInterval = .twentyFourHours
     @AppStorage(PictureInPictureSettings.autoDefaultsKey) private var autoPictureInPicture = true
     @AppStorage(SyncController.enabledDefaultsKey) private var iCloudSyncEnabled = false
+    @Environment(PasskeyBroker.self) private var passkeys
 
     private var iCloudSync: Binding<Bool> {
         Binding(
@@ -39,6 +42,29 @@ private struct GeneralSettingsView: View {
             }
 
             Section {
+                LabeledContent("Archive tabs after") {
+                    HStack(spacing: 6) {
+                        Picker("Archive tabs after", selection: $archiveAfter) {
+                            ForEach(TabArchiveInterval.allCases) { interval in
+                                Text(interval.label).tag(interval)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .fixedSize()
+                        .accessibilityIdentifier("archiveTabsAfter")
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .help(TabArchiveInterval.explanation)
+                            .accessibilityLabel("About archiving tabs")
+                    }
+                }
+            } header: {
+                Text("Tabs")
+            }
+
+            Section {
                 Toggle("Automatic Picture in Picture", isOn: $autoPictureInPicture)
             } footer: {
                 Text("A playing video moves to Picture in Picture when you leave its tab or the window.")
@@ -52,6 +78,20 @@ private struct GeneralSettingsView: View {
                     Text("Requires iCloud container — coming soon")
                 }
             }
+
+            Section {
+                LabeledContent("Passkeys", value: passkeys.statusLabel)
+                if passkeys.access != .authorized {
+                    Button("Allow Passkeys…") { passkeys.requestAccess() }
+                        .disabled(!passkeys.entitlementInSignature)
+                }
+                Button("AutoFill Providers…") {
+                    ASSettingsHelper.openCredentialProviderAppSettings { _ in }
+                }
+            } footer: {
+                Text(passkeys.footer)
+            }
+            .onAppear { passkeys.refresh() }
         }
         .formStyle(.grouped)
     }

@@ -23,6 +23,7 @@ extension BrowserModel {
             url: pageURL,
             at: .start
         )
+        session.lastActiveAt[item.id] = .now
         let tab = ensureTab(for: item)
         tab.extensionBridge.parentTab = parent
         let created = !tab.isLoaded

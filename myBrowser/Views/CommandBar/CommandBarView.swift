@@ -141,6 +141,8 @@ private struct CommandBarPanel: View {
                         .layoutPriority(1)
                 } else if case .action = row {
                     Text("Action")
+                } else if case .archivedTabs = row {
+                    Text("Open")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .layoutPriority(1)
@@ -176,6 +178,11 @@ private struct CommandBarPanel: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 16, height: 16)
+        case .archivedTabs:
+            Image(systemName: "archivebox")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 16)
         case .tab(let item):
             let image = browser.tabs[item.id]?.favicon ?? item.url.flatMap { browser.favicons.cachedFavicon(for: $0) }
             if let image {
@@ -201,12 +208,20 @@ private struct CommandBarPanel: View {
             item.title.isEmpty ? (item.url?.absoluteString ?? "Tab") : item.title
         case .action(let action):
             action.title
+        case .archivedTabs:
+            "Archived Tabs"
         }
     }
 
     private func subtitle(_ row: CommandBarModel.Row) -> String? {
-        guard case .tab(let item) = row else { return nil }
-        guard !item.title.isEmpty, let absolute = item.url?.absoluteString else { return nil }
-        return absolute
+        switch row {
+        case .archivedTabs:
+            return "Search and reopen"
+        case .tab(let item):
+            guard !item.title.isEmpty, let absolute = item.url?.absoluteString else { return nil }
+            return absolute
+        case .action, .open, .search:
+            return nil
+        }
     }
 }

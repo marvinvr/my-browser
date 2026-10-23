@@ -23,6 +23,8 @@ final class BrowserTab: NSObject, Identifiable {
     private(set) var isLoaded = false
     /// A large enough video is playing and the site allows Picture in Picture.
     var hasPictureInPictureVideo = false
+    /// WebKit reports playback, or a large video is playing. The archive sweep refreshes this.
+    var isPlayingMedia = false
     var isPictureInPictureActive = false
     /// Toolbar and menus. Stays up while PiP is active so the video can be returned inline.
     var showsPictureInPictureButton: Bool { hasPictureInPictureVideo || isPictureInPictureActive }
@@ -52,6 +54,8 @@ final class BrowserTab: NSObject, Identifiable {
     @ObservationIgnored var wantsHTTPSFirst = false
     @ObservationIgnored private var navigationGeneration = 0
     @ObservationIgnored private var httpsFirstAttempt: HTTPSFirstAttempt?
+    /// The first navigation waits one turn so `didOpenTab` can register content scripts, including all frames.
+    @ObservationIgnored private var initialLoadPending = false
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var metaTheme: ThemeSample?
     @ObservationIgnored private var underPageTheme: ThemeSample?
@@ -102,7 +106,17 @@ final class BrowserTab: NSObject, Identifiable {
 
         let webView = WKWebView(frame: .zero, configuration: profiles.configuration(for: profileID))
         attach(webView)
+        initialLoadPending = true
+        // `select` calls `didOpenTab` before this task runs, so document_start scripts see the navigation.
+        Task { @MainActor [weak self] in
+            self?.performInitialLoad()
+        }
+        useCachedFavicon()
+    }
 
+    private func performInitialLoad() {
+        guard initialLoadPending, let webView else { return }
+        initialLoadPending = false
         if let pendingURL {
             let httpsFirst = wantsHTTPSFirst
             wantsHTTPSFirst = false
@@ -116,8 +130,6 @@ final class BrowserTab: NSObject, Identifiable {
             wantsHTTPSFirst = false
             beginNavigation(initialURL, in: webView, httpsFirst: httpsFirst)
         }
-
-        useCachedFavicon()
     }
 
     /// WebKit ignores `interactionState` until the view is in a window and has a real frame.
@@ -209,6 +221,7 @@ final class BrowserTab: NSObject, Identifiable {
         pendingURL = url
         storedInteractionState = nil
         wantsHTTPSFirst = httpsFirst
+        initialLoadPending = false
         if self.url != url {
             self.url = url
             onStateChange?(self)
@@ -383,6 +396,14 @@ final class BrowserTab: NSObject, Identifiable {
         }
     }
 
+    /// Extension documents (`app.html`, a detached popup). Not a web page, and not loaded by `isPageURL`.
+    static func isExtensionPageURL(_ url: URL) -> Bool {
+        switch url.scheme?.lowercased() {
+        case "webkit-extension", "chrome-extension": true
+        default: false
+        }
+    }
+
     func open(url: URL?, inBackground: Bool) {
         guard let url, Self.isPageURL(url) else { return }
         onOpenInNewTab?(url, inBackground)
@@ -391,6 +412,26 @@ final class BrowserTab: NSObject, Identifiable {
     /// WebKit calls this synchronously. The returned view must be built with `configuration`.
     func createWebView(configuration: WKWebViewConfiguration, url: URL?) -> WKWebView? {
         onCreateWebView?(configuration, url)
+    }
+
+    /// A download that still belongs to this tab's web view. The archive sweep leaves it open.
+    var hasActiveDownload: Bool {
+        guard let webView else { return false }
+        return downloads?.isDownloading(in: webView) == true
+    }
+
+    /// Asks WebKit whether audio or video is playing. Picture in Picture counts as playing.
+    func refreshMediaPlaybackState() async {
+        var playing = hasPictureInPictureVideo || isPictureInPictureActive
+        if let webView {
+            let state = await webView.requestMediaPlaybackState()
+            if state == .playing {
+                playing = true
+            }
+        }
+        if isPlayingMedia != playing {
+            isPlayingMedia = playing
+        }
     }
 
     func fetchFaviconIfNeeded() {

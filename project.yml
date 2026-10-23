@@ -62,6 +62,13 @@ targets:
         SUEnableAutomaticChecks: true
         SUScheduledCheckInterval: 86400
         SUVerifyUpdateBeforeExtraction: true
+        # Required before Apple will grant com.apple.developer.web-browser.public-key-credential.
+        CFBundleURLTypes:
+          - CFBundleURLName: ch.marvinvr.mybrowser.web
+            CFBundleTypeRole: Editor
+            CFBundleURLSchemes:
+              - http
+              - https
     scheme:
       testTargets:
         - myBrowserTests

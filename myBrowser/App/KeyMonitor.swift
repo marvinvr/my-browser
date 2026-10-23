@@ -27,7 +27,9 @@ final class KeyMonitor {
                     KeyMonitor.shared.handle(keyCode: keyCode, rawFlags: rawFlags, isRepeat: isRepeat)
                 }
             }
-            return consume ? nil : event
+            if consume { return nil }
+            if !isRepeat, Self.performExtensionCommand(event) { return nil }
+            return event
         }
     }
 
@@ -46,6 +48,18 @@ final class KeyMonitor {
         // ⌘⇧J opens Downloads. Eaten so the web view does not also see it.
         if keyCode == jKey, flags == [.command, .shift] { return true }
         return false
+    }
+
+    /// Manifest commands (1Password's popup is ⌘⇧X) run on the key-down, on the main thread,
+    /// so WebKit still counts the event as a user gesture. ⌘\\ stays with the page unless a command matches.
+    nonisolated private static func performExtensionCommand(_ event: NSEvent) -> Bool {
+        guard Thread.isMainThread else { return false }
+        // The monitor still returns this event when the command does not match. The copy is the
+        // same NSEvent; the shortcut check only reads it, on this thread, before that return.
+        nonisolated(unsafe) let gesture = event
+        return MainActor.assumeIsolated {
+            KeyMonitor.shared.model?.extensions?.performExtensionCommand(for: gesture) ?? false
+        }
     }
 
     nonisolated private static func isPlainEscape(keyCode: UInt16, rawFlags: UInt) -> Bool {
