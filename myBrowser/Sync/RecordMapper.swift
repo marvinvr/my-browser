@@ -43,9 +43,10 @@ nonisolated enum RecordMapper {
         let record = baseRecord(type: SyncSchema.RecordType.space, id: space.id, systemFields: systemFields)
         set(record, Field.name, space.name)
         set(record, Field.symbol, space.symbol)
-        if let emoji = space.emoji?.trimmingCharacters(in: .whitespacesAndNewlines), !emoji.isEmpty {
-            set(record, Field.emoji, emoji)
-        }
+        // Always assign, including nil. A skipped key is not in `changedKeys`, so a reused
+        // record would keep an emoji the user had cleared.
+        let emoji = space.emoji?.trimmingCharacters(in: .whitespacesAndNewlines)
+        set(record, Field.emoji, (emoji?.isEmpty == false) ? emoji : nil)
         set(record, Field.color, space.color.rawValue)
         set(record, Field.profileID, space.profileID.uuidString)
         set(record, Field.sortKey, space.sortKey)

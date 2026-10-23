@@ -338,7 +338,7 @@ The flag is checked first. A false flag returns before the account token is read
 `CKRecord.ID(recordName:zoneID:)` uses the zone above. `RecordMapper` is a pure value transform (no network). `CKRecord` values are strings, dates, and numbers.
 
 - **Profile:** `name`, `modifiedAt`, `deletedAt?`
-- **Space:** `name`, `symbol`, `emoji?`, `color` (raw value), `profileID`, `sortKey`, `modifiedAt`, `deletedAt?`
+- **Space:** `name`, `symbol`, `emoji?` (trimmed; an empty value clears the key, including on a reused record), `color` (raw value), `profileID`, `sortKey`, `modifiedAt`, `deletedAt?`
 - **SidebarItem:** `spaceID`, `section`, `kind`, `parentID?`, `title`, `url?` (absolute string), `sortKey`, `isExpanded` (0/1), `splitFraction?` (number when finite and greater than zero, otherwise the key is cleared), `splitAxis?` (raw string, or cleared), `createdAt`, `modifiedAt`, `deletedAt?`. `library.json` still omits a nil fraction or axis. A CloudKit save always assigns both keys, including nil, so a reused record drops the previous value.
 
 `.tabs` items are not mapped and are not uploaded, including a `.tabs` split and its members. A fetched `.tabs` record is ignored. A remote deletion whose local row is a tab is ignored. A pinned split and its members sync as normal `SidebarItem` records. Dissolving a pinned split tombstones the split and updates the surviving member. Focus is session state and is not a record field.

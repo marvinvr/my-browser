@@ -100,6 +100,16 @@ struct SyncTests {
         #expect(decodedItem?.isExpanded == true)
         #expect(RecordMapper.record(for: tab) == nil)
 
+        var withEmoji = space
+        withEmoji.emoji = "📁"
+        let emojiRecord = RecordMapper.record(for: withEmoji)
+        let emojiFields = RecordSystemFields.encode(emojiRecord)
+        withEmoji.emoji = "   "
+        let clearedEmoji = RecordMapper.record(for: withEmoji, systemFields: emojiFields)
+        #expect(clearedEmoji[RecordMapper.Field.emoji] == nil)
+        #expect(clearedEmoji.changedKeys().contains(RecordMapper.Field.emoji))
+        #expect(RecordMapper.space(from: clearedEmoji)?.emoji == nil)
+
         let tabRecord = RecordMapper.record(for: item)
         tabRecord?[RecordMapper.Field.section] = SidebarItem.Section.tabs.rawValue
         #expect(tabRecord.flatMap(RecordMapper.item(from:)) == nil)
@@ -409,6 +419,95 @@ struct SyncTests {
         let memory = SyncState(directory: nil)
         memory.setEngineState(Data([7]))
         #expect(memory.engineState == Data([7]))
+    }
+
+    @Test func applyRemotePreservesSplitLayoutHomeURLAndFolderState() throws {
+        let directory = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LibraryStore(directory: directory)
+        let profileID = UUID()
+        let spaceID = UUID()
+        let folderID = UUID()
+        let splitID = UUID()
+        let memberID = UUID()
+        let home = try #require(URL(string: "https://pin.example/home?q=1"))
+        var folder = SidebarItem(
+            id: folderID,
+            spaceID: spaceID,
+            section: .pinned,
+            kind: .folder,
+            title: "Work",
+            sortKey: "a0",
+            isExpanded: false,
+            createdAt: older
+        )
+        folder.modifiedAt = older
+        var split = SidebarItem(
+            id: splitID,
+            spaceID: spaceID,
+            section: .pinned,
+            kind: .split,
+            parentID: folderID,
+            title: "Pair",
+            sortKey: "a1",
+            splitAxis: .vertical,
+            createdAt: older
+        )
+        split.modifiedAt = older
+        var member = SidebarItem(
+            id: memberID,
+            spaceID: spaceID,
+            section: .pinned,
+            kind: .site,
+            parentID: splitID,
+            title: "Pin",
+            url: home,
+            sortKey: "b0",
+            splitFraction: 0.35,
+            createdAt: older
+        )
+        member.modifiedAt = older
+        let sibling = SidebarItem(
+            id: UUID(),
+            spaceID: spaceID,
+            section: .pinned,
+            kind: .site,
+            parentID: splitID,
+            title: "Other",
+            url: URL(string: "https://other.example"),
+            sortKey: "b1",
+            splitFraction: 0.65,
+            createdAt: older
+        )
+        var stampedSibling = sibling
+        stampedSibling.modifiedAt = older
+
+        let folderRecord = try #require(RecordMapper.record(for: folder))
+        let splitRecord = try #require(RecordMapper.record(for: split))
+        let memberRecord = try #require(RecordMapper.record(for: member))
+        let siblingRecord = try #require(RecordMapper.record(for: stampedSibling))
+        store.applyRemote(
+            upserts: RemoteLibraryUpdate(
+                profiles: [Profile(id: profileID, name: "Work", modifiedAt: older)],
+                spaces: [Space(id: spaceID, name: "Work", symbol: "circle.fill", color: .blue, profileID: profileID, sortKey: "a0", modifiedAt: older)],
+                items: [
+                    try #require(RecordMapper.item(from: folderRecord)),
+                    try #require(RecordMapper.item(from: splitRecord)),
+                    try #require(RecordMapper.item(from: memberRecord)),
+                    try #require(RecordMapper.item(from: siblingRecord)),
+                ]
+            ),
+            deletions: []
+        )
+
+        #expect(store.item(folderID)?.isExpanded == false)
+        #expect(store.item(splitID)?.kind == .split)
+        #expect(store.item(splitID)?.parentID == folderID)
+        #expect(store.item(splitID)?.splitAxis == .vertical)
+        #expect(store.item(memberID)?.parentID == splitID)
+        #expect(store.item(memberID)?.splitFraction == 0.35)
+        #expect(store.item(memberID)?.url == home)
+        #expect(store.splitMembers(of: splitID).map(\.id) == [memberID, stampedSibling.id])
     }
 
     @Test func syncStartsOnlyWhenEveryGateIsOpen() {
