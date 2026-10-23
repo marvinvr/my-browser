@@ -103,10 +103,20 @@ final class SplitCanvasView: NSView {
         }
     }
 
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil {
+            parkPictureInPicture(in: window)
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
     private func syncPanes() {
         guard let content, let model else { return }
         let ids = Set(content.panes.map(\.id))
         for id in containers.keys where !ids.contains(id) {
+            if model.pictureInPictureTabID == id, let webView = model.tabs[id]?.webView {
+                PictureInPictureParking.park(webView, window: window)
+            }
             containers[id]?.removeFromSuperview()
             containers[id] = nil
             pills[id] = nil
@@ -146,6 +156,11 @@ final class SplitCanvasView: NSView {
             }
         }
         addSubview(catcher)
+    }
+
+    private func parkPictureInPicture(in window: NSWindow?) {
+        guard let model, let id = model.pictureInPictureTabID, let webView = model.tabs[id]?.webView else { return }
+        PictureInPictureParking.park(webView, window: window)
     }
 
     private func installWebView(_ pane: DisplayedPane, in container: SplitPaneContainer) {

@@ -195,7 +195,7 @@ private struct CommandBarPanel: View {
 
     private func primaryText(_ row: CommandBarModel.Row) -> String {
         switch row {
-        case .open(let title, _), .search(let title, _):
+        case .open(let title, _, _), .search(let title, _):
             title
         case .tab(let item):
             item.title.isEmpty ? (item.url?.absoluteString ?? "Tab") : item.title

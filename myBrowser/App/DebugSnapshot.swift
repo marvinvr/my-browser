@@ -132,6 +132,122 @@ enum DebugSnapshot {
                 }
             }
         })
+        // Private channel so a PiP test does not drive every other debug build on the machine.
+        if let control = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_CONTROL"], !control.isEmpty {
+            relays.append(observe(control) { note in
+                let info = note.userInfo ?? [:]
+                let action = info["action"] as? String ?? ""
+                let rawURL = info["url"] as? String
+                let script = info["script"] as? String
+                let path = info["path"] as? String
+                let name = (info["arg"] as? String) ?? (info["name"] as? String)
+                Task { @MainActor in
+                    DebugSnapshot.performControl(
+                        action: action,
+                        rawURL: rawURL,
+                        script: script,
+                        path: path,
+                        name: name
+                    )
+                }
+            })
+        }
+    }
+
+    @MainActor
+    private static func performControl(
+        action: String,
+        rawURL: String?,
+        script: String?,
+        path: String?,
+        name: String?
+    ) {
+        guard let model = attachedModel else { return }
+        switch action {
+        case "open":
+            guard let rawURL, let url = URL(string: rawURL) else { return }
+            model.openInCurrentTab(url)
+        case "newtab":
+            guard let rawURL, let url = URL(string: rawURL) else { return }
+            model.openInNewTab(url)
+        case "selecturl":
+            guard let rawURL, let url = URL(string: rawURL) else { return }
+            let wanted = url.absoluteString
+            if let item = model.library.items.values.first(where: {
+                $0.deletedAt == nil && $0.kind == .site && $0.url?.absoluteString == wanted
+            }) {
+                model.select(item.id)
+            }
+        case "pip":
+            model.togglePictureInPicture()
+        case "release":
+            // The system panel's return control leaves PiP without our suppress flag.
+            // This drives that same page-side exit so the focus policy can be checked headless.
+            if let id = model.pictureInPictureTabID, let tab = model.tabs[id] {
+                tab.webView.map { webView in
+                    PictureInPictureWebKit.evaluate(
+                        webView,
+                        frame: nil,
+                        script: "window.__myBrowserPiP ? window.__myBrowserPiP.exit() : 'missing'"
+                    ) { _ in }
+                }
+            }
+        case "prev":
+            model.selectPreviousTab()
+        case "next":
+            model.selectNextTab()
+        case "space":
+            let which = name ?? rawURL
+            if which == "new" {
+                _ = model.createSpace(name: "Elsewhere", symbol: "circle.fill", color: .green)
+            } else if let which, let space = model.library.orderedSpaces.first(where: { $0.name == which }) {
+                model.selectSpace(space.id)
+            }
+        case "hide":
+            NSApp.hide(nil)
+        case "show":
+            NSApp.unhide(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            browserWindowForPictureInPicture()?.makeKeyAndOrderFront(nil)
+        case "appearance":
+            switch name {
+            case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+            case "light": NSApp.appearance = NSAppearance(named: .aqua)
+            default: break
+            }
+            model.selectedTab?.refreshThemeColor()
+        case "state":
+            guard let path, path.hasPrefix("/") else { return }
+            let tab = model.selectedTab
+            let text = [
+                "can=\(model.canPictureInPicture)",
+                "active=\(model.pictureInPictureActive)",
+                "session=\(model.pictureInPictureTabID?.uuidString ?? "-")",
+                "selected=\(tab?.url?.absoluteString ?? "")",
+                "title=\(tab?.title ?? "")",
+                "video=\(tab?.hasPictureInPictureVideo == true)",
+                "pip=\(tab?.isPictureInPictureActive == true)",
+            ].joined(separator: "\n")
+            try? text.write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
+        case "eval":
+            guard let script, let path, path.hasPrefix("/") else { return }
+            Task { @MainActor in
+                let result: String
+                if let webView = model.selectedTab?.webView {
+                    do {
+                        let value = try await webView.evaluateJavaScript(script)
+                        result = String(describing: value ?? "nil")
+                    } catch {
+                        result = "error: \(error.localizedDescription)"
+                    }
+                } else {
+                    result = "error: no web view"
+                }
+                try? result.write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
+            }
+        default:
+            break
+        }
     }
 
     /// A note that carries `channel` is for one debug build.

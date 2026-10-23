@@ -4,7 +4,8 @@ import WebKit
 
 /// Watches a horizontal trackpad swipe on the page and ticks once when it crosses WebKit's
 /// navigation distance. WebKit consumes the gesture inside `trackSwipeEvent`, so the samples
-/// come from a timer on the event-tracking run loop, which keeps firing while that loop runs.
+/// come from the view's display link on the common run-loop modes, which keeps firing at the
+/// display's rate while that loop runs.
 struct NavigationSwipeMonitor: NSViewRepresentable {
     func makeNSView(context: Context) -> NavigationSwipeMonitorView {
         let view = NavigationSwipeMonitorView()
@@ -64,14 +65,14 @@ final class NavigationSwipeMonitorView: NSView {
         guard abs(deltaX) + abs(deltaY) > 0.4 else { return }
         guard let web = webView(at: location, windowNumber: windowNumber) else { return }
         let horizontal = abs(deltaX) >= abs(deltaY)
-        guard horizontal || monitors.isTiming else { return }
+        guard horizontal || monitors.isSampling else { return }
         arm()
     }
 
     private func arm() {
         lastMotion = CACurrentMediaTime()
         let bridge = bridge
-        monitors.startTimer {
+        monitors.startSampling(on: self) {
             MainActor.assumeIsolated {
                 bridge.view?.sample()
             }
@@ -108,7 +109,7 @@ final class NavigationSwipeMonitorView: NSView {
     }
 
     private func stop() {
-        monitors.stopTimer()
+        monitors.stopSampling()
         sawSwipeLayer = false
     }
 
@@ -184,15 +185,16 @@ nonisolated private final class NavigationSwipeBridge: @unchecked Sendable {
     nonisolated(unsafe) weak var view: NavigationSwipeMonitorView?
 }
 
-nonisolated private final class NavigationSwipeMonitorBox: @unchecked Sendable {
+nonisolated private final class NavigationSwipeMonitorBox: NSObject, @unchecked Sendable {
     private let lock = NSLock()
     private var token: Any?
-    private var timer: Timer?
+    private var link: CADisplayLink?
+    private var onFire: @Sendable () -> Void = {}
 
-    var isTiming: Bool {
+    var isSampling: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return timer != nil
+        return link != nil
     }
 
     func install(_ handler: @escaping @Sendable (NSEvent) -> NSEvent?) {
@@ -202,32 +204,32 @@ nonisolated private final class NavigationSwipeMonitorBox: @unchecked Sendable {
         token = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel, handler: handler)
     }
 
-    /// Keeps the existing timer. The block runs on the tracking run loop, including inside WebKit's swipe.
-    func startTimer(_ block: @escaping @Sendable () -> Void) {
+    /// One display link for the gesture. Common modes include event tracking, so it fires inside WebKit's swipe.
+    @MainActor
+    func startSampling(on view: NSView, _ block: @escaping @Sendable () -> Void) {
         lock.lock()
-        if timer != nil {
-            lock.unlock()
-            return
-        }
-        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { _ in
-            block()
-        }
-        self.timer = timer
+        onFire = block
+        let existing = link != nil
         lock.unlock()
-        RunLoop.main.add(timer, forMode: .eventTracking)
-        RunLoop.main.add(timer, forMode: .common)
+        guard !existing else { return }
+        let link = view.displayLink(target: self, selector: #selector(tick(_:)))
+        link.add(to: .main, forMode: .common)
+        lock.lock()
+        self.link = link
+        lock.unlock()
     }
 
-    func stopTimer() {
+    func stopSampling() {
         lock.lock()
-        let installed = timer
-        timer = nil
+        let installed = link
+        link = nil
+        onFire = {}
         lock.unlock()
         installed?.invalidate()
     }
 
     func clear() {
-        stopTimer()
+        stopSampling()
         lock.lock()
         let installed = token
         token = nil
@@ -235,6 +237,13 @@ nonisolated private final class NavigationSwipeMonitorBox: @unchecked Sendable {
         if let installed {
             NSEvent.removeMonitor(installed)
         }
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        lock.lock()
+        let block = onFire
+        lock.unlock()
+        block()
     }
 
     deinit { clear() }

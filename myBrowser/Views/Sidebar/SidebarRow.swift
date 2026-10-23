@@ -5,7 +5,6 @@ import SwiftUI
 struct SidebarRow: View {
     var item: SidebarItem
     var depth: Int = 0
-    var showsLoadedState: Bool = false
     var onRename: () -> Void
     var onNewFolderInside: () -> Void = {}
 
@@ -16,14 +15,13 @@ struct SidebarRow: View {
     var body: some View {
         let isSelected = model.selectedItemID == item.id && !model.sidebarFocusIsFolder
         let isEditing = interaction.editingID == item.id && item.section != .tabs && !item.isSplit
-        let isLoaded = showsLoadedState && loaded
         let leading = SidebarDropGeometry.rowLeading + CGFloat(depth) * SidebarDropGeometry.indent
 
         HStack(spacing: 0) {
             if item.isSplit {
                 splitSegments(leading: leading, isSelected: isSelected)
             } else {
-                siteButton(title: siteTitle, isSelected: isSelected, isEditing: isEditing, leading: leading)
+                siteButton(title: siteTitle, isEditing: isEditing, leading: leading)
             }
 
             if hovering, !isEditing {
@@ -48,8 +46,7 @@ struct SidebarRow: View {
         .background {
             SidebarSelectionBackground(
                 isSelected: isSelected,
-                isHovering: hovering,
-                isLoaded: isLoaded
+                isHovering: hovering
             )
         }
         .onContinuousHover { phase in
@@ -75,7 +72,7 @@ struct SidebarRow: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private func siteButton(title: String, isSelected: Bool, isEditing: Bool, leading: CGFloat) -> some View {
+    private func siteButton(title: String, isEditing: Bool, leading: CGFloat) -> some View {
         let tab = model.tabs[item.id]
         let icon = tab?.favicon ?? (item.url ?? tab?.url).flatMap { model.favicons.cachedFavicon(for: $0) }
         return Button {
@@ -83,7 +80,6 @@ struct SidebarRow: View {
         } label: {
             HStack(spacing: 8) {
                 FaviconView(image: icon, url: item.url ?? tab?.url, title: title, size: 16)
-                    .opacity(tab?.isLoaded == true || isSelected ? 1 : 0.78)
                 if isEditing {
                     SidebarInlineField(itemID: item.id, title: item.title)
                 } else {
@@ -114,14 +110,14 @@ struct SidebarRow: View {
                         .padding(.horizontal, 4)
                         .accessibilityHidden(true)
                 }
-                splitSegment(member, focused: member.id == focusID, rowSelected: isSelected)
+                splitSegment(member, focused: member.id == focusID)
             }
         }
         .padding(.leading, leading)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func splitSegment(_ member: SidebarItem, focused: Bool, rowSelected: Bool) -> some View {
+    private func splitSegment(_ member: SidebarItem, focused: Bool) -> some View {
         let tab = model.tabs[member.id]
         let title = SidebarTitle.text(for: member, tab: tab)
         let icon = tab?.favicon ?? (member.url ?? tab?.url).flatMap { model.favicons.cachedFavicon(for: $0) }
@@ -131,7 +127,6 @@ struct SidebarRow: View {
         } label: {
             HStack(spacing: 5) {
                 FaviconView(image: icon, url: member.url ?? tab?.url, title: title, size: 16)
-                    .opacity(tab?.isLoaded == true || focused || rowSelected ? 1 : 0.78)
                 FlatLabel(text: title, prominence: focused ? .strong : .quiet)
                 Spacer(minLength: 0)
             }
@@ -142,15 +137,6 @@ struct SidebarRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel(title)
         .accessibilityAddTraits(focused ? .isSelected : [])
-    }
-
-    /// The open tab keeps its loaded wash. A split uses the focused pane.
-    private var loaded: Bool {
-        if item.isSplit {
-            guard let focus = model.resolvedFocus(in: item.id) else { return false }
-            return model.tabs[focus]?.isLoaded == true
-        }
-        return model.tabs[item.id]?.isLoaded == true
     }
 
     private var siteTitle: String {

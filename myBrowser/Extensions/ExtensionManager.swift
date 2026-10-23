@@ -76,6 +76,7 @@ final class ExtensionManager {
         configuration.defaultWebsiteDataStore = store
         configuration.webViewConfiguration.websiteDataStore = store
         configuration.webViewConfiguration.applicationNameForUserAgent = ProfileManager.safariApplicationName
+        PageRenderingRate.apply(to: configuration.webViewConfiguration.preferences)
         let controller = WKWebExtensionController(configuration: configuration)
         controller.delegate = bridge
         controllers[profileID] = controller

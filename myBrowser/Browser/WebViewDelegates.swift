@@ -23,19 +23,34 @@ final class TabWebDelegate: NSObject, WKUIDelegate, WKNavigationDelegate, WKDown
 
     func webView(
         _ webView: WKWebView,
-        decidePolicyFor navigationAction: WKNavigationAction
-    ) async -> WKNavigationActionPolicy {
+        decidePolicyFor navigationAction: WKNavigationAction,
+        preferences: WKWebpagePreferences
+    ) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
+        // Never the user-mediated interstitial. Exempt hosts are loaded as http and stay there.
+        preferences.preferredHTTPSNavigationPolicy = .keepAsRequested
         if navigationAction.shouldPerformDownload {
-            return .download
+            return (.download, preferences)
         }
         // Cmd-click a link: background tab, leave the current page alone.
         // Cancel so a target=_blank click is not also delivered to `createWebViewWith`.
         if navigationAction.navigationType == .linkActivated,
            navigationAction.modifierFlags.contains(.command) {
             tab?.open(url: navigationAction.request.url, inBackground: true)
-            return .cancel
+            return (.cancel, preferences)
         }
-        return .allow
+        return (.allow, preferences)
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        tab?.httpsFirstDidCommit()
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        tab?.fallbackFromHTTPSFirst(error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        tab?.fallbackFromHTTPSFirst(error)
     }
 
     func webView(

@@ -9,7 +9,7 @@ struct CommandBarModelTests {
         let bar = CommandBarModel(browser: browser, mode: .newTab, engine: .duckDuckGo)
 
         bar.query = "example.com/path?q=1"
-        #expect(bar.rows.first == .open(title: "Open https://example.com/path?q=1", url: URL(string: "https://example.com/path?q=1")!))
+        #expect(bar.rows.first == .open(title: "Open https://example.com/path?q=1", url: URL(string: "https://example.com/path?q=1")!, httpsFirst: true))
 
         bar.query = "cats & dogs"
         let searchURL = SearchEngine.duckDuckGo.searchURL(for: "cats & dogs")
@@ -17,11 +17,12 @@ struct CommandBarModelTests {
 
         let editing = CommandBarModel(browser: browser, mode: .editCurrent, engine: .google)
         editing.query = "example.com"
-        guard case .open(_, let url) = editing.rows.first else {
+        guard case .open(_, let url, let httpsFirst) = editing.rows.first else {
             Issue.record("expected an open row")
             return
         }
         #expect(url.absoluteString == "https://example.com")
+        #expect(httpsFirst)
         #expect(editing.mode == .editCurrent)
     }
 

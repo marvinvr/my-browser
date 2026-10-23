@@ -42,6 +42,6 @@ enum SidebarMotion {
     static let space = Animation.spring(response: 0.34, dampingFraction: 0.9)
     static let selection = row
     static let list = row
-    /// Folder open/close. No bounce, and short enough that the chevron and the rows below finish together.
+    /// Folder open/close. No bounce, and short enough that the folder glyph and the rows below finish together.
     static let disclosure = Animation.spring(duration: 0.2, bounce: 0)
 }

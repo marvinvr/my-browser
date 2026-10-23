@@ -28,7 +28,6 @@ struct PinnedTree: View, Equatable {
                     SidebarRow(
                         item: item,
                         depth: depth,
-                        showsLoadedState: true,
                         onRename: { onRename(item) },
                         onNewFolderInside: { onNewFolder(item.parentID) }
                     )
@@ -106,17 +105,16 @@ private struct FolderRow: View {
             NSApp.keyWindow?.makeFirstResponder(nil)
             model.toggleExpanded(item.id)
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.tertiary)
-                    .rotationEffect(.degrees(item.isExpanded ? 90 : 0))
-                    .frame(width: 12, height: 12)
-                    .animation(SidebarMotion.disclosure, value: item.isExpanded)
-                Image(systemName: "folder")
+            HStack(spacing: 8) {
+                // No open-folder symbol. The fill is the expanded state and magic-replaces
+                // with the outline on the same spring as the rows below. The frame stays put.
+                Image(systemName: item.isExpanded ? "folder.fill" : "folder")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
-                    .frame(width: 16)
+                    // Replace runs on its own timeline. Double speed finishes with the 0.2s spring.
+                    .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp), options: .speed(2)))
+                    .frame(width: 16, height: 16)
+                    .accessibilityHidden(true)
                 if isEditing {
                     SidebarInlineField(itemID: item.id, title: item.title)
                 } else {
@@ -139,7 +137,7 @@ private struct FolderRow: View {
         })
         .frame(height: SidebarMetrics.rowHeight)
         .background {
-            SidebarSelectionBackground(isSelected: isSelected, isHovering: hovering, isLoaded: false)
+            SidebarSelectionBackground(isSelected: isSelected, isHovering: hovering)
         }
         .onContinuousHover { phase in
             if interaction.draggingID == item.id { return }

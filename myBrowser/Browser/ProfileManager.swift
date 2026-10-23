@@ -19,18 +19,30 @@ final class ProfileManager {
     func configuration(for profileID: UUID) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore(for: profileID)
-        configuration.preferences.isElementFullscreenEnabled = true
-        // AirPlay defaults to allowed; set it explicitly so a future default change can't turn it off.
-        // Picture-in-Picture has no macOS configuration flag (the iOS property is unavailable here) and stays at the system default, which allows it.
-        configuration.allowsAirPlayForMediaPlayback = true
-        // Private preference. Turning it on is what makes the Develop menu / Web Inspector available.
-        configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
-        // Appended to WebKit's default UA so sites see a Safari-shaped token instead of a bare WebKit shell.
-        configuration.applicationNameForUserAgent = Self.safariApplicationName
+        Self.prepare(configuration)
         if let controller = extensionController?(profileID) {
             configuration.webExtensionController = controller
         }
         return configuration
+    }
+
+    /// Preferences for a configuration no web view owns yet. Popups and extension pages only need
+    /// `PageRenderingRate.apply`; this is the full set for a tab the app creates itself.
+    static func prepare(_ configuration: WKWebViewConfiguration) {
+        // Known-host upgrade would rewrite an explicit http:// and tailnet names. HTTPS-first
+        // for public hosts is decided in URLInput and falls back in the navigation delegate.
+        configuration.upgradeKnownHostsToHTTPS = false
+        configuration.defaultWebpagePreferences.preferredHTTPSNavigationPolicy = .keepAsRequested
+        configuration.preferences.isElementFullscreenEnabled = true
+        // AirPlay defaults to allowed; set it explicitly so a future default change can't turn it off.
+        configuration.allowsAirPlayForMediaPlayback = true
+        // macOS has no public allowsPictureInPictureMediaPlayback, and the private preference defaults to off.
+        PictureInPictureWebKit.enable(configuration.preferences)
+        // Private preference. Turning it on is what makes the Develop menu / Web Inspector available.
+        configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        // Appended to WebKit's default UA so sites see a Safari-shaped token instead of a bare WebKit shell.
+        configuration.applicationNameForUserAgent = safariApplicationName
+        PageRenderingRate.apply(to: configuration.preferences)
     }
 
     /// Safari-like application token for macOS 26. `applicationNameForUserAgent` is appended to the stock WebKit UA.

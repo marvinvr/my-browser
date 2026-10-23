@@ -51,7 +51,7 @@ final class CommandBarModel {
     }
 
     enum Row: Identifiable, Equatable {
-        case open(title: String, url: URL)
+        case open(title: String, url: URL, httpsFirst: Bool)
         case search(title: String, url: URL)
         /// A favorite, pin or tab in the current space.
         case tab(SidebarItem)
@@ -68,7 +68,7 @@ final class CommandBarModel {
 
         var title: String {
             switch self {
-            case .open(let title, _), .search(let title, _): title
+            case .open(let title, _, _), .search(let title, _): title
             case .tab(let item): item.title
             case .action(let action): action.title
             }
@@ -76,7 +76,7 @@ final class CommandBarModel {
 
         var url: URL? {
             switch self {
-            case .open(_, let url), .search(_, let url): url
+            case .open(_, let url, _), .search(_, let url): url
             case .tab(let item): item.url
             case .action: nil
             }
@@ -100,6 +100,7 @@ final class CommandBarModel {
     private(set) var selection = 0
 
     private let browser: BrowserModel
+    private var lookupTask: Task<Void, Never>?
 
     init(browser: BrowserModel, mode: BrowserModel.CommandBarMode, engine: SearchEngine = .current) {
         self.browser = browser
@@ -118,22 +119,45 @@ final class CommandBarModel {
 
     func execute() {
         guard rows.indices.contains(selection) else { return }
-        execute(rows[selection])
+        let row = rows[selection]
+        // A bare name may still be a search until DNS answers. Enter waits for that answer.
+        if selection == 0, case .search = row, let name = URLInput.bareHostCandidate(query) {
+            lookupTask?.cancel()
+            let typed = query
+            Task { @MainActor [weak self] in
+                let found = await BareHostLookup.resolves(name)
+                guard let self, self.browser.commandBarMode != nil else { return }
+                guard URLInput.bareHostCandidate(self.query) == name || self.query == typed else { return }
+                if found, case .url(let url) = URLInput.resolve(self.query) {
+                    self.commit(url: url, httpsFirst: false)
+                    return
+                }
+                self.execute(row)
+            }
+            return
+        }
+        execute(row)
     }
 
     func execute(_ row: Row) {
         switch row {
-        case .open(_, let url), .search(_, let url):
-            switch mode {
-            case .newTab: browser.openInNewTab(url)
-            case .editCurrent: browser.openInCurrentTab(url)
-            }
+        case .open(_, let url, let httpsFirst):
+            commit(url: url, httpsFirst: httpsFirst)
+        case .search(_, let url):
+            commit(url: url, httpsFirst: false)
         case .tab(let item):
             browser.select(item.id)
+            browser.hideCommandBar()
         case .action(let action):
             let keepOpen = action == .openInSplit && browser.openInSplitView()
             if !keepOpen { browser.hideCommandBar() }
-            return
+        }
+    }
+
+    private func commit(url: URL, httpsFirst: Bool) {
+        switch mode {
+        case .newTab: browser.openInNewTab(url, httpsFirst: httpsFirst)
+        case .editCurrent: browser.openInCurrentTab(url, httpsFirst: httpsFirst)
         }
         browser.hideCommandBar()
     }
@@ -188,7 +212,11 @@ final class CommandBarModel {
         } else {
             switch URLInput.resolve(trimmed) {
             case .url(let url):
-                next.append(.open(title: "Open \(url.absoluteString)", url: url))
+                next.append(.open(
+                    title: "Open \(url.absoluteString)",
+                    url: url,
+                    httpsFirst: URLInput.isHTTPSFirst(trimmed)
+                ))
             case .search(let text):
                 let url = engine.searchURL(for: text)
                 next.append(.search(title: "Search \(engine.displayName) for '\(text)'", url: url))
@@ -205,6 +233,26 @@ final class CommandBarModel {
         rows = next
         if resetSelection || !rows.indices.contains(selection) {
             selection = 0
+        }
+        if let name = URLInput.bareHostCandidate(trimmed), case .search = next.first {
+            scheduleBareHostLookup(name)
+        } else {
+            lookupTask?.cancel()
+        }
+    }
+
+    /// Fills the DNS cache, then rebuilds so `photos` becomes Open once it resolves.
+    private func scheduleBareHostLookup(_ name: String) {
+        lookupTask?.cancel()
+        lookupTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled, let self else { return }
+            let found = await BareHostLookup.resolves(name)
+            guard !Task.isCancelled, found else { return }
+            var current = self.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            while current.hasSuffix(".") { current.removeLast() }
+            guard current == name else { return }
+            self.rebuild(resetSelection: false)
         }
     }
 

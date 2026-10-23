@@ -38,7 +38,9 @@ struct MainWindowView: View {
         .focusedSceneValue(\.browserNavigation, BrowserNavigationState(
             canGoBack: model.canGoBack,
             canGoForward: model.canGoForward,
-            canReload: model.canReload
+            canReload: model.canReload,
+            canPictureInPicture: model.canPictureInPicture,
+            isPictureInPictureActive: model.pictureInPictureActive
         ))
         .focusedSceneValue(\.sidebarIsVisible, sidebarVisible)
         .onAppear {
