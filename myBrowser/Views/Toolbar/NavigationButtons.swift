@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Back, forward, and reload/stop. Reads `BrowserModel` from the environment.
 ///
-/// The reload glyph stays on a fixed frame and only crossfades to stop once loading has
-/// lasted 150ms, so a fast load or a one-frame `isLoading` blip does not move the bar.
+/// While a page loads, the reload arrow itself spins. A load shorter than 150ms does not
+/// start the spin. When loading ends the arrow eases to upright. Clicking during a load stops it.
 struct NavigationButtons: View {
     var chrome: ToolbarChrome? = nil
 
@@ -71,28 +71,36 @@ struct ToolbarIconButton: View {
     }
 }
 
-/// Reload and stop occupy the same frame. Opacity swaps them; the bar does not relayout.
+/// The reload arrow spins for the duration of a load, then eases back to upright.
 private struct ReloadButton: View {
     var symbol: Color
 
     @Environment(BrowserModel.self) private var model
-    @State private var showsStop = false
+    @State private var phase: Phase = .idle
     @State private var pending: Task<Void, Never>?
+    @State private var hovering = false
 
     private var loading: Bool { model.selectedTab?.isLoading == true }
     private var tabID: UUID? { model.selectedTab?.id }
+    /// One turn of `arrow.clockwise` while a page is loading.
+    private var revolution: TimeInterval { 0.7 }
+    private var animating: Bool {
+        switch phase {
+        case .spinning, .settling: true
+        case .idle: false
+        }
+    }
 
     var body: some View {
         Button(action: activate) {
-            ZStack {
+            TimelineView(.animation(minimumInterval: 1 / 60, paused: !animating)) { context in
                 Image(systemName: "arrow.clockwise")
-                    .opacity(showsStop ? 0 : 1)
-                Image(systemName: "stop.fill")
-                    .opacity(showsStop ? 1 : 0)
+                    .font(.system(size: 12, weight: .semibold))
+                    .symbolRenderingMode(.monochrome)
+                    .rotationEffect(.degrees(displayedAngle(at: context.date)))
+                    .transaction { $0.disablesAnimations = true }
+                    .frame(width: SidebarMetrics.toolbarControl, height: SidebarMetrics.toolbarControl)
             }
-            .font(.system(size: 12, weight: .semibold))
-            .symbolRenderingMode(.monochrome)
-            .frame(width: SidebarMetrics.toolbarControl, height: SidebarMetrics.toolbarControl)
             .background {
                 Circle().fill(symbol.opacity(hovering && model.selectedTab != nil ? 0.16 : 0))
             }
@@ -102,11 +110,10 @@ private struct ReloadButton: View {
         .foregroundStyle(symbol)
         .opacity(model.selectedTab == nil ? 0.38 : 1)
         .disabled(model.selectedTab == nil)
-        .help(showsStop ? "Stop" : "Reload")
-        .accessibilityLabel(showsStop ? "Stop" : "Reload")
+        .help(loading ? "Stop" : "Reload")
+        .accessibilityLabel(loading ? "Stop" : "Reload")
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
-        .animation(.easeInOut(duration: 0.15), value: showsStop)
         .onAppear { adopt(loading: loading, immediate: false) }
         .onChange(of: loading) { _, now in
             adopt(loading: now, immediate: false)
@@ -116,29 +123,111 @@ private struct ReloadButton: View {
         }
     }
 
-    @State private var hovering = false
-
     private func activate() {
-        if showsStop {
+        if loading {
             model.selectedTab?.stopLoading()
         } else {
             model.selectedTab?.reload()
         }
     }
 
-    /// `immediate` is for a tab that is already loading: show stop without waiting out a flash window.
+    /// `immediate` skips the flash window, for a tab that is already loading.
     private func adopt(loading: Bool, immediate: Bool) {
         pending?.cancel()
         pending = nil
-        if immediate {
-            showsStop = loading
+        if loading {
+            if immediate {
+                beginSpin()
+            } else if !isSpinning {
+                pending = Task {
+                    try? await Task.sleep(for: .milliseconds(150))
+                    guard !Task.isCancelled else { return }
+                    guard model.selectedTab?.isLoading == true else { return }
+                    beginSpin()
+                }
+            }
+        } else if immediate {
+            phase = .idle
+        } else {
+            beginSettle()
+        }
+    }
+
+    private var isSpinning: Bool {
+        if case .spinning = phase { return true }
+        return false
+    }
+
+    private func beginSpin() {
+        let now = Date()
+        phase = .spinning(from: now, base: displayedAngle(at: now))
+    }
+
+    /// Coast to the upright arrow, then decelerate so the stop is not a snap.
+    private func beginSettle() {
+        guard case .spinning = phase else { return }
+        let now = Date()
+        let current = displayedAngle(at: now)
+        let omega = 360 / revolution
+        let positive = positiveMod(current, 360)
+        if positive < 1.5 {
+            phase = .idle
             return
         }
+        let easeDistance = 72.0
+        var coast = 360 - positive
+        if coast < easeDistance { coast += 360 }
+        let tail = easeDistance
+        let linear = coast - tail
+        let linearTime = linear / omega
+        let easeTime = tail * 3 / omega
+        phase = .settling(
+            from: now,
+            start: current,
+            linearTime: linearTime,
+            easeTime: easeTime,
+            omega: omega,
+            tail: tail
+        )
         pending = Task {
-            try? await Task.sleep(for: .milliseconds(150))
+            try? await Task.sleep(for: .seconds(linearTime + easeTime))
             guard !Task.isCancelled else { return }
-            guard (model.selectedTab?.isLoading == true) == loading else { return }
-            showsStop = loading
+            phase = .idle
         }
+    }
+
+    private func displayedAngle(at date: Date) -> Double {
+        switch phase {
+        case .idle:
+            return 0
+        case .spinning(let from, let base):
+            return base + date.timeIntervalSince(from) / revolution * 360
+        case .settling(let from, let start, let linearTime, let easeTime, let omega, let tail):
+            let elapsed = date.timeIntervalSince(from)
+            if elapsed <= linearTime {
+                return start + omega * elapsed
+            }
+            let t = min(1, (elapsed - linearTime) / easeTime)
+            let eased = 1 - pow(1 - t, 3)
+            return start + omega * linearTime + tail * eased
+        }
+    }
+
+    private func positiveMod(_ value: Double, _ modulus: Double) -> Double {
+        let remainder = value.truncatingRemainder(dividingBy: modulus)
+        return remainder < 0 ? remainder + modulus : remainder
+    }
+
+    private enum Phase {
+        case idle
+        case spinning(from: Date, base: Double)
+        case settling(
+            from: Date,
+            start: Double,
+            linearTime: TimeInterval,
+            easeTime: TimeInterval,
+            omega: Double,
+            tail: Double
+        )
     }
 }
