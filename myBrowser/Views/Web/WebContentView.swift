@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Hosts the selected tab's web view. The web view is created once and moved between selections; it is never rebuilt just to show it again.
+/// Hosts the focused pane (`selectedTab`). Side-by-side layout reads `BrowserModel.displayedContent`.
+/// Phase 1 shows that one web view. The web view is created once and moved between selections; it is never rebuilt just to show it again.
 struct WebContentView: View {
     @Environment(BrowserModel.self) private var model
 

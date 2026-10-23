@@ -14,12 +14,13 @@ struct SidebarRow: View {
     @State private var hovering = false
 
     var body: some View {
-        let tab = model.tabs[item.id]
-        let title = SidebarTitle.text(for: item, tab: tab)
+        let shown = displayItem
+        let tab = model.tabs[shown.id]
+        let title = SidebarTitle.text(for: shown, tab: tab)
         let isSelected = model.selectedItemID == item.id && !folderHoldsFocus
-        let isEditing = interaction.editingID == item.id && item.section != .tabs
+        let isEditing = interaction.editingID == item.id && item.section != .tabs && !item.isSplit
         let isLoaded = tab?.isLoaded == true
-        let icon = tab?.favicon ?? (item.url ?? tab?.url).flatMap { model.favicons.cachedFavicon(for: $0) }
+        let icon = tab?.favicon ?? (shown.url ?? tab?.url).flatMap { model.favicons.cachedFavicon(for: $0) }
         let leading = SidebarDropGeometry.rowLeading + CGFloat(depth) * SidebarDropGeometry.indent
 
         HStack(spacing: 0) {
@@ -27,7 +28,7 @@ struct SidebarRow: View {
                 model.select(item.id)
             } label: {
                 HStack(spacing: 8) {
-                    FaviconView(image: icon, url: item.url ?? tab?.url, title: title, size: 16)
+                    FaviconView(image: icon, url: shown.url ?? tab?.url, title: title, size: 16)
                         .opacity(isLoaded || isSelected ? 1 : 0.78)
                     if isEditing {
                         SidebarInlineField(itemID: item.id, title: item.title)
@@ -42,7 +43,7 @@ struct SidebarRow: View {
             }
             .buttonStyle(.plain)
             .simultaneousGesture(TapGesture(count: 2).onEnded {
-                guard item.section != .tabs else { return }
+                guard item.section != .tabs, !item.isSplit else { return }
                 interaction.editingID = item.id
             })
 
@@ -89,6 +90,12 @@ struct SidebarRow: View {
         .modifier(SidebarItemMenu(item: item, onRename: onRename, onNewFolderInside: onNewFolderInside))
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    /// A split row uses the first pane's title and icon. Select, close, and drag stay on the split.
+    private var displayItem: SidebarItem {
+        guard item.isSplit else { return item }
+        return model.library.splitMembers(of: item.id).first ?? item
     }
 
     /// The open tab keeps its loaded wash. The selection chip moves to a focused folder.

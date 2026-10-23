@@ -132,13 +132,23 @@ final class LibraryStore {
     }
 
     /// Moves an item to another section, folder, or position within its space.
-    /// A folder's descendants change section with it. Folders cannot move into `.favorites` or `.tabs` (those sections are flat sites); that call is ignored.
+    /// A folder's descendants, and a split's members, change section with it.
+    /// Folders cannot move into `.favorites` or `.tabs`. Splits cannot move into `.favorites`.
+    /// Parenting anything to a split is ignored; use `addToSplit`. A member that leaves its
+    /// split drops its fraction, and a split left with one member dissolves.
     func moveItem(_ id: UUID, to section: SidebarItem.Section, parentID: UUID? = nil, at position: Position = .end) {
         guard let item = items[id], item.deletedAt == nil else { return }
         if item.isFolder, section == .favorites || section == .tabs {
             return
         }
+        if item.isSplit, section == .favorites {
+            return
+        }
         let resolvedParent = section == .pinned ? parentID : nil
+        if let resolvedParent, items[resolvedParent]?.kind == .split {
+            return
+        }
+        let sourceSplit = splitContainer(of: id)?.id
         performBatch {
             let key = sortKey(for: position, parentID: resolvedParent, section: section, spaceID: item.spaceID, excluding: id)
             let sectionChanged = item.section != section
@@ -146,10 +156,22 @@ final class LibraryStore {
                 $0.section = section
                 $0.parentID = resolvedParent
                 $0.sortKey = key
+                if let sourceSplit, resolvedParent != sourceSplit {
+                    $0.splitFraction = nil
+                }
             }
-            guard item.isFolder, sectionChanged else { return }
-            for descendant in descendantIDs(of: id, spaceID: item.spaceID) {
-                updateItem(descendant) { $0.section = section }
+            if item.isFolder, sectionChanged {
+                for descendant in descendantIDs(of: id, spaceID: item.spaceID) {
+                    updateItem(descendant) { $0.section = section }
+                }
+            } else if item.isSplit, sectionChanged {
+                for descendant in descendantIDs(of: id, spaceID: item.spaceID) where items[descendant]?.deletedAt == nil {
+                    updateItem(descendant) { $0.section = section }
+                }
+            }
+            if let sourceSplit, resolvedParent != sourceSplit {
+                clearSplitFractions(sourceSplit)
+                reconcileSplit(sourceSplit)
             }
         }
     }
@@ -162,6 +184,8 @@ final class LibraryStore {
         restored.section = .tabs
         restored.kind = .site
         restored.parentID = nil
+        restored.splitFraction = nil
+        restored.splitAxis = nil
         restored.sortKey = sortKey(for: position, parentID: nil, section: .tabs, spaceID: item.spaceID, excluding: item.id)
         restored.modifiedAt = .now
         items[restored.id] = restored
@@ -169,12 +193,19 @@ final class LibraryStore {
         return restored
     }
 
-    /// Synced items get a tombstone (folders: recursively); `.tabs` items are removed.
+    /// Synced items get a tombstone (folders and splits: the whole subtree); `.tabs` items are removed.
+    /// Deleting a split member dissolves the split when only one pane would remain.
     func deleteItem(_ id: UUID) {
-        guard items[id] != nil else { return }
+        guard let existing = items[id] else { return }
+        let parentSplitID = existing.parentID.flatMap { parent -> UUID? in
+            items[parent]?.kind == .split ? parent : nil
+        }
         performBatch {
             var seen: Set<UUID> = []
             deleteItemSubtree(id, seen: &seen)
+            if let parentSplitID {
+                reconcileSplit(parentSplitID)
+            }
         }
     }
 
@@ -241,11 +272,12 @@ final class LibraryStore {
 
     private func deleteItemSubtree(_ id: UUID, seen: inout Set<UUID>) {
         guard seen.insert(id).inserted, let item = items[id] else { return }
+        // Tabs are local, but a tabs split still owns member rows. Both kinds take their children.
+        let childIDs = items.values.filter { $0.parentID == id }.map(\.id)
+        for childID in childIDs {
+            deleteItemSubtree(childID, seen: &seen)
+        }
         if item.isSynced {
-            let childIDs = items.values.filter { $0.parentID == id }.map(\.id)
-            for childID in childIDs {
-                deleteItemSubtree(childID, seen: &seen)
-            }
             updateItem(id) { $0.deletedAt = .now }
         } else {
             items[id] = nil

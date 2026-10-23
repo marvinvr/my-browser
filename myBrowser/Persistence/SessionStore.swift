@@ -16,6 +16,8 @@ final class SessionStore {
     var selectedItemBySpace: [UUID: UUID] = [:] { didSet { didChange() } }
     /// `WKWebView.interactionState` per tab id.
     var interactionStates: [UUID: Data] = [:] { didSet { didChange() } }
+    /// Focused pane of each split. Local only: the library records the panes, not which one is current.
+    var focusedPaneBySplit: [UUID: UUID] = [:] { didSet { didChange() } }
     /// Most recent last.
     var closedTabs: [ClosedTab] = [] {
         didSet {
@@ -105,6 +107,7 @@ final class SessionStore {
         selectedSpaceID = snapshot.selectedSpaceID
         selectedItemBySpace = snapshot.selectedItemBySpace
         interactionStates = snapshot.interactionStates
+        focusedPaneBySplit = snapshot.focusedPaneBySplit
         isSidebarVisible = snapshot.isSidebarVisible
         closedTabs = Array(snapshot.closedTabs.suffix(Self.closedTabLimit))
         suppressSave = false
@@ -120,7 +123,8 @@ final class SessionStore {
             selectedItemBySpace: selectedItemBySpace,
             interactionStates: interactionStates,
             closedTabs: closedTabs,
-            isSidebarVisible: isSidebarVisible
+            isSidebarVisible: isSidebarVisible,
+            focusedPaneBySplit: focusedPaneBySplit
         )
     }
 
@@ -136,4 +140,56 @@ nonisolated private struct SessionSnapshot: Codable, Sendable {
     var interactionStates: [UUID: Data]
     var closedTabs: [SessionStore.ClosedTab]
     var isSidebarVisible: Bool
+    /// Missing in session files written before split view.
+    var focusedPaneBySplit: [UUID: UUID]
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case selectedSpaceID
+        case selectedItemBySpace
+        case interactionStates
+        case closedTabs
+        case isSidebarVisible
+        case focusedPaneBySplit
+    }
+
+    init(
+        schemaVersion: Int,
+        selectedSpaceID: UUID?,
+        selectedItemBySpace: [UUID: UUID],
+        interactionStates: [UUID: Data],
+        closedTabs: [SessionStore.ClosedTab],
+        isSidebarVisible: Bool,
+        focusedPaneBySplit: [UUID: UUID]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.selectedSpaceID = selectedSpaceID
+        self.selectedItemBySpace = selectedItemBySpace
+        self.interactionStates = interactionStates
+        self.closedTabs = closedTabs
+        self.isSidebarVisible = isSidebarVisible
+        self.focusedPaneBySplit = focusedPaneBySplit
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        selectedSpaceID = try container.decodeIfPresent(UUID.self, forKey: .selectedSpaceID)
+        selectedItemBySpace = try container.decode([UUID: UUID].self, forKey: .selectedItemBySpace)
+        interactionStates = try container.decode([UUID: Data].self, forKey: .interactionStates)
+        closedTabs = try container.decode([SessionStore.ClosedTab].self, forKey: .closedTabs)
+        isSidebarVisible = try container.decode(Bool.self, forKey: .isSidebarVisible)
+        focusedPaneBySplit = try container.decodeIfPresent([UUID: UUID].self, forKey: .focusedPaneBySplit) ?? [:]
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encodeIfPresent(selectedSpaceID, forKey: .selectedSpaceID)
+        try container.encode(selectedItemBySpace, forKey: .selectedItemBySpace)
+        try container.encode(interactionStates, forKey: .interactionStates)
+        try container.encode(closedTabs, forKey: .closedTabs)
+        try container.encode(isSidebarVisible, forKey: .isSidebarVisible)
+        try container.encode(focusedPaneBySplit, forKey: .focusedPaneBySplit)
+    }
 }

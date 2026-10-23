@@ -3,11 +3,23 @@ import Foundation
 extension LibraryStore {
     /// Whether `id` may land in `section` of `spaceID` under `parentID`.
     ///
-    /// Favorites and tabs take sites only, and only at the root. A folder cannot move into
+    /// Favorites take sites only, at the root. Tabs take sites and splits, at the root.
+    /// A split cannot land in favorites or inside another split. A folder cannot move into
     /// itself or one of its descendants. `parentID` is only valid for a live folder in the
     /// destination space's pinned section.
     func canDrop(_ id: UUID, toSpace spaceID: UUID, section: SidebarItem.Section, parentID: UUID?) -> Bool {
         guard let moving = item(id), space(spaceID) != nil else { return false }
+        if moving.isSplit {
+            if section == .favorites { return false }
+            if section != .pinned { return parentID == nil }
+            guard let parentID else { return true }
+            if parentID == id { return false }
+            guard let parent = item(parentID),
+                  parent.isFolder,
+                  parent.spaceID == spaceID,
+                  parent.section == .pinned else { return false }
+            return !descendantIDs(of: id, spaceID: moving.spaceID).contains(parentID)
+        }
         if section != .pinned {
             return !moving.isFolder && parentID == nil
         }
@@ -27,9 +39,10 @@ extension LibraryStore {
         item.isFolder ? .pinned : item.section
     }
 
-    /// Moves `id` (and, for a folder, its live descendants) to another space, section, or slot.
+    /// Moves `id` (and, for a folder or a split, its live descendants) to another space, section, or slot.
     ///
-    /// Descendants keep their parent links. Their `spaceID` and `section` change with the folder.
+    /// Descendants keep their parent links. Their `spaceID` and `section` change with the folder
+    /// or the split. A member dragged out of its split dissolves the split when one pane is left.
     /// One batch: a single `onChange` and one scheduled save. Rejected drops change nothing.
     func move(
         _ id: UUID,
@@ -43,7 +56,9 @@ extension LibraryStore {
         if case .after(let other) = position, other == id { return }
 
         let resolvedParent = section == .pinned ? parentID : nil
-        let descendants = moving.isFolder
+        let sourceSplit = splitContainer(of: id)?.id
+        let carriesChildren = moving.isFolder || moving.isSplit
+        let descendants = carriesChildren
             ? descendantIDs(of: id, spaceID: moving.spaceID).filter { items[$0]?.deletedAt == nil }
             : []
 
@@ -60,13 +75,21 @@ extension LibraryStore {
                 $0.section = section
                 $0.parentID = resolvedParent
                 $0.sortKey = key
-            }
-            guard moving.isFolder else { return }
-            for descendant in descendants {
-                updateItem(descendant) {
-                    $0.spaceID = spaceID
-                    $0.section = section
+                if let sourceSplit, resolvedParent != sourceSplit {
+                    $0.splitFraction = nil
                 }
+            }
+            if carriesChildren {
+                for descendant in descendants {
+                    updateItem(descendant) {
+                        $0.spaceID = spaceID
+                        $0.section = section
+                    }
+                }
+            }
+            if let sourceSplit, resolvedParent != sourceSplit {
+                clearSplitFractions(sourceSplit)
+                reconcileSplit(sourceSplit)
             }
         }
     }
