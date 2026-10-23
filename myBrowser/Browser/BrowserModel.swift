@@ -142,6 +142,8 @@ final class BrowserModel {
     @ObservationIgnored var pictureInPictureForegroundID: UUID?
     @ObservationIgnored var pictureInPictureEnterGeneration = 0
     @ObservationIgnored var pictureInPictureIgnoreFocusUntil = Date.distantPast
+    /// Set when the user closes the panel, until that video pauses and plays again.
+    @ObservationIgnored var pictureInPictureAutoBlock: PictureInPictureAutoBlock?
     @ObservationIgnored var pictureInPictureWindowFocused: Bool?
     @ObservationIgnored var pictureInPictureFocusTask: Task<Void, Never>?
     /// Content card. The view installs the closures. Nil closures in tests.

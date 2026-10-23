@@ -72,8 +72,10 @@ final class BrowserTab: NSObject, Identifiable {
     @ObservationIgnored var notificationRelay: WebNotificationRelay?
     /// Latest frame info per document. WebKit hands out a new `WKFrameInfo` on every message.
     @ObservationIgnored var pictureInPictureFrames: [String: PictureInPictureFrame] = [:]
-    /// Set while we close PiP ourselves, so the system panel's return path is not also a tab switch.
+    /// Set while we close PiP ourselves, so that end is not treated as the panel's close button.
     @ObservationIgnored var suppressPictureInPictureReturn = false
+    /// The panel's return-to-page control. Stays set until the mode drops, so that end does not pause.
+    @ObservationIgnored var pictureInPictureRestoreArmed = false
     /// Stays true briefly after the last "playing" report. Hiding the app pauses the element
     /// before the focus notification runs, and auto PiP still needs to catch that video.
     @ObservationIgnored var pictureInPictureEligibleUntil = Date.distantPast

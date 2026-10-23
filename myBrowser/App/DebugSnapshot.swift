@@ -286,8 +286,8 @@ enum DebugSnapshot {
         case "pip":
             model.togglePictureInPicture()
         case "release":
-            // The system panel's return control leaves PiP without our suppress flag.
-            // This drives that same page-side exit so the focus policy can be checked headless.
+            // The panel's close button leaves PiP without our suppress flag and without
+            // `_webViewFullscreenMayReturnToInline`. This drives that page-side exit.
             if let id = model.pictureInPictureTabID, let tab = model.tabs[id] {
                 tab.webView.map { webView in
                     PictureInPictureWebKit.evaluate(

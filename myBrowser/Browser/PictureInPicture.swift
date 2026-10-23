@@ -28,7 +28,28 @@ struct PictureInPictureSession: Equatable, Sendable {
 enum PictureInPictureEffect: Equatable, Sendable {
     case enter(UUID, PictureInPictureOrigin)
     case exit(UUID)
+    /// Panel close. Pause inline. Do not select the tab or activate the window.
+    case pause(UUID)
+    /// Panel return-to-page. Select the tab and bring the window forward.
     case focus(UUID)
+}
+
+/// Why Picture in Picture left the system panel.
+enum PictureInPictureDismissal: Equatable, Sendable {
+    /// Toolbar, shortcut, or coming back to the tab. Playback continues inline.
+    case requested
+    /// The panel's close button.
+    case stop
+    /// The panel's return-to-page button.
+    case restore
+}
+
+/// After the user closes the panel, auto-enter stays off until that video has paused and plays again.
+struct PictureInPictureAutoBlock: Equatable, Sendable {
+    var tabID: UUID
+    var sawIdle: Bool
+    /// A playback report in this window is still the one the user just closed.
+    var holdUntil: Date
 }
 
 /// Decides when a playing tab enters or leaves system Picture in Picture.
@@ -98,14 +119,55 @@ enum PictureInPicturePolicy {
         return PictureInPictureSession(tabID: tabID, origin: session?.origin ?? .manual)
     }
 
+    /// The panel's return control. Focus now; the session ends when the mode actually drops.
+    static func restore(
+        session: PictureInPictureSession?,
+        tabID: UUID
+    ) -> (PictureInPictureSession?, [PictureInPictureEffect]) {
+        guard session == nil || session?.tabID == tabID else { return (session, []) }
+        return (session, [.focus(tabID)])
+    }
+
     static func ended(
         session: PictureInPictureSession?,
         tabID: UUID,
-        requestedByUs: Bool
+        dismissal: PictureInPictureDismissal
     ) -> (PictureInPictureSession?, [PictureInPictureEffect]) {
         guard session?.tabID == tabID else { return (session, []) }
-        if requestedByUs { return (nil, []) }
-        return (nil, [.focus(tabID)])
+        switch dismissal {
+        case .requested:
+            return (nil, [])
+        case .stop:
+            return (nil, [.pause(tabID)])
+        case .restore:
+            return (nil, [.focus(tabID)])
+        }
+    }
+
+    static func userStopBlock(tabID: UUID, now: Date = Date()) -> PictureInPictureAutoBlock {
+        PictureInPictureAutoBlock(tabID: tabID, sawIdle: false, holdUntil: now.addingTimeInterval(2))
+    }
+
+    /// `canEnter` is the tab's raw eligibility, including a video that is still playing in the same breath as the close.
+    /// While `sawIdle` is false that playback must not open the panel again. A later pause, then a new play, may.
+    /// `holdUntil` also rejects that new play, so a report already in flight cannot reopen the panel.
+    static func autoEnter(
+        block: PictureInPictureAutoBlock?,
+        tabID: UUID?,
+        canEnter: Bool,
+        isActive: Bool,
+        now: Date = Date()
+    ) -> (allowed: Bool, block: PictureInPictureAutoBlock?) {
+        guard let tabID, var block, block.tabID == tabID else {
+            return (canEnter, block)
+        }
+        if !isActive, !canEnter {
+            block.sawIdle = true
+        }
+        if isActive || !canEnter || !block.sawIdle || now < block.holdUntil {
+            return (false, block)
+        }
+        return (true, nil)
     }
 }
 
@@ -332,7 +394,18 @@ enum PictureInPictureScript {
         return "ok";
       }
 
-      window.__myBrowserPiP = { enter: enter, exit: exit, report: function () { post(true); } };
+      function pause() {
+        var list = videos();
+        var any = false;
+        for (var i = 0; i < list.length; i++) {
+          var v = list[i];
+          if (!(inPiP(v) || (isPlaying(v) && canPiP(v) && areaOf(v) >= MIN_AREA))) continue;
+          try { v.pause(); any = true; } catch (e) {}
+        }
+        return any ? "ok" : "none";
+      }
+
+      window.__myBrowserPiP = { enter: enter, exit: exit, pause: pause, report: function () { post(true); } };
 
       function watch() {
         if (!document.documentElement) return;

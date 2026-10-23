@@ -87,6 +87,19 @@ final class TabWebDelegate: NSObject, WKUIDelegate, WKNavigationDelegate {
         adopt(download, webView: webView)
     }
 
+    /// The system panel's return-to-page control. The close button pauses and leaves the mode
+    /// without calling this. Synchronous: the presentation-mode message must see the flag already set.
+    @objc(_webViewFullscreenMayReturnToInline:)
+    nonisolated func webViewFullscreenMayReturnToInline(_ webView: WKWebView) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { self.tab?.notePictureInPictureRestore() }
+        } else {
+            DispatchQueue.main.sync {
+                MainActor.assumeIsolated { self.tab?.notePictureInPictureRestore() }
+            }
+        }
+    }
+
     /// WebKit calls this on the main thread from the run loop, sometimes while a MainActor
     /// task is suspended (extension load). A MainActor method then fails its executor check.
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

@@ -75,8 +75,45 @@ extension BrowserTab {
 
     func exitPictureInPicture() {
         suppressPictureInPictureReturn = true
+        evaluateInPictureInPictureFrames("window.__myBrowserPiP ? window.__myBrowserPiP.exit() : 'missing'")
+        if isPictureInPictureActive {
+            webView?.closeAllMediaPresentations { [weak self] in
+                self?.publishPictureInPicture(playing: self?.hasPictureInPictureVideo == true, supported: true, active: false)
+            }
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            self?.suppressPictureInPictureReturn = false
+        }
+    }
+
+    /// Panel close. WebKit pauses on its stop action; this covers the gap before that report and clears the auto-enter grace period.
+    func pauseForPictureInPictureClose() {
+        pictureInPictureEligibleUntil = .distantPast
+        evaluateInPictureInPictureFrames("window.__myBrowserPiP ? window.__myBrowserPiP.pause() : 'missing'")
+    }
+
+    /// `_webViewFullscreenMayReturnToInline`. Only the return control sends this. The close button does not.
+    func notePictureInPictureRestore() {
+        guard isPictureInPictureActive else { return }
+        pictureInPictureRestoreArmed = true
+        onPictureInPicture?(self)
+    }
+
+    func consumePictureInPictureReturnSuppression() -> Bool {
+        let value = suppressPictureInPictureReturn
+        if value { suppressPictureInPictureReturn = false }
+        return value
+    }
+
+    func consumePictureInPictureRestore() -> Bool {
+        let value = pictureInPictureRestoreArmed
+        if value { pictureInPictureRestoreArmed = false }
+        return value
+    }
+
+    private func evaluateInPictureInPictureFrames(_ script: String) {
         guard let webView else { return }
-        let script = "window.__myBrowserPiP ? window.__myBrowserPiP.exit() : 'missing'"
         var frames = pictureInPictureFrames.values.map(\.frame)
         if let best = bestPictureInPictureFrame(), !frames.contains(where: { $0 === best }) {
             frames.append(best)
@@ -88,21 +125,6 @@ extension BrowserTab {
                 PictureInPictureWebKit.evaluate(webView, frame: frame, script: script) { _ in }
             }
         }
-        if isPictureInPictureActive {
-            webView.closeAllMediaPresentations { [weak self] in
-                self?.publishPictureInPicture(playing: self?.hasPictureInPictureVideo == true, supported: true, active: false)
-            }
-        }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(2))
-            self?.suppressPictureInPictureReturn = false
-        }
-    }
-
-    func consumePictureInPictureReturnSuppression() -> Bool {
-        let value = suppressPictureInPictureReturn
-        if value { suppressPictureInPictureReturn = false }
-        return value
     }
 
     private func publishPictureInPicture(playing: Bool, supported: Bool, active: Bool) {

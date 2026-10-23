@@ -83,15 +83,76 @@ struct PictureInPicturePolicyTests {
         #expect(stillEffects.isEmpty)
     }
 
-    @Test func returnFromThePanelFocusesTheTabUnlessWeClosedIt() {
+    @Test func closingThePanelPausesAndDoesNotChangeTabs() {
         let session = PictureInPictureSession(tabID: tabA, origin: .leftTab)
-        let (left, effects) = PictureInPicturePolicy.ended(session: session, tabID: tabA, requestedByUs: false)
+        let (left, effects) = PictureInPicturePolicy.ended(session: session, tabID: tabA, dismissal: .stop)
         #expect(left == nil)
-        #expect(effects == [.focus(tabA)])
+        #expect(effects == [.pause(tabA)])
 
-        let (closed, closedEffects) = PictureInPicturePolicy.ended(session: session, tabID: tabA, requestedByUs: true)
+        let (closed, closedEffects) = PictureInPicturePolicy.ended(session: session, tabID: tabA, dismissal: .requested)
         #expect(closed == nil)
         #expect(closedEffects.isEmpty)
+    }
+
+    @Test func returnToPageFocusesTheTab() {
+        let session = PictureInPictureSession(tabID: tabA, origin: .leftWindow)
+        let (still, reveal) = PictureInPicturePolicy.restore(session: session, tabID: tabA)
+        #expect(still == session)
+        #expect(reveal == [.focus(tabA)])
+
+        let (left, effects) = PictureInPicturePolicy.ended(session: session, tabID: tabA, dismissal: .restore)
+        #expect(left == nil)
+        #expect(effects == [.focus(tabA)])
+    }
+
+    @Test func closingBlocksAutoEnterUntilTheVideoPausesAndPlaysAgain() {
+        let earlier = Date(timeIntervalSinceReferenceDate: 0)
+        var block: PictureInPictureAutoBlock? = PictureInPictureAutoBlock(
+            tabID: tabA,
+            sawIdle: false,
+            holdUntil: earlier
+        )
+
+        var decision = PictureInPicturePolicy.autoEnter(
+            block: block, tabID: tabA, canEnter: true, isActive: false, now: earlier
+        )
+        #expect(decision.allowed == false)
+        #expect(decision.block?.sawIdle == false)
+        block = decision.block
+
+        decision = PictureInPicturePolicy.autoEnter(
+            block: block, tabID: tabA, canEnter: false, isActive: true, now: earlier
+        )
+        #expect(decision.allowed == false)
+        #expect(decision.block?.sawIdle == false)
+
+        decision = PictureInPicturePolicy.autoEnter(
+            block: block, tabID: tabA, canEnter: false, isActive: false, now: earlier
+        )
+        #expect(decision.allowed == false)
+        #expect(decision.block?.sawIdle == true)
+        block = decision.block
+
+        decision = PictureInPicturePolicy.autoEnter(
+            block: block, tabID: tabA, canEnter: true, isActive: false, now: earlier
+        )
+        #expect(decision.allowed == true)
+        #expect(decision.block == nil)
+
+        var held = PictureInPicturePolicy.userStopBlock(tabID: tabA, now: earlier)
+        held.sawIdle = true
+        let duringHold = PictureInPicturePolicy.autoEnter(
+            block: held, tabID: tabA, canEnter: true, isActive: false, now: earlier.addingTimeInterval(1)
+        )
+        #expect(duringHold.allowed == false)
+        #expect(duringHold.block == held)
+
+        let other = PictureInPicturePolicy.userStopBlock(tabID: tabA, now: earlier)
+        let unrelated = PictureInPicturePolicy.autoEnter(
+            block: other, tabID: tabB, canEnter: true, isActive: false, now: earlier
+        )
+        #expect(unrelated.allowed == true)
+        #expect(unrelated.block == other)
     }
 
     @Test func toggleEntersManuallyAndExitsWhenAlreadyActive() {

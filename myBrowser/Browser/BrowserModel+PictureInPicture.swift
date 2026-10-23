@@ -62,7 +62,7 @@ extension BrowserModel {
         let previousID = pictureInPictureForegroundID
         guard previousID != nowID else { return }
         let previous = previousID.flatMap { tabs[$0] }
-        let canEnter = pictureInPictureCanEnter(previous)
+        let canEnter = autoPictureInPictureCanEnter(previous)
         let (session, effects) = PictureInPicturePolicy.selection(
             autoEnabled: PictureInPictureSettings.autoEnabled,
             session: pictureInPictureSession,
@@ -84,6 +84,16 @@ extension BrowserModel {
 
     func ingestPictureInPicture(_ tab: BrowserTab) {
         if tab.isPictureInPictureActive {
+            if tab.pictureInPictureRestoreArmed {
+                let (session, effects) = PictureInPicturePolicy.restore(
+                    session: pictureInPictureSession,
+                    tabID: tab.id
+                )
+                applyPictureInPicture(session: session, effects: effects)
+            }
+            if pictureInPictureAutoBlock?.tabID == tab.id {
+                pictureInPictureAutoBlock = nil
+            }
             let session = PictureInPicturePolicy.pageEntered(session: pictureInPictureSession, tabID: tab.id)
             pictureInPictureSession = session
             if pictureInPictureTabID != session.tabID {
@@ -91,13 +101,28 @@ extension BrowserModel {
             }
         } else if pictureInPictureSession?.tabID == tab.id {
             let requested = tab.consumePictureInPictureReturnSuppression()
+            let restore = tab.consumePictureInPictureRestore()
+            let dismissal: PictureInPictureDismissal = if requested {
+                .requested
+            } else if restore {
+                .restore
+            } else {
+                .stop
+            }
             let (session, effects) = PictureInPicturePolicy.ended(
                 session: pictureInPictureSession,
                 tabID: tab.id,
-                requestedByUs: requested
+                dismissal: dismissal
+            )
+            applyPictureInPicture(session: session, effects: effects)
+        } else if tab.consumePictureInPictureRestore() {
+            let (session, effects) = PictureInPicturePolicy.restore(
+                session: pictureInPictureSession,
+                tabID: tab.id
             )
             applyPictureInPicture(session: session, effects: effects)
         }
+        refreshPictureInPictureAutoBlock(tab)
         if tab.id == selectedTab?.id {
             refreshNavigationState()
         }
@@ -123,7 +148,13 @@ extension BrowserModel {
                 armPictureInPictureTimeout(id)
             case .exit(let id):
                 tabs[id]?.exitPictureInPicture()
+            case .pause(let id):
+                pictureInPictureAutoBlock = PictureInPicturePolicy.userStopBlock(tabID: id)
+                tabs[id]?.pauseForPictureInPictureClose()
             case .focus(let id):
+                if pictureInPictureAutoBlock?.tabID == id {
+                    pictureInPictureAutoBlock = nil
+                }
                 revealPictureInPictureTab(id)
             }
         }
@@ -171,7 +202,7 @@ extension BrowserModel {
         guard focused != pictureInPictureWindowFocused || force else { return }
         pictureInPictureWindowFocused = focused
         let tab = selectedTab
-        let canEnter = pictureInPictureCanEnter(tab)
+        let canEnter = autoPictureInPictureCanEnter(tab)
         let (session, effects) = PictureInPicturePolicy.focus(
             autoEnabled: PictureInPictureSettings.autoEnabled,
             session: pictureInPictureSession,
@@ -187,5 +218,28 @@ extension BrowserModel {
         guard let tab, !tab.isPictureInPictureActive else { return false }
         if tab.hasPictureInPictureVideo { return true }
         return Date() < tab.pictureInPictureEligibleUntil
+    }
+
+    /// Raw eligibility, then the close-button block. Learning "idle" here is what lets a later play auto-enter.
+    private func autoPictureInPictureCanEnter(_ tab: BrowserTab?) -> Bool {
+        let canEnter = pictureInPictureCanEnter(tab)
+        let decision = PictureInPicturePolicy.autoEnter(
+            block: pictureInPictureAutoBlock,
+            tabID: tab?.id,
+            canEnter: canEnter,
+            isActive: tab?.isPictureInPictureActive == true
+        )
+        pictureInPictureAutoBlock = decision.block
+        return decision.allowed
+    }
+
+    private func refreshPictureInPictureAutoBlock(_ tab: BrowserTab) {
+        let decision = PictureInPicturePolicy.autoEnter(
+            block: pictureInPictureAutoBlock,
+            tabID: tab.id,
+            canEnter: pictureInPictureCanEnter(tab),
+            isActive: tab.isPictureInPictureActive
+        )
+        pictureInPictureAutoBlock = decision.block
     }
 }
