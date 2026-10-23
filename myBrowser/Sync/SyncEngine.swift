@@ -19,6 +19,8 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
     private var installedHandler = false
     private var forwardedOnChange: ((Set<UUID>) -> Void)?
     private var choosingAccount = false
+    /// A fetch or save has started. A caught-up launch never does either, and the footer would stay on "Syncing…".
+    private var sawSyncCycle = false
 
     init(library: LibraryStore, containerIdentifier: String) {
         self.library = library
@@ -44,8 +46,23 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
         let firstSync = state.serialization() == nil
         if firstSync {
             enqueueFullUpload()
+            sawSyncCycle = true
         }
         forgetPurged(library.purgeAcknowledgedTombstones(sent: state.acknowledgedDeletions))
+        scheduleIdleIfQuiet()
+    }
+
+    /// CKSyncEngine skips the fetch when the change token is current and nothing is pending.
+    /// That posts no did-fetch event, so settle the footer once it is clear nothing will start.
+    private func scheduleIdleIfQuiet() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !sawSyncCycle, let ck else { return }
+            guard ck.state.pendingRecordZoneChanges.isEmpty,
+                  ck.state.pendingDatabaseChanges.isEmpty else { return }
+            onStatus?(SyncController.idleStatus)
+            Self.log.info("Sync idle")
+        }
     }
 
     func stop(resetting: Bool = false) {
@@ -86,7 +103,7 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
             case .stateUpdate(let update):
                 state.setSerialization(update.stateSerialization)
             case .accountChange(let change):
-                handleAccount(change)
+                handleAccount(change, syncEngine: syncEngine)
             case .fetchedDatabaseChanges(let changes):
                 handleFetchedDatabase(changes)
             case .fetchedRecordZoneChanges(let changes):
@@ -96,8 +113,10 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
             case .didFetchRecordZoneChanges(let fetched):
                 handleZoneFetchFinished(fetched, syncEngine: syncEngine)
             case .willFetchChanges, .willFetchRecordZoneChanges, .willSendChanges:
+                sawSyncCycle = true
                 onStatus?(SyncController.syncingStatus)
             case .didFetchChanges, .didSendChanges:
+                sawSyncCycle = true
                 onStatus?(SyncController.idleStatus)
                 Self.log.info("Sync idle")
             case .sentDatabaseChanges:
@@ -108,7 +127,7 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
         }
     }
 
-    private func handleAccount(_ change: CKSyncEngine.Event.AccountChange) {
+    private func handleAccount(_ change: CKSyncEngine.Event.AccountChange, syncEngine: CKSyncEngine) {
         switch change.changeType {
         case .signOut:
             Self.log.info("iCloud account signed out")
@@ -119,6 +138,11 @@ final class SyncEngine: NSObject, CKSyncEngineDelegate, @unchecked Sendable {
         case .signIn:
             if state.systemFields.isEmpty {
                 enqueueFullUpload()
+                sawSyncCycle = true
+            } else if syncEngine.state.pendingRecordZoneChanges.isEmpty,
+                      syncEngine.state.pendingDatabaseChanges.isEmpty {
+                onStatus?(SyncController.idleStatus)
+                Self.log.info("Sync idle")
             }
         case .switchAccounts:
             dropPending()

@@ -59,6 +59,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.notifications.start()
         model.startArchiveMonitoring()
         passkeys.requestAccessIfEntitled()
+        if SyncProbe.isRequested {
+            NotificationCenter.default.addObserver(
+                forName: SyncProbe.selectItem,
+                object: nil,
+                queue: .main
+            ) { [weak self] note in
+                guard let raw = note.userInfo?["id"] as? String, let id = UUID(uuidString: raw) else { return }
+                Task { @MainActor in
+                    self?.model.select(id)
+                }
+            }
+        }
         #if DEBUG
         applyDebugAppearance()
         applyDebugAddressBar()
