@@ -60,7 +60,8 @@ final class BrowserTab: NSObject, Identifiable {
     @ObservationIgnored private var sampleTask: Task<Void, Never>?
     /// Drops a second reload from the menu shortcut and KeyMonitor landing in the same instant.
     @ObservationIgnored private var lastReloadTime: TimeInterval = -.infinity
-    @ObservationIgnored private var downloads: [ObjectIdentifier: WKDownload] = [:]
+    /// Set by `BrowserModel` before the web view exists. Downloads outlive the tab.
+    @ObservationIgnored weak var downloads: DownloadManager?
     @ObservationIgnored private var webDelegate: TabWebDelegate?
     @ObservationIgnored var pictureInPictureRelay: PictureInPictureRelay?
     /// Latest frame info per document. WebKit hands out a new `WKFrameInfo` on every message.
@@ -180,15 +181,20 @@ final class BrowserTab: NSObject, Identifiable {
         sampleGeneration += 1
         observations.forEach { $0.invalidate() }
         observations.removeAll()
-        downloads.removeAll()
         tearDownPictureInPicture()
-        webView?.stopLoading()
+        let webView = self.webView
+        let keepDownloading = webView.map { downloads?.isDownloading(in: $0) == true } ?? false
+        if keepDownloading, let webView {
+            downloads?.parkIfNeeded(webView)
+        } else {
+            webView?.stopLoading()
+            webView?.removeFromSuperview()
+        }
         webView?.navigationDelegate = nil
         webView?.uiDelegate = nil
         webDelegate?.tab = nil
         webDelegate = nil
-        webView?.removeFromSuperview()
-        webView = nil
+        self.webView = nil
         isLoaded = false
         isLoading = false
         clearTheme()
@@ -245,7 +251,16 @@ final class BrowserTab: NSObject, Identifiable {
         } else {
             httpsFirstAttempt = nil
         }
-        webView.load(URLRequest(url: url))
+        Self.load(url, in: webView)
+    }
+
+    /// `file` URLs need an explicit read scope or WebKit shows a blank page.
+    static func load(_ url: URL, in webView: WKWebView) {
+        if url.isFileURL {
+            webView.loadFileURL(url, allowingReadAccessTo: url)
+        } else {
+            webView.load(URLRequest(url: url))
+        }
     }
 
     func goBack() { webView?.goBack() }
@@ -369,14 +384,6 @@ final class BrowserTab: NSObject, Identifiable {
     /// WebKit calls this synchronously. The returned view must be built with `configuration`.
     func createWebView(configuration: WKWebViewConfiguration, url: URL?) -> WKWebView? {
         onCreateWebView?(configuration, url)
-    }
-
-    func beginDownload(_ download: WKDownload) {
-        downloads[ObjectIdentifier(download)] = download
-    }
-
-    func endDownload(_ download: WKDownload) {
-        downloads[ObjectIdentifier(download)] = nil
     }
 
     func fetchFaviconIfNeeded() {

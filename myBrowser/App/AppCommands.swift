@@ -48,6 +48,9 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(after: .sidebar) {
+            Button("Downloads") { model.toggleDownloadsPage() }
+                .keyboardShortcut("j", modifiers: [.command, .shift])
+            Divider()
             // `Commands` does not refresh when a tab's flags change. Each item is a view
             // that reads the focused scene value, which does invalidate menu items.
             ReloadCommand(model: model)

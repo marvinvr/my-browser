@@ -20,6 +20,7 @@ final class BrowserModel {
     let session: SessionStore
     @ObservationIgnored let profiles = ProfileManager()
     @ObservationIgnored let favicons: FaviconStore
+    let downloads: DownloadManager
     /// Web extensions for this window. Nil in tests and previews.
     @ObservationIgnored weak var extensions: ExtensionManager?
 
@@ -43,12 +44,17 @@ final class BrowserModel {
         self.library = library
         self.session = session
         favicons = FaviconStore(directory: library.directory)
+        downloads = DownloadManager(directory: library.directory)
         self.extensions = extensions
         let fallback = library.ensureDefaultSpace().id
         let resolved = session.selectedSpaceID.flatMap { library.space($0)?.id } ?? fallback
         selectedSpaceID = resolved
         if session.selectedSpaceID != resolved {
             session.selectedSpaceID = resolved
+        }
+        downloads.visibleProfileID = library.space(resolved)?.profileID ?? resolved
+        downloads.webViewProvider = { [weak self] profileID in
+            self?.webViewForDownloads(profileID)
         }
         profiles.extensionController = { [weak extensions] profileID in
             extensions?.controller(for: profileID)
@@ -578,6 +584,35 @@ final class BrowserModel {
         }
         library.flush()
         session.flush()
+        downloads.flush()
+    }
+
+    /// A finished PDF, image, text, video, or audio file opens in a new tab. Other types open outside.
+    func openDownload(_ id: UUID, inDefaultApp: Bool = false) {
+        guard let record = downloads.record(id), downloads.existingFile(id) != nil else { return }
+        let inBrowser = !inDefaultApp
+            && record.state == .finished
+            && DownloadKind.opensInBrowser(filename: record.filename, mimeType: record.mimeType)
+        guard inBrowser, let url = downloads.existingFile(id) else {
+            if let url = downloads.existingFile(id) {
+                NSWorkspace.shared.open(url)
+            }
+            return
+        }
+        downloads.isPopoverPresented = false
+        downloads.isPagePresented = false
+        openInNewTab(url)
+    }
+
+    func toggleDownloadsPage() {
+        downloads.isPagePresented.toggle()
+    }
+
+    func webViewForDownloads(_ profileID: UUID) -> WKWebView? {
+        if let tab = tabs.values.first(where: { $0.profileID == profileID && $0.webView != nil }) {
+            return tab.webView
+        }
+        return downloads.auxiliaryWebView(profileID: profileID, configuration: profiles.configuration(for: profileID))
     }
 
     // MARK: Private
@@ -619,6 +654,7 @@ final class BrowserModel {
 
     private func wire(_ tab: BrowserTab, spaceID: UUID) {
         tab.faviconStore = favicons
+        tab.downloads = downloads
         tab.useCachedFavicon()
         tab.onOpenInNewTab = { [weak self] url, inBackground in
             self?.openInNewTab(url, spaceID: spaceID, inBackground: inBackground)
@@ -787,6 +823,7 @@ final class BrowserModel {
         }
         if selectedSpaceID != id { selectedSpaceID = id }
         if session.selectedSpaceID != id { session.selectedSpaceID = id }
+        downloads.visibleProfileID = library.space(id)?.profileID ?? id
     }
 
     private func inferredDirection(from oldID: UUID, to newID: UUID) -> SpaceSwitchDirection {
@@ -809,6 +846,10 @@ final class BrowserModel {
     }
 
     static func fallbackTitle(for url: URL) -> String {
+        if url.isFileURL {
+            let name = url.lastPathComponent
+            return name.isEmpty ? "File" : name
+        }
         if let host = url.host(), !host.isEmpty { return host }
         let absolute = url.absoluteString
         return absolute.isEmpty ? "New Tab" : absolute

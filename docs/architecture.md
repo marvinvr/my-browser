@@ -18,7 +18,7 @@ myBrowser/
   Model/          Value types: Profile, Space, SidebarItem, SpaceColor, SortKey, SearchEngine, URLInput, URLDisplay
   Persistence/    LibraryStore (synced data), SessionStore (local window/tab session), JSONFileStorage
   Sync/           CKSyncEngine wrapper, record mapping, sync-state.json. Idle unless iCloud Sync is enabled.
-  Browser/        BrowserModel (per-window coordinator), BrowserTab (one WKWebView), ProfileManager, FaviconStore
+  Browser/        BrowserModel (per-window coordinator), BrowserTab (one WKWebView), ProfileManager, FaviconStore, DownloadManager
   Importer/       Chromium and Arc parsers. Pure `ImportPlan` values, no UI
   Extensions/     ExtensionManager (one WKWebExtensionController per profile), CRX/zip install, catalog
   Views/
@@ -28,6 +28,7 @@ myBrowser/
     Settings/     Settings scene: General (search engine, iCloud Sync), Appearance (address bar position, Dock icon), Extensions
     Import/       Import sheet (File → Import…) and the first-launch welcome sheet
     Web/          WebContentView (NSViewRepresentable that swaps the selected tab's WKWebView in)
+    Downloads/    Toolbar downloads button, popover, and the downloads page
     CommandBar/   CommandBarView + CommandBarModel (results)
   Resources/      Assets.xcassets
 myBrowserTests/   Swift Testing unit tests (model, SortKey, store, URL parsing)
@@ -126,6 +127,24 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 - `target=_blank` / `window.open` / Cmd-click: `WKUIDelegate.createWebView` → new `.tabs` item in the same space (Phase 1 opens in a new tab and selects it; Cmd-click opens in background).
 - Back/forward: `allowsBackForwardNavigationGestures = true` (Safari-style two-finger swipe on the page). Decision: **page swipe = back/forward; swipes on the sidebar switch spaces**. `SpaceSwipeContainer` claims a horizontal trackpad swipe on the space column only (`SpaceSwipeTracker`); vertical list scrolling and the web view are left alone. Crossing the space-swipe commit line (30% of the column, or a flick that will commit) ticks the trackpad once. Crossing WebKit's history-swipe completion distance (`min(187.5pt, half the page)`) ticks once. Both go through `Haptics` and do not repeat while the finger stays past the line.
 - Favicons: `FaviconStore` downloads `/favicon.ico` or the page's `<link rel=icon>` (via JS after load) and caches PNGs per host in `Favicons/`. Not synced.
+- File URLs load with `loadFileURL(_:allowingReadAccessTo:)` so a downloaded PDF or image can open in a tab.
+
+## Downloads
+
+`DownloadManager` (one per window model, file `downloads.json` next to `library.json`) records every `WKDownload`. The list is per profile: the popover and the downloads page show the current space's profile. History stays on this Mac and is not synced.
+
+WebKit is asked to download when:
+
+- the navigation action has `shouldPerformDownload` (the `download` attribute),
+- the main-frame response is `Content-Disposition: attachment`,
+- the main frame's MIME type cannot be shown (a zip, a disk image),
+- the context menu creates a download (Download Linked File, Save Image, Download Media). That path is `_webView:contextMenuDidCreateDownload:`.
+
+The file is written to `~/Downloads` as `name.pdf.download`, then renamed to `name.pdf`. A name that is already there becomes `name (1).pdf`. Pause cancels the `WKDownload` and keeps `resumeData`. Resume and retry use a web view on the same profile's data store, so cookies stay with that profile. Closing the tab parks the web view offscreen until its downloads finish. A launch turns an in-progress row into paused when resume data was saved, otherwise failed, and the row stays in the list.
+
+On finish the file gets `com.apple.quarantine` (`0083;<hex time>;myBrowser;<uuid>`) and `com.apple.metadata:kMDItemWhereFroms` (the file URL, then the page). The Downloads stack in the Dock is bounced with `com.apple.DownloadFileFinished`.
+
+The toolbar button (`arrow.down.circle`) sits at the trailing end of the address bar. It appears while a download is active, and for five minutes after one finishes, or until Clear. A ring in the toolbar symbol colour tracks bytes. The popover lists icon, name, size, progress, and speed, with pause, resume, cancel, retry, show in Finder, open, and open in the default app. A finished PDF, image, text, video, or audio file opens in a new tab (`file://` with read access to that file). Other types open in the default app. Cmd+Shift+J opens the downloads page for the current profile, with search.
 - Picture in Picture uses the system panel (the separate "Picture in Picture" window), not a window this app draws. macOS `WKWebViewConfiguration` has no public `allowsPictureInPictureMediaPlayback` (iOS only) and the private preference defaults to off, so each configuration turns `_setAllowsPictureInPictureMediaPlayback` on. `_togglePictureInPicture` is a no-op without a Touch Bar, so enter and exit call `HTMLVideoElement.webkitSetPresentationMode` (`picture-in-picture` / `inline`), falling back to `requestPictureInPicture`. That call has to carry a user-gesture bit or WebKit changes the presentation mode and never opens the panel; public `evaluateJavaScript` does not set the bit, so the app uses WebKit's `withUserGesture` script entry point. A page script (all frames, including shadow roots) reports a playing video only when it is at least 160×90 and does not set `disablePictureInPicture` — otherwise there is no toolbar button. `pip.enter` sits in the address row while that is true (⌘⇧P, View menu, sidebar site menu). Automatic Picture in Picture is on by default (Settings → General, `autoPictureInPicture`): leaving the tab or the window moves a playing video into the panel, and selecting that tab again, or focusing the window after a focus-triggered PiP, returns it inline. The panel's return control ends PiP and selects that tab and its space. The web view stays attached behind the current page for the whole session, because detaching it closes the panel.
 
 ## Web extensions
@@ -163,7 +182,8 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 | Cmd+Shift+I | Import bookmarks or an Arc sidebar |
 | Cmd+D | Pin / unpin current tab |
 | Cmd+Shift+P | Enter or exit Picture in Picture |
-| Esc | Close command bar / stop loading |
+| Cmd+Shift+J | Downloads |
+| Esc | Close command bar, downloads, or stop loading |
 | Delete | Delete the focused folder. A non-empty folder asks first. Ignored while a field, the page, or the command bar is focused. |
 
 ## Sidebar drag and drop
@@ -281,3 +301,4 @@ Do not flip those switches before the container and the profile exist. A Release
 - 2026-10-23: folder disclosure is a 0.2s no-bounce spring. Sidebar views read per-parent `SidebarSiblingList`s, so one toggle does not refresh the rest of the column.
 - 2026-10-23: the favorites grid balances rows (`ceil(n / maxPerRow)`, remainder on the earlier rows) so six icons are 3+3. Tiles in a row share its width. At most four per row, same as before.
 - 2026-10-23: sidebar folders drop the disclosure chevron. Closed is `folder`, expanded is `folder.fill`, with a magic symbol replace in a fixed frame so rows stay aligned.
+- 2026-10-23: downloads use `WKDownload` into `~/Downloads` (`file (1).pdf`, a `.download` partial, then a rename). The toolbar button shows active and recent items for the current profile. PDF, image, text, video, and audio open in a tab. Other types open in the default app.

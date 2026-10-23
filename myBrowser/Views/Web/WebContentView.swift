@@ -11,6 +11,7 @@ struct WebContentView: View {
             HostedWebView(
                 tabID: model.selectedTab?.id,
                 pictureInPictureTabID: model.pictureInPictureTabID,
+                pagePresented: model.downloads.isPagePresented,
                 model: model
             )
             if model.selectedTab == nil {
@@ -47,6 +48,8 @@ private struct HostedWebView: NSViewRepresentable {
     var tabID: UUID?
     /// Kept in the hierarchy behind the selected page so the system PiP session survives a tab switch.
     var pictureInPictureTabID: UUID?
+    /// The downloads page covers this card. Hide the web view instead of removing it, so an in-flight download keeps its view.
+    var pagePresented: Bool
     var model: BrowserModel
 
     func makeNSView(context: Context) -> NSView {
@@ -57,6 +60,20 @@ private struct HostedWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ container: NSView, context: Context) {
+        // WKWebView's layer draws over later SwiftUI siblings. Take it out of this
+        // container while the downloads page is up. An in-flight download is parked,
+        // not stopped, so closing the page can put the same view back.
+        if pagePresented {
+            for subview in container.subviews {
+                if let webView = subview as? WKWebView {
+                    model.downloads.parkIfNeeded(webView)
+                }
+                if subview.superview === container {
+                    subview.removeFromSuperview()
+                }
+            }
+            return
+        }
         let selected = webView(for: tabID)
         let backgroundID = pictureInPictureTabID == tabID ? nil : pictureInPictureTabID
         let background = webView(for: backgroundID)

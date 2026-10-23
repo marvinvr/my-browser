@@ -211,6 +211,21 @@ enum DebugSnapshot {
             default: break
             }
             model.selectedTab?.refreshThemeColor()
+        case "downloads":
+            switch name {
+            case "popover": model.downloads.isPopoverPresented = true
+            case "close": model.downloads.isPopoverPresented = false
+            case "page": model.downloads.isPagePresented = true
+            case "hide-page": model.downloads.isPagePresented = false
+            default: break
+            }
+            if let path, path.hasPrefix("/") {
+                try? model.downloads.debugSummary().write(
+                    to: URL(fileURLWithPath: path),
+                    atomically: true,
+                    encoding: .utf8
+                )
+            }
         case "state":
             guard let path, path.hasPrefix("/") else { return }
             let tab = model.selectedTab
@@ -443,6 +458,12 @@ enum DebugSnapshot {
         for (image, frame) in buttons {
             image.draw(in: imageRect(for: frame, in: content), from: .zero, operation: .sourceOver, fraction: 1)
         }
+        for panel in childPanels(on: window, content: content) {
+            let card = NSBezierPath(roundedRect: panel.frame, xRadius: 12, yRadius: 12)
+            panel.fill.setFill()
+            card.fill()
+            panel.image.draw(in: panel.frame, from: .zero, operation: .sourceOver, fraction: 1)
+        }
         NSGraphicsContext.restoreGraphicsState()
 
         guard let data = output.representation(using: .png, properties: [:]) else { return }
@@ -479,6 +500,35 @@ enum DebugSnapshot {
             fill = NSColor.windowBackgroundColor.usingColorSpace(.deviceRGB) ?? NSColor.windowBackgroundColor
         }
         return SheetCapture(image: cached.image, frame: imageRect(for: inContent, in: content), fill: fill)
+    }
+
+    /// Popovers are child windows. Draw them onto the main-window bitmap so a snapshot includes the downloads list.
+    private static func childPanels(on window: NSWindow, content: NSView) -> [SheetCapture] {
+        var panels = window.childWindows ?? []
+        for other in NSApp.windows where other !== window && other.isVisible && other.parent === window {
+            if !panels.contains(where: { $0 === other }) {
+                panels.append(other)
+            }
+        }
+        if let sheet = window.attachedSheet {
+            panels.removeAll { $0 === sheet }
+        }
+        var captures: [SheetCapture] = []
+        for panel in panels {
+            guard let panelContent = panel.contentView, panelContent.bounds.width > 1, panelContent.bounds.height > 1 else { continue }
+            panelContent.layoutSubtreeIfNeeded()
+            guard let cached = cacheImage(of: panelContent) else { continue }
+            let inWindow = panelContent.convert(panelContent.bounds, to: nil)
+            let inScreen = panel.convertToScreen(inWindow)
+            let inParent = window.convertFromScreen(inScreen)
+            let inContent = content.convert(inParent, from: nil)
+            var fill = NSColor.windowBackgroundColor
+            panel.effectiveAppearance.performAsCurrentDrawingAppearance {
+                fill = NSColor.windowBackgroundColor.usingColorSpace(.deviceRGB) ?? NSColor.windowBackgroundColor
+            }
+            captures.append(SheetCapture(image: cached.image, frame: imageRect(for: inContent, in: content), fill: fill))
+        }
+        return captures
     }
 
     /// Solid stand-in for a glass command bar. Light stays near white; dark stays near the window.

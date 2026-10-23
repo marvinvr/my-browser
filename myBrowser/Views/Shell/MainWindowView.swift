@@ -107,8 +107,14 @@ struct MainWindowView: View {
                 ContentToolbar(traffic: traffic, sidebarVisible: sidebarVisible)
                     .transition(.opacity)
             }
-            WebContentView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ZStack {
+                WebContentView()
+                if model.downloads.isPagePresented {
+                    DownloadsPage()
+                        .transition(.opacity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(
