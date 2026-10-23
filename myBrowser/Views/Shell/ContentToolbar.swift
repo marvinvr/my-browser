@@ -114,7 +114,7 @@ struct ContentToolbar: View {
                     model.toggleSidebar()
                 }
             }
-            .padding(.trailing, 8)
+            .padding(.trailing, 8 - SidebarMetrics.leadingInset)
             .frame(height: SidebarMetrics.navRowHeight)
             .padding(.top, max(0, SidebarMetrics.chromeCenterFromTop - SidebarMetrics.navRowHeight / 2))
 
@@ -122,14 +122,15 @@ struct ContentToolbar: View {
                 AddressField(chrome: chrome, presentation: .pill)
                 PictureInPictureButton(symbol: chrome.symbol)
             }
-            .padding(.horizontal, 8)
+            .padding(.leading, 8 + SidebarMetrics.leadingInset)
+            .padding(.trailing, 8)
             .padding(.top, 4)
             .padding(.bottom, 2)
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
                 ExtensionButtons()
             }
-            .padding(.trailing, 8)
+            .padding(.trailing, 8 - SidebarMetrics.leadingInset)
             .padding(.bottom, 2)
             progressTrack(chrome)
         }

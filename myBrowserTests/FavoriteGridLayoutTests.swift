@@ -44,8 +44,8 @@ struct FavoriteGridLayoutTests {
         let two = FavoriteGridLayout.minimumTileWidth * 2 + FavoriteGridLayout.spacing
         #expect(FavoriteGridLayout.maxPerRow(for: two) == 2)
 
-        // Scroll column pads 6pt on each side. The narrowest sidebar still holds four.
-        let sidebarContent = SidebarMetrics.minWidth - 12
+        // Scroll column pads 6pt on each side, plus the leading inset. The narrowest sidebar still holds four.
+        let sidebarContent = SidebarMetrics.minWidth - 12 - SidebarMetrics.leadingInset
         #expect(FavoriteGridLayout.maxPerRow(for: sidebarContent) == 4)
     }
 }

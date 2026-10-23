@@ -75,6 +75,10 @@ nonisolated enum SidebarMetrics {
     /// How far the traffic lights sit to the right of AppKit's titlebar position.
     /// A full-height sidebar wants the same inset Arc and Safari use, not the flush system default.
     static let trafficLightShiftX: CGFloat = 6
+    /// Extra leading inset for sidebar content, the same shift as the traffic lights.
+    /// Favorites, headers, rows, folders, nested items, and the hide button use it.
+    /// The space bar does not.
+    static let leadingInset: CGFloat = trafficLightShiftX
     /// Leading room the collapsed toolbar keeps clear for the traffic lights, including `trafficLightShiftX`.
     static let minimumTrafficClearance: CGFloat = 80
 }

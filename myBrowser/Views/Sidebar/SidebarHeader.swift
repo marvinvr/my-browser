@@ -19,7 +19,7 @@ struct SidebarHeader: View {
         }
         .frame(height: SidebarMetrics.navRowHeight)
         .padding(.top, topPadding)
-        .padding(.trailing, 8)
+        .padding(.trailing, 8 - SidebarMetrics.leadingInset)
         .padding(.bottom, 4)
     }
 

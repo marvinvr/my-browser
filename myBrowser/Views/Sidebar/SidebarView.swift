@@ -94,6 +94,7 @@ struct SidebarView: View {
             TabsTail(spaceID: spaceID, onNewFolder: { askNewFolder(nil) })
         }
         .padding(.horizontal, 6)
+        .padding(.leading, SidebarMetrics.leadingInset)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
     }

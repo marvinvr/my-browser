@@ -39,7 +39,7 @@ struct FavoritesGrid: View {
     @Environment(BrowserModel.self) private var model
     @State private var emptyToken = UUID()
     /// Matches a default sidebar before the first measurement, which is already four columns.
-    @State private var width: CGFloat = SidebarMetrics.defaultWidth - 12
+    @State private var width: CGFloat = SidebarMetrics.defaultWidth - 12 - SidebarMetrics.leadingInset
 
     var body: some View {
         let items = model.library.siblings(of: nil, section: .favorites, in: spaceID).items
