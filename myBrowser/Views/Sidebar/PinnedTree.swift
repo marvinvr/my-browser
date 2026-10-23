@@ -28,7 +28,6 @@ struct PinnedTree: View, Equatable {
                     SidebarRow(
                         item: item,
                         depth: depth,
-                        showsLoadedState: true,
                         onRename: { onRename(item) },
                         onNewFolderInside: { onNewFolder(item.parentID) }
                     )
@@ -139,7 +138,7 @@ private struct FolderRow: View {
         })
         .frame(height: SidebarMetrics.rowHeight)
         .background {
-            SidebarSelectionBackground(isSelected: isSelected, isHovering: hovering, isLoaded: false)
+            SidebarSelectionBackground(isSelected: isSelected, isHovering: hovering)
         }
         .onContinuousHover { phase in
             if interaction.draggingID == item.id { return }

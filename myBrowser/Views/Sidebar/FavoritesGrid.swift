@@ -91,14 +91,12 @@ struct FavoritesGrid: View {
         let tab = model.tabs[item.id]
         let title = SidebarTitle.text(for: item, tab: tab)
         let isSelected = model.selectedItemID == item.id
-        let isLoaded = tab?.isLoaded == true
         let icon = tab?.favicon ?? item.url.flatMap { model.favicons.cachedFavicon(for: $0) }
         return FavoriteTile(
             item: item,
             title: title,
             favicon: icon,
             isSelected: isSelected,
-            isLoaded: isLoaded,
             onRename: { onRename(item) },
             onNewFolder: onNewFolder
         )
@@ -110,7 +108,6 @@ private struct FavoriteTile: View {
     var title: String
     var favicon: NSImage?
     var isSelected: Bool
-    var isLoaded: Bool
     var onRename: () -> Void
     var onNewFolder: () -> Void
 
@@ -129,7 +126,6 @@ private struct FavoriteTile: View {
                         .padding(.horizontal, 4)
                 } else {
                     FaviconView(image: favicon, url: item.url, title: title, size: 18)
-                        .opacity(isLoaded || isSelected ? 1 : 0.72)
                 }
             }
                 .frame(maxWidth: .infinity)
@@ -138,9 +134,7 @@ private struct FavoriteTile: View {
                     SidebarSelectionBackground(
                         isSelected: isSelected,
                         isHovering: hovering,
-                        isLoaded: isLoaded,
-                        baseOpacity: 0.04,
-                        loadedOpacity: 0.12
+                        baseOpacity: 0.04
                     )
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))

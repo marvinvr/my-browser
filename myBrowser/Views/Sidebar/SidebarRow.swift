@@ -5,7 +5,6 @@ import SwiftUI
 struct SidebarRow: View {
     var item: SidebarItem
     var depth: Int = 0
-    var showsLoadedState: Bool = false
     var onRename: () -> Void
     var onNewFolderInside: () -> Void = {}
 
@@ -18,7 +17,6 @@ struct SidebarRow: View {
         let title = SidebarTitle.text(for: item, tab: tab)
         let isSelected = model.selectedItemID == item.id && !model.sidebarFocusIsFolder
         let isEditing = interaction.editingID == item.id && item.section != .tabs
-        let isLoaded = tab?.isLoaded == true
         let icon = tab?.favicon ?? (item.url ?? tab?.url).flatMap { model.favicons.cachedFavicon(for: $0) }
         let leading = SidebarDropGeometry.rowLeading + CGFloat(depth) * SidebarDropGeometry.indent
 
@@ -28,7 +26,6 @@ struct SidebarRow: View {
             } label: {
                 HStack(spacing: 8) {
                     FaviconView(image: icon, url: item.url ?? tab?.url, title: title, size: 16)
-                        .opacity(isLoaded || isSelected ? 1 : 0.78)
                     if isEditing {
                         SidebarInlineField(itemID: item.id, title: item.title)
                     } else {
@@ -68,8 +65,7 @@ struct SidebarRow: View {
         .background {
             SidebarSelectionBackground(
                 isSelected: isSelected,
-                isHovering: hovering,
-                isLoaded: showsLoadedState && isLoaded
+                isHovering: hovering
             )
         }
         .onContinuousHover { phase in

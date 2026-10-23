@@ -45,7 +45,6 @@ struct TabList: View {
             ForEach(items) { item in
                 SidebarRow(
                     item: item,
-                    showsLoadedState: false,
                     onRename: { onRename(item) },
                     onNewFolderInside: onNewFolder
                 )

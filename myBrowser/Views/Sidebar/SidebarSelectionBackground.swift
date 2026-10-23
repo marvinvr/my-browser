@@ -5,10 +5,8 @@ import SwiftUI
 struct SidebarSelectionBackground: View {
     var isSelected: Bool
     var isHovering: Bool
-    var isLoaded: Bool
     var cornerRadius: CGFloat = 8
     var baseOpacity: Double = 0
-    var loadedOpacity: Double = 0.05
 
     var body: some View {
         // Drawn in a non-vibrant layer. A SwiftUI white wash over the sidebar material
@@ -17,7 +15,6 @@ struct SidebarSelectionBackground: View {
             .allowsHitTesting(false)
             .animation(SidebarMotion.selection, value: isSelected)
             .animation(SidebarMotion.selection, value: isHovering)
-            .animation(SidebarMotion.selection, value: isLoaded)
     }
 
     private var fillColor: NSColor {
@@ -28,14 +25,7 @@ struct SidebarSelectionBackground: View {
         if isHovering {
             return SidebarFill.white(dark: 0.07, light: 0.42)
         }
-        return NSColor.labelColor.withAlphaComponent(wash)
-    }
-
-    /// Loaded pins keep a whisper of fill. Hover and selection are handled above.
-    private var wash: Double {
-        if isSelected || isHovering { return 0 }
-        if isLoaded { return loadedOpacity }
-        return baseOpacity
+        return NSColor.labelColor.withAlphaComponent(baseOpacity)
     }
 }
 
