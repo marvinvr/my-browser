@@ -15,6 +15,9 @@ struct AddressField: View {
     var presentation: Presentation = .pill
     /// Set on a split pane. Nil follows the selected tab, which is the shared toolbar.
     var tabID: UUID? = nil
+    /// Pane bars use a shorter field and drop the copy button when the pane is very narrow.
+    var compact: Bool = false
+    var showsCopyButton: Bool = true
 
     @Environment(BrowserModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
@@ -55,8 +58,16 @@ struct AddressField: View {
         let display = URLDisplay.format(pageURL)
         let style = resolved
         let inline = presentation == .inline
-        HStack(spacing: 4) {
-            CopyLinkButton(chrome: style, quiet: inline, tabID: tabID)
+        HStack(spacing: compact ? 2 : 4) {
+            if showsCopyButton {
+                CopyLinkButton(
+                    chrome: style,
+                    quiet: inline,
+                    tabID: tabID,
+                    hit: accessory,
+                    symbolSize: compact ? PaneToolbarMetrics.glyph : SidebarMetrics.addressSymbol
+                )
+            }
             siteInfoButton(style, quiet: inline)
             Button {
                 if let tabID {
@@ -66,9 +77,17 @@ struct AddressField: View {
                     model.showCommandBar(.editCurrent)
                 }
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: compact ? 3 : 6) {
                     if display.security == .insecure {
-                        insecureBadge(style)
+                        if compact {
+                            Image(systemName: "lock.slash")
+                                .font(.system(size: SidebarMetrics.addressWarningSymbol, weight: .semibold))
+                                .foregroundStyle(Color.orange)
+                                .help("Not Secure")
+                                .accessibilityLabel("Not Secure")
+                        } else {
+                            insecureBadge(style)
+                        }
                     }
                     addressLabel(display, style: style)
                 }
@@ -77,10 +96,12 @@ struct AddressField: View {
             .buttonStyle(.plain)
             .focused($focused)
             .help("Edit Address")
+            .frame(minWidth: 0, maxWidth: inline ? .infinity : nil, alignment: .leading)
+            .layoutPriority(inline ? -1 : 0)
         }
-        .padding(.leading, inline ? 6 : 3)
-        .padding(.trailing, inline ? 8 : 12)
-        .frame(height: SidebarMetrics.toolbarControl)
+        .padding(.leading, compact ? 4 : (inline ? 6 : 3))
+        .padding(.trailing, compact ? 4 : (inline ? 8 : 12))
+        .frame(height: compact ? PaneToolbarMetrics.control : SidebarMetrics.toolbarControl)
         .background { fieldFill(style) }
         .overlay { fieldStroke(style) }
         .onHover { hovering = $0 }
@@ -121,6 +142,8 @@ struct AddressField: View {
     }
 
     /// Barely there. Light and dark stay neutral; the page tint never fills this shape.
+    private var accessory: CGFloat { compact ? 16 : 22 }
+
     private var inlineFill: Double { colorScheme == .dark ? 0.08 : 0.05 }
     private var inlineStroke: Double { colorScheme == .dark ? 0.12 : 0.07 }
 
@@ -160,7 +183,7 @@ struct AddressField: View {
                 Image(systemName: siteSymbol(choice: choice, secure: pageURL?.scheme?.lowercased() == "https"))
                     .font(.system(size: SidebarMetrics.addressSymbol, weight: .semibold))
                     .symbolRenderingMode(.monochrome)
-                    .frame(width: 22, height: 22)
+                    .frame(width: accessory, height: accessory)
                     .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
@@ -221,7 +244,7 @@ struct AddressField: View {
                     .truncationMode(.tail)
             }
         }
-        .frame(maxWidth: presentation == .pill ? .infinity : nil, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     }
 
     private func attributed(_ display: URLDisplay, style: ToolbarChrome) -> AttributedString {

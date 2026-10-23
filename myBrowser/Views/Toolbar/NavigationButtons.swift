@@ -8,6 +8,9 @@ struct NavigationButtons: View {
     var chrome: ToolbarChrome? = nil
     /// Set on a split pane. Nil follows the selected tab, which is the shared toolbar.
     var tabID: UUID? = nil
+    var metrics: ToolbarButtonMetrics = .regular
+    /// A narrow pane toolbar drops Forward into its menu.
+    var showsForward: Bool = true
 
     @Environment(BrowserModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
@@ -22,34 +25,62 @@ struct NavigationButtons: View {
     }
 
     var body: some View {
+        let count = showsForward ? 3 : 2
         HStack(spacing: 0) {
             ToolbarIconButton(
                 systemName: "chevron.left",
                 enabled: tab?.canGoBack == true,
                 help: "Back",
-                symbol: resolved.symbol
+                symbol: resolved.symbol,
+                diameter: metrics.diameter,
+                glyph: metrics.glyph
             ) {
                 focusIfNeeded()
                 tab?.goBack()
             }
-            ToolbarIconButton(
-                systemName: "chevron.right",
-                enabled: tab?.canGoForward == true,
-                help: "Forward",
-                symbol: resolved.symbol
-            ) {
-                focusIfNeeded()
-                tab?.goForward()
+            if showsForward {
+                ToolbarIconButton(
+                    systemName: "chevron.right",
+                    enabled: tab?.canGoForward == true,
+                    help: "Forward",
+                    symbol: resolved.symbol,
+                    diameter: metrics.diameter,
+                    glyph: metrics.glyph
+                ) {
+                    focusIfNeeded()
+                    tab?.goForward()
+                }
             }
-            ReloadButton(symbol: resolved.symbol, tabID: tabID)
+            ReloadButton(
+                symbol: resolved.symbol,
+                tabID: tabID,
+                diameter: metrics.diameter,
+                glyph: metrics.glyph
+            )
         }
-        .padding(.horizontal, 2)
-        .frame(width: SidebarMetrics.toolbarControl * 3 + 4, height: SidebarMetrics.toolbarControl)
+        .padding(.horizontal, metrics.clusterPadding)
+        .frame(
+            width: metrics.diameter * CGFloat(count) + metrics.clusterPadding * 2,
+            height: metrics.diameter
+        )
     }
 
     private func focusIfNeeded() {
         if let tabID { model.focusPane(tabID: tabID) }
     }
+}
+
+/// Hit size for one toolbar icon. `.regular` is the shared bar. Pane bars pass a smaller size.
+struct ToolbarButtonMetrics: Equatable {
+    var diameter: CGFloat
+    var glyph: CGFloat
+    var clusterPadding: CGFloat
+
+    static let regular = ToolbarButtonMetrics(
+        diameter: SidebarMetrics.toolbarControl,
+        glyph: 12,
+        clusterPadding: 2
+    )
 }
 
 /// Icon button with a constant frame. The symbol colour is explicit so it stays legible on a tint.
@@ -58,6 +89,8 @@ struct ToolbarIconButton: View {
     var enabled: Bool = true
     var help: String
     var symbol: Color
+    var diameter: CGFloat = SidebarMetrics.toolbarControl
+    var glyph: CGFloat = 12
     var action: () -> Void
 
     @State private var hovering = false
@@ -65,9 +98,9 @@ struct ToolbarIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: glyph, weight: .semibold))
                 .symbolRenderingMode(.monochrome)
-                .frame(width: SidebarMetrics.toolbarControl, height: SidebarMetrics.toolbarControl)
+                .frame(width: diameter, height: diameter)
                 .background {
                     Circle().fill(symbol.opacity(hovering && enabled ? 0.16 : 0))
                 }
@@ -89,6 +122,8 @@ struct ToolbarIconButton: View {
 private struct ReloadButton: View {
     var symbol: Color
     var tabID: UUID? = nil
+    var diameter: CGFloat = SidebarMetrics.toolbarControl
+    var glyph: CGFloat = 12
 
     @Environment(BrowserModel.self) private var model
     @State private var hovering = false
@@ -106,14 +141,14 @@ private struct ReloadButton: View {
     var body: some View {
         Button(action: activate) {
             Image(systemName: "arrow.clockwise")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: glyph, weight: .semibold))
                 .symbolRenderingMode(.monochrome)
                 .symbolEffect(
                     .rotate.byLayer.clockwise,
                     options: .repeat(.continuous).speed(2.8),
                     isActive: spinning
                 )
-                .frame(width: SidebarMetrics.toolbarControl, height: SidebarMetrics.toolbarControl)
+                .frame(width: diameter, height: diameter)
                 .background {
                     Circle().fill(symbol.opacity(hovering && tab != nil ? 0.16 : 0))
                 }

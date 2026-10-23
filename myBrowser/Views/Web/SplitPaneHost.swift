@@ -2,16 +2,12 @@ import AppKit
 import SwiftUI
 import WebKit
 
-/// One pane: the tab's web view, its own toolbar when it is part of a split, and the hover pill.
+/// One pane: the tab's web view, and its own toolbar when it is part of a split.
 struct SplitPaneHost: NSViewRepresentable {
     var tabID: UUID
     var model: BrowserModel
     var focused: Bool
     var split: Bool
-    var hovered: Bool
-    var vertical: Bool
-    var canMovePrevious: Bool
-    var canMoveNext: Bool
     var title: String
 
     @Environment(ExtensionManager.self) private var extensions
@@ -22,13 +18,10 @@ struct SplitPaneHost: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> SplitPaneContainer {
-        let view = SplitPaneContainer()
-        view.pillState = context.coordinator.pill
-        return view
+        SplitPaneContainer()
     }
 
     func updateNSView(_ container: SplitPaneContainer, context: Context) {
-        container.pillState = context.coordinator.pill
         installWebView(in: container, context: context)
         container.apply(
             browser: model,
@@ -36,29 +29,11 @@ struct SplitPaneHost: NSViewRepresentable {
             tabID: tabID,
             split: split,
             focused: focused,
-            hovered: hovered,
             title: title,
             isLeading: false,
             showsWindowControls: false,
             trafficClearance: trafficClearance
         )
-        let pill = context.coordinator.pill
-        pill.vertical = vertical
-        pill.canMovePrevious = canMovePrevious
-        pill.canMoveNext = canMoveNext
-        pill.visible = split && hovered
-        let tabID = tabID
-        let model = model
-        pill.onClose = { model.close(tabID) }
-        pill.onSeparate = { model.separate(tabID: tabID) }
-        pill.onPrevious = {
-            guard let index = model.displayedContent?.panes.firstIndex(where: { $0.id == tabID }) else { return }
-            model.movePane(tabID: tabID, to: index - 1)
-        }
-        pill.onNext = {
-            guard let index = model.displayedContent?.panes.firstIndex(where: { $0.id == tabID }) else { return }
-            model.movePane(tabID: tabID, to: index + 1)
-        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -85,85 +60,18 @@ struct SplitPaneHost: NSViewRepresentable {
 
     final class Coordinator {
         var installedID: UUID?
-        let pill = PanePillModel()
-    }
-}
-
-@Observable
-final class PanePillModel {
-    var visible = false
-    var vertical = false
-    var canMovePrevious = false
-    var canMoveNext = false
-    var onClose: () -> Void = {}
-    var onSeparate: () -> Void = {}
-    var onPrevious: () -> Void = {}
-    var onNext: () -> Void = {}
-}
-
-/// Glass controls that fade in while the pointer is over the pane.
-private struct PanePill: View {
-    var state: PanePillModel
-
-    var body: some View {
-        HStack(spacing: 1) {
-            pillButton(
-                state.vertical ? "chevron.up" : "chevron.left",
-                help: state.vertical ? "Move Up" : "Move Left",
-                enabled: state.canMovePrevious,
-                action: state.onPrevious
-            )
-            pillButton(
-                state.vertical ? "chevron.down" : "chevron.right",
-                help: state.vertical ? "Move Down" : "Move Right",
-                enabled: state.canMoveNext,
-                action: state.onNext
-            )
-            pillButton("arrow.up.right.square", help: "Separate", enabled: true, action: state.onSeparate)
-            pillButton("xmark", help: "Close Pane", enabled: true, action: state.onClose)
-        }
-        .padding(.horizontal, 2)
-        .padding(.vertical, 1)
-        .glassEffect(.regular, in: Capsule())
-        // Hug the controls. A hosting view that takes the pane width keeps them centered.
-        .fixedSize()
-        .opacity(state.visible ? 1 : 0)
-        .animation(.easeOut(duration: 0.16), value: state.visible)
-    }
-
-    private func pillButton(
-        _ systemName: String,
-        help: String,
-        enabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 9, weight: .medium))
-                .frame(width: 16, height: 16)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .opacity(enabled ? 1 : 0.28)
-        .disabled(!enabled)
-        .help(help)
-        .accessibilityLabel(help)
     }
 }
 
 final class SplitPaneContainer: NSView {
-    var pillState: PanePillModel?
     private var webView: WKWebView?
     /// Non-flipped, so WebKit can dock the inspector along the bottom of the page.
     private let pageHost = InspectorDockHost()
     private let placeholder = NSTextField(labelWithString: "")
     private let toolbarDriver = PaneToolbarDriver()
     private var toolbarHost: NSHostingView<HostedPaneToolbar>?
-    private var pillHost: PillHostingView?
     private var split = false
     private var focused = false
-    private var hovered = false
 
     override var isFlipped: Bool { true }
 
@@ -227,7 +135,6 @@ final class SplitPaneContainer: NSView {
         toolbarHost?.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bar)
         toolbarHost?.isHidden = !split
         pageHost.frame = CGRect(x: 0, y: bar, width: bounds.width, height: max(0, bounds.height - bar))
-        placePill()
     }
 
     func apply(
@@ -236,16 +143,14 @@ final class SplitPaneContainer: NSView {
         tabID: UUID,
         split: Bool,
         focused: Bool,
-        hovered: Bool,
         title: String,
         isLeading: Bool,
         showsWindowControls: Bool,
         trafficClearance: CGFloat
     ) {
-        let changed = self.split != split || self.focused != focused || self.hovered != hovered
+        let changed = self.split != split || self.focused != focused
         self.split = split
         self.focused = focused
-        self.hovered = hovered
         placeholder.stringValue = title.isEmpty ? "Empty pane" : title
         toolbarDriver.tabID = tabID
         toolbarDriver.focused = focused
@@ -256,8 +161,6 @@ final class SplitPaneContainer: NSView {
             ensureToolbar(browser: browser, extensions: extensions)
         }
         toolbarHost?.isHidden = !split
-        ensurePill()
-        setPaneHovered(hovered)
         if changed {
             applyChrome(animated: window != nil)
         } else {
@@ -269,43 +172,6 @@ final class SplitPaneContainer: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         applyChrome(animated: false)
-    }
-
-    private func ensurePill() {
-        guard pillHost == nil, let pillState else { return }
-        let host = PillHostingView(rootView: PanePill(state: pillState))
-        // Frame, not constraints. A wide hosting view pinned on its trailing edge
-        // still centers the controls in the pane.
-        host.translatesAutoresizingMaskIntoConstraints = true
-        host.sizingOptions = [.intrinsicContentSize]
-        host.setContentHuggingPriority(.required, for: .horizontal)
-        host.setContentHuggingPriority(.required, for: .vertical)
-        host.passesThrough = true
-        addSubview(host)
-        pillHost = host
-        placePill()
-    }
-
-    /// Top trailing corner of the page, inset 6pt. The container is flipped, so y grows downward.
-    /// A split keeps the pill under the pane toolbar so it does not cover the URL.
-    private func placePill() {
-        guard let pillHost, bounds.width > 1, bounds.height > 1 else { return }
-        pillHost.layoutSubtreeIfNeeded()
-        var size = pillHost.fittingSize
-        if size.width < 8 || size.height < 8 || size.width > 160 {
-            let intrinsic = pillHost.intrinsicContentSize
-            if intrinsic.width >= 8, intrinsic.width <= 160 { size = intrinsic }
-        }
-        let width = min(max(size.width, 8), min(160, bounds.width - 12))
-        let height = min(max(size.height, 8), min(40, bounds.height - 12))
-        let top = (split ? SidebarMetrics.toolbarHeight : 0) + 6
-        pillHost.frame = CGRect(x: bounds.maxX - width - 6, y: top, width: width, height: height)
-    }
-
-    func setPaneHovered(_ hovered: Bool) {
-        self.hovered = hovered
-        pillHost?.passesThrough = !(split && hovered)
-        pillHost?.isHidden = !split
     }
 
     private func ensureToolbar(browser: BrowserModel, extensions: ExtensionManager) {
@@ -327,14 +193,5 @@ final class SplitPaneContainer: NSView {
         layer?.cornerRadius = radius
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         _ = animated
-    }
-}
-
-private final class PillHostingView: NSHostingView<PanePill> {
-    var passesThrough = true
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard !passesThrough else { return nil }
-        return super.hitTest(point)
     }
 }

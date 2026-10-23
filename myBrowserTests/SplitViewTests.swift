@@ -825,12 +825,18 @@ struct SplitViewTests {
         #expect(model.resolvedFocus(in: split.id) == first.id)
         model.focusAdjacentPane(offset: -1)
         #expect(model.resolvedFocus(in: split.id) == third.id)
+        model.swapPane(tabID: first.id)
+        #expect(library.splitMembers(of: split.id).map(\.id) == [second.id, first.id, third.id])
+        model.swapPane(tabID: third.id)
+        #expect(library.splitMembers(of: split.id).map(\.id) == [second.id, third.id, first.id])
+        model.swapPane(tabID: second.id)
+        #expect(library.splitMembers(of: split.id).map(\.id) == [third.id, second.id, first.id])
         #expect(model.canSwapPanes == false)
         model.separate(tabID: third.id)
         #expect(library.splitMembers(of: split.id).count == 2)
         model.select(split.id)
         model.swapFocusedPanes()
-        #expect(library.splitMembers(of: split.id).map(\.id) == [second.id, first.id])
+        #expect(library.splitMembers(of: split.id).map(\.id) == [first.id, second.id])
     }
 }
 

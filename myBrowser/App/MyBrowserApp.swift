@@ -94,10 +94,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         if let raw = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_WINDOW_X"], let x = Double(raw) {
+            let width = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_WINDOW_W"].flatMap(Double.init)
+            let height = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_WINDOW_H"].flatMap(Double.init)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 for window in NSApp.windows where window.canBecomeKey {
                     var frame = window.frame
                     frame.origin.x = x
+                    if let width, let height, width >= 640, height >= 480 {
+                        frame.size = NSSize(width: width, height: height)
+                    }
                     window.setFrame(frame, display: true)
                 }
             }
@@ -175,8 +180,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             break
         }
-        if env["MYBROWSER_DEBUG_LIBRARY"] != nil, env["MYBROWSER_DEBUG_IMPORT_FILE"] == nil {
-            seedSnapshotChrome()
+        if env["MYBROWSER_DEBUG_LIBRARY"] != nil {
+            if let raw = env["MYBROWSER_DEBUG_SPLIT"], let count = Int(raw), (2...4).contains(count) {
+                seedDebugSplit(panes: count)
+            }
+            if env["MYBROWSER_DEBUG_IMPORT_FILE"] == nil {
+                seedSnapshotChrome()
+            }
         }
         importDebugFixture()
     }
@@ -251,6 +261,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 lastActiveAt: now.addingTimeInterval(age - 3_600)
             ))
         }
+    }
+
+    /// A throwaway split so a snapshot can show pane toolbars. Only with `MYBROWSER_DEBUG_LIBRARY`.
+    private func seedDebugSplit(panes: Int) {
+        let space = model.selectedSpaceID
+        let pages = [
+            ("GitHub", "https://github.com"),
+            ("Apple", "https://www.apple.com"),
+            ("Swift", "https://www.swift.org"),
+            ("WebKit", "https://webkit.org"),
+        ]
+        let ids = pages.prefix(panes).map { title, raw in
+            model.library.addItem(
+                spaceID: space,
+                section: .tabs,
+                title: title,
+                url: URL(string: raw)
+            ).id
+        }
+        guard model.createSplit(tabIDs: ids) != nil else { return }
     }
 
     /// Favorites, an expanded folder, and one tab so toolbar snapshots have chrome to look at.

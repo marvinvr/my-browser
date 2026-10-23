@@ -837,7 +837,7 @@ enum DebugSnapshot {
 
         // cacheDisplay leaves WKWebView blank, including an extension popup's page.
         // The page image is then painted over the pane, which hides controls that sit
-        // on top of it (the split hover pill). Those smaller siblings are drawn again after.
+        // on top of it. Those smaller siblings are drawn again after.
         var pages: [(NSImage, NSRect)] = []
         var pageChrome: [(NSImage, NSRect)] = []
         for webView in webViews(in: content) where webView.bounds.width > 1 && webView.bounds.height > 1 {

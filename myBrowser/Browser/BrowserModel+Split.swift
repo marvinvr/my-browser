@@ -375,6 +375,15 @@ extension BrowserModel {
         swapPanes(splitID: id, 0, 1)
     }
 
+    /// Exchanges this pane with the next one. The last pane exchanges with the one before it.
+    func swapPane(tabID: UUID) {
+        guard let split = library.splitContainer(of: tabID) else { return }
+        let members = library.splitMembers(of: split.id)
+        guard members.count >= 2, let index = members.firstIndex(where: { $0.id == tabID }) else { return }
+        let other = index + 1 < members.count ? index + 1 : index - 1
+        swapPanes(splitID: split.id, index, other)
+    }
+
     /// Moves focus to the next pane, wrapping. `offset` -1 goes to the previous pane.
     func focusAdjacentPane(offset: Int) {
         guard offset != 0, let id = selectedItemID, library.item(id)?.isSplit == true else { return }

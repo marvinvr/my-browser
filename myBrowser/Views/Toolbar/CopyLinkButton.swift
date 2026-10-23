@@ -9,6 +9,8 @@ struct CopyLinkButton: View {
     var quiet: Bool = false
     /// Set on a split pane. Nil copies the selected tab.
     var tabID: UUID? = nil
+    var hit: CGFloat = 22
+    var symbolSize: CGFloat = SidebarMetrics.addressSymbol
 
     @Environment(BrowserModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
@@ -35,10 +37,10 @@ struct CopyLinkButton: View {
             model.copyCurrentLink()
         } label: {
             Image(systemName: confirmed ? "checkmark" : "link")
-                .font(.system(size: SidebarMetrics.addressSymbol, weight: .semibold))
+                .font(.system(size: symbolSize, weight: .semibold))
                 .symbolRenderingMode(.monochrome)
                 .contentTransition(.symbolEffect(.replace))
-                .frame(width: 22, height: 22)
+                .frame(width: hit, height: hit)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

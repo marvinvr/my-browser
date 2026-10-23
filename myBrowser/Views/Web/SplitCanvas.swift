@@ -33,10 +33,8 @@ final class SplitCanvasView: NSView {
     private var content: DisplayedContent?
     private var liveShares: [Double]?
     private var dragOrigin: [Double]?
-    private var hoveredID: UUID?
     private var dropZone: SplitDropZone?
     private var containers: [UUID: SplitPaneContainer] = [:]
-    private var pills: [UUID: PanePillModel] = [:]
     private var dividers: [SplitDividerView] = []
     private let highlight = SplitHighlightView()
     private let catcher = SplitDropCatcherView()
@@ -53,7 +51,7 @@ final class SplitCanvasView: NSView {
         addSubview(highlight)
         addSubview(catcher)
         catcher.allows = { [weak self] id, zone in self?.allows(id, zone) ?? false }
-        catcher.onHover = { [weak self] id in self?.setHovered(id) }
+        catcher.onHover = { _ in }
         catcher.onFocus = { [weak self] id in self?.focus(id) }
         catcher.onHighlight = { [weak self] zone in
             guard let self, self.dropZone != zone else { return }
@@ -138,20 +136,14 @@ final class SplitCanvasView: NSView {
             }
             containers[id]?.removeFromSuperview()
             containers[id] = nil
-            pills[id] = nil
         }
         for (index, pane) in content.panes.enumerated() {
             let container = containers[pane.id] ?? SplitPaneContainer()
-            let pill = pills[pane.id] ?? PanePillModel()
             containers[pane.id] = container
-            pills[pane.id] = pill
-            container.pillState = pill
             if container.superview == nil {
                 addSubview(container, positioned: .below, relativeTo: highlight)
             }
             installWebView(pane, in: container)
-            configure(pill, pane: pane, index: index, content: content)
-            let hovered = content.isSplit && (hoveredID == pane.id || snapshotHover(pane.id, content: content))
             let controlsIndex = content.axis == .vertical ? 0 : content.panes.count - 1
             container.apply(
                 browser: model,
@@ -159,7 +151,6 @@ final class SplitCanvasView: NSView {
                 tabID: pane.id,
                 split: content.isSplit,
                 focused: content.isSplit && pane.id == content.focusedID,
-                hovered: hovered,
                 title: pane.tab.title,
                 isLeading: index == 0,
                 showsWindowControls: content.isSplit && index == controlsIndex,
@@ -199,23 +190,6 @@ final class SplitCanvasView: NSView {
         }
         container.showWebView(tab.webView)
         tab.restoreHistoryWhenWindowed()
-    }
-
-    private func configure(_ pill: PanePillModel, pane: DisplayedPane, index: Int, content: DisplayedContent) {
-        pill.vertical = content.axis == .vertical
-        pill.canMovePrevious = index > 0
-        pill.canMoveNext = index < content.panes.count - 1
-        pill.visible = content.isSplit && (hoveredID == pane.id || snapshotHover(pane.id, content: content))
-        let tabID = pane.id
-        pill.onClose = { [weak self] in self?.model?.close(tabID) }
-        pill.onSeparate = { [weak self] in self?.model?.separate(tabID: tabID) }
-        pill.onPrevious = { [weak self] in self?.move(tabID, by: -1) }
-        pill.onNext = { [weak self] in self?.move(tabID, by: 1) }
-    }
-
-    private func move(_ tabID: UUID, by delta: Int) {
-        guard let index = content?.panes.firstIndex(where: { $0.id == tabID }) else { return }
-        model?.movePane(tabID: tabID, to: index + delta)
     }
 
     private func dividerRect(_ index: Int, spans: [SplitSpan], vertical: Bool, cross: CGFloat) -> CGRect? {
@@ -266,23 +240,6 @@ final class SplitCanvasView: NSView {
     private func focus(_ tabID: UUID) {
         guard let content, content.isSplit, content.focusedID != tabID else { return }
         model?.focusPane(tabID: tabID)
-    }
-
-    /// Locked-screen snapshots cannot move the pointer. The env var shows the focused pane's pill.
-    private func snapshotHover(_ paneID: UUID, content: DisplayedContent) -> Bool {
-        ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SPLIT_HOVER"] == "1"
-            && paneID == content.focusedID
-    }
-
-    private func setHovered(_ id: UUID?) {
-        guard hoveredID != id else { return }
-        hoveredID = id
-        guard let content, content.isSplit else { return }
-        for pane in content.panes {
-            let show = pane.id == id || snapshotHover(pane.id, content: content)
-            pills[pane.id]?.visible = show
-            containers[pane.id]?.setPaneHovered(show)
-        }
     }
 
     private func drop(_ tabID: UUID, zone: SplitDropZone) {
