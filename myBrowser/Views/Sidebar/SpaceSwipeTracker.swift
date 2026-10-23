@@ -69,8 +69,9 @@ nonisolated enum SpaceSwipeUpdate: Equatable, Sendable {
     case passthrough
     /// Claimed. `offset` is the sidebar translation (positive reveals the previous space).
     case tracking(offset: CGFloat)
-    /// Fingers up. Animate to `offset`, then run `action` (0 and `.none` spring back).
-    case settle(offset: CGFloat, action: SpaceSwipeAction)
+    /// Fingers up. Animate to `offset` starting at `velocity` (points per second; positive reveals
+    /// the previous space), then run `action`. Zero and `.none` spring back.
+    case settle(offset: CGFloat, action: SpaceSwipeAction, velocity: CGFloat)
     /// Part of a claimed gesture whose translation must not change. Momentum after the decision.
     case consume
 }
@@ -153,7 +154,7 @@ nonisolated struct SpaceSwipeTracker: Sendable {
         case .deciding, .rejected:
             let stuck = offset != 0
             goIdle()
-            return stuck ? .settle(offset: 0, action: .none) : .passthrough
+            return stuck ? .settle(offset: 0, action: .none, velocity: 0) : .passthrough
         case .coasting:
             return .consume
         case .idle:
@@ -291,7 +292,7 @@ nonisolated struct SpaceSwipeTracker: Sendable {
     private mutating func handleCancelled() -> SpaceSwipeUpdate {
         switch mode {
         case .tracking:
-            return settle(offset: 0, action: .none)
+            return settle(offset: 0, action: .none, velocity: velocity)
         case .deciding, .rejected:
             goIdle()
             return .passthrough
@@ -365,10 +366,10 @@ nonisolated struct SpaceSwipeTracker: Sendable {
         case .selectPrevious: target = distance
         case .selectNext: target = -distance
         }
-        return settle(offset: target, action: action)
+        return settle(offset: target, action: action, velocity: speed)
     }
 
-    private mutating func settle(offset target: CGFloat, action: SpaceSwipeAction) -> SpaceSwipeUpdate {
+    private mutating func settle(offset target: CGFloat, action: SpaceSwipeAction, velocity: CGFloat) -> SpaceSwipeUpdate {
         rawOffset = target
         offset = target
         mode = .coasting
@@ -376,7 +377,7 @@ nonisolated struct SpaceSwipeTracker: Sendable {
         sawMomentum = false
         momentumFinished = false
         viewSettled = false
-        return .settle(offset: target, action: action)
+        return .settle(offset: target, action: action, velocity: velocity)
     }
 
     private func present(_ raw: CGFloat) -> CGFloat {

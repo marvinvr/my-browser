@@ -3,9 +3,30 @@ import SwiftUI
 
 /// Springs used while a space swipe is on the finger, and after it lifts.
 enum SpaceSwipeMotion {
+    /// Perceptual length of the release. Critically damped, so it arrives without a bounce or a long tail.
+    static let duration: TimeInterval = 0.22
+    static let spring = Spring(duration: duration, bounce: 0)
     /// Tight and non-bouncing so each scroll sample stays on the finger.
     static let tracking = Animation.interactiveSpring(response: 0.08, dampingFraction: 1, blendDuration: 0.04)
-    static let settle = Animation.spring(response: 0.36, dampingFraction: 0.86)
+    /// Click and shortcut. A swipe release passes the finger speed to `animation(velocity:delta:)`.
+    static var settle: Animation { animation(velocity: 0, delta: 1) }
+
+    /// `velocity` is points per second along the column. The interpolating spring drives a unit
+    /// interval, so the speed handed to it is the fraction of `delta` covered per second.
+    static func animation(velocity: CGFloat, delta: CGFloat) -> Animation {
+        let relative = delta == 0 ? 0 : Double(velocity / delta)
+        return .interpolatingSpring(spring, initialVelocity: relative)
+    }
+
+    /// Keeps the part of `velocity` that still has to cover `to - from`, and caps it so a flick
+    /// cannot run past the rest point. Opposite speeds are dropped; the spring pulls those back.
+    static func carried(from: CGFloat, to: CGFloat, velocity: CGFloat) -> CGFloat {
+        let delta = to - from
+        guard delta != 0 else { return 0 }
+        let toward = delta > 0 ? max(velocity, 0) : min(velocity, 0)
+        let cap = delta / 0.08
+        return delta > 0 ? min(toward, cap) : max(toward, cap)
+    }
 }
 
 /// DEBUG hook so a snapshot can show the sidebar mid-swipe. `-80` reveals the next space.
@@ -137,7 +158,7 @@ struct SpaceSwipeContainer<Content: View>: View {
             var transaction = Transaction()
             transaction.animation = SpaceSwipeMotion.tracking
             withTransaction(transaction) { offset = value }
-        case .settle(let value, let action):
+        case .settle(let value, let action, let rawVelocity):
             noteSpaceDetent(action)
             settleToken += 1
             let token = settleToken
@@ -145,8 +166,9 @@ struct SpaceSwipeContainer<Content: View>: View {
             model.spaceContent.gestureActive = true
             swipeSettling = true
             commit(action, anchor: anchor, kind: "swipe-settle")
-            model.spaceContent.settle?(value, columnWidth)
-            withAnimation(SpaceSwipeMotion.settle) {
+            let carried = SpaceSwipeMotion.carried(from: offset, to: value, velocity: rawVelocity)
+            model.spaceContent.settle?(value, columnWidth, carried)
+            withAnimation(SpaceSwipeMotion.animation(velocity: carried, delta: value - offset)) {
                 offset = value
             } completion: {
                 guard token == settleToken else { return }

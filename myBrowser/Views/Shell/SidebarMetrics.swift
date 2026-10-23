@@ -119,7 +119,9 @@ enum SidebarMotion {
     /// Hover, selection, and reorder. A little slower than a disclosure.
     static let row = Animation.spring(response: 0.32, dampingFraction: 0.86)
     static let sidebar = Animation.spring(response: 0.38, dampingFraction: 0.88)
-    static let space = Animation.spring(response: 0.34, dampingFraction: 0.9)
+    /// Space tint, and a jump that is not the neighbour beside the current column.
+    /// Same 0.22s critically damped spring as `SpaceSwipeMotion`.
+    static let space = Animation.spring(duration: 0.22, bounce: 0)
     static let selection = row
     static let list = row
     /// Folder open/close. No bounce, and short enough that the folder glyph and the rows below finish together.

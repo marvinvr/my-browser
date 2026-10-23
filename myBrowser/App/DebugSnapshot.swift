@@ -474,7 +474,7 @@ enum DebugSnapshot {
             writeSpaceSwitchReady("prepared")
         case "click":
             let recording = clip.map { directory in
-                Task { await recordFrames(directory: directory, count: 24, interval: 16) }
+                Task { await recordFrames(directory: directory, count: 16, interval: 20, composeFallback: false) }
             }
             try? await Task.sleep(for: .milliseconds(48))
             SpaceSwitchTrace.mark("measure-click")
@@ -482,8 +482,12 @@ enum DebugSnapshot {
             await recording?.value
             writeSpaceSwitchReady("clicked")
         case "swipe":
-            await replaySpaceSwipe(model: model, clip: clip)
+            await replaySpaceSwipe(model: model, clip: clip, samples: 10, step: -28, gap: 20)
             writeSpaceSwitchReady("swiped")
+        case "flick":
+            // Short and fast, so the finger is still moving when it lifts and the spring keeps that speed.
+            await replaySpaceSwipe(model: model, clip: clip, samples: 4, step: -40, gap: 16)
+            writeSpaceSwitchReady("flicked")
         default:
             break
         }
@@ -526,24 +530,30 @@ enum DebugSnapshot {
     }
 
     @MainActor
-    private static func replaySpaceSwipe(model: BrowserModel, clip: String?) async {
+    private static func replaySpaceSwipe(
+        model: BrowserModel,
+        clip: String?,
+        samples: Int,
+        step: CGFloat,
+        gap: Int
+    ) async {
         let recording = clip.map { directory in
-            Task { await recordFrames(directory: directory, count: 60, interval: 16) }
+            Task { await recordFrames(directory: directory, count: 22, interval: 20, composeFallback: false) }
         }
         try? await Task.sleep(for: .milliseconds(32))
         SpaceSwitchTrace.mark("measure-swipe")
         var time = CACurrentMediaTime()
         SpaceSwipeDebugInject.send?(SpaceSwipeSample(phase: .began, deltaX: 0, deltaY: 0, time: time))
-        for _ in 0..<10 {
-            time += 0.02
+        for _ in 0..<samples {
+            time += Double(gap) / 1000
             SpaceSwipeDebugInject.send?(
-                SpaceSwipeSample(phase: .changed, deltaX: -28, deltaY: 0, time: time)
+                SpaceSwipeSample(phase: .changed, deltaX: step, deltaY: 0, time: time)
             )
-            try? await Task.sleep(for: .milliseconds(20))
+            try? await Task.sleep(for: .milliseconds(gap))
         }
-        time += 0.02
+        time += Double(gap) / 1000
         SpaceSwipeDebugInject.send?(SpaceSwipeSample(phase: .ended, deltaX: 0, deltaY: 0, time: time))
-        try? await Task.sleep(for: .milliseconds(520))
+        try? await Task.sleep(for: .milliseconds(280))
         await recording?.value
     }
 
@@ -555,7 +565,7 @@ enum DebugSnapshot {
     /// Composited window frames. `CGWindowListCreateImage` is unavailable to other processes here,
     /// but the app can still read its own window. Used to record sidebar motion.
     @MainActor
-    private static func recordFrames(directory: String?, count: Int, interval: Int) async {
+    private static func recordFrames(directory: String?, count: Int, interval: Int, composeFallback: Bool = true) async {
         guard let directory, directory.hasPrefix("/") else { return }
         let folder = URL(fileURLWithPath: directory, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -564,12 +574,17 @@ enum DebugSnapshot {
         for index in 0..<frames {
             let started = Date()
             let image: CGImage?
-            if let windowImage = ownWindowImage(), frameHasInk(windowImage) {
+            if composeFallback, let windowImage = ownWindowImage(), frameHasInk(windowImage) {
                 image = windowImage
-            } else {
+            } else if composeFallback {
                 // The window server sometimes returns a full-size black bitmap.
-                // Draw the chrome and each visible page instead.
+                // Draw the chrome and each visible page instead. The page snapshot
+                // blocks the main thread, so a space-switch measure uses chrome only.
                 image = await composedFrame()
+            } else {
+                image = nil
+                let url = folder.appendingPathComponent(String(format: "f%02d.png", index))
+                writeChromeFrame(to: url)
             }
             if let image {
                 let url = folder.appendingPathComponent(String(format: "f%02d.png", index))
@@ -606,6 +621,38 @@ enum DebugSnapshot {
             if red > 0.02 || green > 0.02 || blue > 0.02 { return true }
         }
         return false
+    }
+
+    /// Sidebar and window chrome only. Copies the bitmap before the next frame reuses the cache.
+    private static func writeChromeFrame(to url: URL) {
+        guard let window = targetWindow(preferring: nil),
+              let content = window.contentView,
+              content.bounds.width > 1, content.bounds.height > 1 else { return }
+        content.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        let bounds = content.bounds
+        guard let cache = content.bitmapImageRepForCachingDisplay(in: bounds) else { return }
+        content.cacheDisplay(in: bounds, to: cache)
+        guard let src = cache.bitmapData else { return }
+        let row = cache.bytesPerRow
+        let height = cache.pixelsHigh
+        guard height > 0, row > 0,
+              let copy = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: cache.pixelsWide,
+                pixelsHigh: height,
+                bitsPerSample: cache.bitsPerSample,
+                samplesPerPixel: cache.samplesPerPixel,
+                hasAlpha: cache.hasAlpha,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: row,
+                bitsPerPixel: cache.bitsPerPixel
+              ),
+              let dst = copy.bitmapData else { return }
+        memcpy(dst, src, row * height)
+        guard let png = copy.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: url)
     }
 
     /// Chrome from `cacheDisplay`, pages from `takeSnapshot`, placed at their current frames.

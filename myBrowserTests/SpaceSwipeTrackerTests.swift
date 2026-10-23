@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import myBrowser
 
@@ -25,6 +26,24 @@ struct SpaceSwipeTrackerTests {
         inside: Bool = true
     ) -> SpaceSwipeUpdate {
         tracker.handle(SpaceSwipeSample(phase: phase, deltaX: x, deltaY: y, time: time, inside: inside))
+    }
+
+    /// Release speed is asserted on its own. These checks only care where the column is sent.
+    private func expectSettle(
+        _ update: SpaceSwipeUpdate,
+        offset: CGFloat,
+        action: SpaceSwipeAction,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        guard case .settle(let gotOffset, let gotAction, _) = update else {
+            Issue.record(
+                "expected settle(offset: \(offset), action: \(action)), got \(update)",
+                sourceLocation: sourceLocation
+            )
+            return
+        }
+        #expect(gotOffset == offset, sourceLocation: sourceLocation)
+        #expect(gotAction == action, sourceLocation: sourceLocation)
     }
 
     @Test func phaseBitsMatchAppKit() {
@@ -87,17 +106,17 @@ struct SpaceSwipeTrackerTests {
         var swipe = tracker()
         _ = feed(&swipe, .changed, x: 59, y: 0, time: 0)
         let update = feed(&swipe, .ended, time: 0.05)
-        #expect(update == .settle(offset: 0, action: .none))
+        expectSettle(update, offset: 0, action: .none)
     }
 
     @Test func releasePastThirtyPercentCommits() {
         var next = tracker()
         _ = feed(&next, .changed, x: -60, y: 0, time: 0)
-        #expect(feed(&next, .ended, time: 0.05) == .settle(offset: -200, action: .selectNext))
+        expectSettle(feed(&next, .ended, time: 0.05), offset: -200, action: .selectNext)
 
         var previous = tracker()
         _ = feed(&previous, .changed, x: 60, y: 0, time: 0)
-        #expect(feed(&previous, .ended, time: 0.05) == .settle(offset: 200, action: .selectPrevious))
+        expectSettle(feed(&previous, .ended, time: 0.05), offset: 200, action: .selectPrevious)
     }
 
     @Test func flickBelowTheDistanceCommits() {
@@ -106,7 +125,7 @@ struct SpaceSwipeTrackerTests {
         _ = feed(&swipe, .changed, x: -15, y: 0, time: 0.01)
         _ = feed(&swipe, .changed, x: -20, y: 0, time: 0.02)
         let update = feed(&swipe, .ended, x: 0, y: 0, time: 0.03)
-        #expect(update == .settle(offset: -200, action: .selectNext))
+        expectSettle(update, offset: -200, action: .selectNext)
         #expect(abs(35) < 200 * 0.30)
     }
 
@@ -116,7 +135,7 @@ struct SpaceSwipeTrackerTests {
         _ = feed(&swipe, .changed, x: 8, y: 0, time: 0.20)
         _ = feed(&swipe, .changed, x: 8, y: 0, time: 0.205)
         let update = feed(&swipe, .ended, x: 4, y: 0, time: 0.210)
-        #expect(update == .settle(offset: 0, action: .none))
+        expectSettle(update, offset: 0, action: .none)
     }
 
     @Test func rubberBandsOnTheFirstAndLastSpace() {
@@ -128,12 +147,12 @@ struct SpaceSwipeTrackerTests {
         var first = tracker(previous: false, next: true)
         let right = feed(&first, .changed, x: 100, y: 0, time: 0)
         #expect(right == .tracking(offset: resisted))
-        #expect(feed(&first, .ended, time: 0.1) == .settle(offset: 0, action: .none))
+        expectSettle(feed(&first, .ended, time: 0.1), offset: 0, action: .none)
 
         var last = tracker(previous: true, next: false)
         let left = feed(&last, .changed, x: -100, y: 0, time: 0)
         #expect(left == .tracking(offset: -resisted))
-        #expect(feed(&last, .ended, time: 0.1) == .settle(offset: 0, action: .none))
+        expectSettle(feed(&last, .ended, time: 0.1), offset: 0, action: .none)
     }
 
     @Test func aLongDragPastOneColumnResists() {
@@ -146,7 +165,7 @@ struct SpaceSwipeTrackerTests {
     @Test func momentumAfterCommitDoesNotMoveTheOffset() {
         var swipe = tracker()
         _ = feed(&swipe, .changed, x: -80, y: 0, time: 0)
-        #expect(feed(&swipe, .ended, time: 0.04) == .settle(offset: -200, action: .selectNext))
+        expectSettle(feed(&swipe, .ended, time: 0.04), offset: -200, action: .selectNext)
         #expect(feed(&swipe, .momentum(ended: false), x: 400, y: 0, time: 0.06) == .consume)
         #expect(feed(&swipe, .momentum(ended: false), x: -50, y: 20, time: 0.08) == .consume)
         #expect(swipe.offset == -200)
@@ -162,7 +181,7 @@ struct SpaceSwipeTrackerTests {
     @Test func cancelSpringsBack() {
         var swipe = tracker()
         _ = feed(&swipe, .changed, x: 80, y: 0, time: 0)
-        #expect(feed(&swipe, .cancelled, time: 0.02) == .settle(offset: 0, action: .none))
+        expectSettle(feed(&swipe, .cancelled, time: 0.02), offset: 0, action: .none)
     }
 
     @Test func eventsOutsideDoNotStartAGesture() {
@@ -178,30 +197,56 @@ struct SpaceSwipeTrackerTests {
     @Test func newTouchOutsideWhileTrackingSettles() {
         var short = tracker(width: 200)
         #expect(feed(&short, .changed, x: 40, y: 0, time: 0) == .tracking(offset: 40))
-        #expect(feed(&short, .began, time: 1, inside: false) == .settle(offset: 0, action: .none))
+        expectSettle(feed(&short, .began, time: 1, inside: false), offset: 0, action: .none)
 
         var far = tracker(width: 200)
         #expect(feed(&far, .changed, x: 80, y: 0, time: 0) == .tracking(offset: 80))
-        #expect(feed(&far, .began, time: 1, inside: false) == .settle(offset: 200, action: .selectPrevious))
+        expectSettle(feed(&far, .began, time: 1, inside: false), offset: 200, action: .selectPrevious)
     }
 
     @Test func interruptWhileTrackingSettles() {
         var short = tracker(width: 200)
         _ = feed(&short, .changed, x: 40, y: 0, time: 0)
-        #expect(short.interrupt() == .settle(offset: 0, action: .none))
+        expectSettle(short.interrupt(), offset: 0, action: .none)
 
         var far = tracker(width: 200)
         _ = feed(&far, .changed, x: 80, y: 0, time: 0)
-        #expect(far.interrupt() == .settle(offset: 200, action: .selectPrevious))
+        expectSettle(far.interrupt(), offset: 200, action: .selectPrevious)
 
         var idle = tracker()
         #expect(idle.interrupt() == .passthrough)
     }
 
-    @Test func settleSpringStartsAtRestAndArrives() {
-        #expect(abs(SpaceSwipeSpring.fraction(at: 0)) < 0.001)
-        #expect(SpaceSwipeSpring.fraction(at: 0.36) > 0.8)
-        #expect(SpaceSwipeSpring.fraction(at: 0.7) > 0.98)
+    @Test func releaseCarriesTheFingerVelocity() {
+        var swipe = tracker()
+        _ = feed(&swipe, .changed, x: -20, y: 0, time: 0)
+        _ = feed(&swipe, .changed, x: -20, y: 0, time: 0.02)
+        let update = feed(&swipe, .ended, x: 0, y: 0, time: 0.04)
+        guard case .settle(_, _, let velocity) = update else {
+            Issue.record("expected a settle with the finger speed")
+            return
+        }
+        #expect(abs(velocity - (-2000)) < 1)
+    }
+
+    @Test func settleSpringIsCriticallyDampedAndShort() {
+        let spring = SpaceSwipeMotion.spring
+        #expect(spring.bounce == 0)
+        #expect(abs(spring.duration - 0.22) < 0.0001)
+        #expect(abs(spring.dampingRatio - 1) < 0.001)
+        let arrived = spring.value(target: 1.0, initialVelocity: 0.0, time: 0.22)
+        #expect(arrived > 0.98)
+        #expect(arrived <= 1)
+        let coasting = spring.value(target: 1.0, initialVelocity: 4.0, time: 0.08)
+        let resting = spring.value(target: 1.0, initialVelocity: 0.0, time: 0.08)
+        #expect(coasting > resting)
+        #expect(coasting <= 1)
+
+        #expect(abs(SpaceSwipeMotion.carried(from: -80, to: -240, velocity: -1400) - (-1400)) < 0.01)
+        #expect(abs(SpaceSwipeMotion.carried(from: -80, to: -240, velocity: -5000) - (-2000)) < 0.01)
+        #expect(SpaceSwipeMotion.carried(from: -280, to: -240, velocity: -1400) == 0)
+        #expect(SpaceSwipeMotion.carried(from: -80, to: -240, velocity: 400) == 0)
+        #expect(abs(SpaceSwipeMotion.carried(from: 40, to: 0, velocity: -900) - (-500)) < 0.01)
     }
 
     @Test func prewarmNeighbourLoadsWithoutSelectingIt() throws {

@@ -12,7 +12,8 @@ final class SpaceContentSurface {
     /// Finger down. `offset` matches the sidebar: positive reveals the previous space.
     var track: ((_ anchor: UUID, _ offset: CGFloat, _ width: CGFloat) -> Void)?
     /// Finger up. Animate from the current offset toward `offset` (0, +width, or −width).
-    var settle: ((_ offset: CGFloat, _ width: CGFloat) -> Void)?
+    /// `velocity` is points per second, already clamped to the direction of that move.
+    var settle: ((_ offset: CGFloat, _ width: CGFloat, _ velocity: CGFloat) -> Void)?
     var endGesture: (() -> Void)?
     /// Attach web views created by prewarm.
     var sync: (() -> Void)?
@@ -73,23 +74,6 @@ enum SpaceSwitchTrace {
     }
 }
 
-/// Same spring as `SpaceSwipeMotion.settle`, evaluated on a display link so the page
-/// moves with the sidebar instead of waiting for SwiftUI's completion callback.
-enum SpaceSwipeSpring {
-    static let response = 0.36
-    static let damping = 0.86
-
-    /// 0 at release, 1 when the spring has arrived. Initial velocity is zero.
-    static func fraction(at time: TimeInterval) -> CGFloat {
-        let omega = 2 * Double.pi / response
-        let zeta = damping
-        let omegaD = omega * sqrt(1 - zeta * zeta)
-        let decay = exp(-zeta * omega * time)
-        let remaining = decay * (cos(omegaD * time) + (zeta * omega / omegaD) * sin(omegaD * time))
-        return CGFloat(1 - remaining)
-    }
-}
-
 /// One AppKit view for every Space's selected page.
 ///
 /// Neighbours sit under the current page (same frame, so WebKit has painted them) and
@@ -139,6 +123,8 @@ final class SpaceContentStage: NSView {
     private var settling = false
     private var settleFrom: CGFloat = 0
     private var settleTo: CGFloat = 0
+    /// Progress units per second. Points per second divided by the column width.
+    private var settleVelocity: CGFloat = 0
     private var settleStart: CFTimeInterval = 0
     private let sampler = SpaceContentSampler()
 
@@ -165,8 +151,8 @@ final class SpaceContentStage: NSView {
         model.spaceContent.track = { [weak stage] anchor, offset, width in
             stage?.track(anchor: anchor, offset: offset, width: width)
         }
-        model.spaceContent.settle = { [weak stage] offset, width in
-            stage?.beginSettle(offset: offset, width: width)
+        model.spaceContent.settle = { [weak stage] offset, width, velocity in
+            stage?.beginSettle(offset: offset, width: width, velocity: velocity)
         }
         model.spaceContent.endGesture = { [weak stage] in stage?.endGesture() }
         model.spaceContent.sync = { [weak stage] in stage?.syncFromModel() }
@@ -213,10 +199,11 @@ final class SpaceContentStage: NSView {
         placeSlots()
     }
 
-    func beginSettle(offset: CGFloat, width: CGFloat) {
+    func beginSettle(offset: CGFloat, width: CGFloat, velocity: CGFloat) {
         let target = width > 1 ? offset / width : 0
         settleFrom = progress
         settleTo = target
+        settleVelocity = width > 1 ? velocity / width : 0
         settleStart = CACurrentMediaTime()
         settling = true
         sampler.start(on: self) { [weak self] in
@@ -278,14 +265,21 @@ final class SpaceContentStage: NSView {
 
     private func stepSettle() {
         let elapsed = CACurrentMediaTime() - settleStart
-        let fraction = SpaceSwipeSpring.fraction(at: elapsed)
-        progress = settleFrom + (settleTo - settleFrom) * min(1, fraction)
-        placeSlots()
-        if fraction >= 0.995 || elapsed > 1 {
+        let delta = settleTo - settleFrom
+        // Same unit spring as the sidebar. Duration does not depend on how far the page still has to go.
+        let relative = delta == 0 ? 0 : Double(settleVelocity / delta)
+        let unit = SpaceSwipeMotion.spring.value(
+            target: 1.0,
+            initialVelocity: relative,
+            time: elapsed
+        )
+        progress = settleFrom + delta * unit
+        if elapsed >= SpaceSwipeMotion.duration || abs(progress - settleTo) < 0.0008 {
             progress = settleTo
             stopSettle()
-            placeSlots()
+            SpaceSwitchTrace.mark(String(format: "content-settled %.0fms", elapsed * 1000))
         }
+        placeSlots()
     }
 
     private func stopSettle() {
@@ -394,37 +388,40 @@ final class SpaceContentStage: NSView {
     }
 }
 
-/// Display link for the content spring. `CADisplayLink(target:selector:)` is unavailable on macOS;
-/// the view's display link runs on the common modes, including event tracking.
+/// Steps the content spring. This hosting view's display link never fires, so a common-mode
+/// timer does. Common mode keeps the callbacks running inside a trackpad tracking loop.
 nonisolated private final class SpaceContentSampler: NSObject, @unchecked Sendable {
     private let lock = NSLock()
-    private var link: CADisplayLink?
+    private var timer: Timer?
     private var onFire: @Sendable () -> Void = {}
 
     @MainActor
     func start(on view: NSView, _ block: @escaping @Sendable () -> Void) {
+        _ = view
+        stop()
         lock.lock()
         onFire = block
-        let existing = link != nil
         lock.unlock()
-        guard !existing else { return }
-        let link = view.displayLink(target: self, selector: #selector(tick(_:)))
-        link.add(to: .main, forMode: .common)
+        let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in
+            self?.fire()
+        }
+        timer.tolerance = 0
+        RunLoop.main.add(timer, forMode: .common)
         lock.lock()
-        self.link = link
+        self.timer = timer
         lock.unlock()
     }
 
     func stop() {
         lock.lock()
-        let installed = link
-        link = nil
+        let installed = timer
+        timer = nil
         onFire = {}
         lock.unlock()
         installed?.invalidate()
     }
 
-    @objc private func tick(_ link: CADisplayLink) {
+    private func fire() {
         lock.lock()
         let block = onFire
         lock.unlock()
