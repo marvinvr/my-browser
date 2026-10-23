@@ -42,6 +42,7 @@ final class KeyMonitor {
         if keyCode == wKey, flags == [.command, .shift] { return true }
         // ⌘R is reload. Ctrl+R is eaten so it does not reload and does not reach the page.
         if keyCode == rKey && (flags == .command || flags == .control) { return true }
+        if keyCode == pKey, flags == [.command, .shift] { return true }
         return false
     }
 
@@ -91,6 +92,13 @@ final class KeyMonitor {
             }
         }
 
+        if keyCode == Self.pKey, flags == [.command, .shift] {
+            if !isRepeat {
+                model.togglePictureInPicture()
+            }
+            return true
+        }
+
         if keyCode == Self.escapeKey, flags.isEmpty {
             if model.commandBarMode != nil {
                 model.hideCommandBar()
@@ -109,4 +117,5 @@ final class KeyMonitor {
     nonisolated private static let tKey: UInt16 = 17
     nonisolated private static let wKey: UInt16 = 13
     nonisolated private static let rKey: UInt16 = 15
+    nonisolated private static let pKey: UInt16 = 35
 }

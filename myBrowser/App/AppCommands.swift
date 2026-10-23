@@ -53,6 +53,7 @@ struct AppCommands: Commands {
             ReloadCommand(model: model)
             BackCommand(model: model)
             ForwardCommand(model: model)
+            PictureInPictureCommand(model: model)
         }
 
         CommandMenu("Tabs") {
@@ -97,6 +98,9 @@ enum NavigationCommands {
                     ownsNavigation = true
                 case "Forward":
                     item.isEnabled = model.canGoForward
+                    ownsNavigation = true
+                case "Enter Picture in Picture", "Exit Picture in Picture":
+                    item.isEnabled = model.canPictureInPicture
                     ownsNavigation = true
                 default:
                     break
@@ -148,6 +152,8 @@ final class NavigationMenuFixer: NSObject, NSMenuDelegate {
         case "Reload": return model?.canReload == true
         case "Back": return model?.canGoBack == true
         case "Forward": return model?.canGoForward == true
+        case "Enter Picture in Picture", "Exit Picture in Picture":
+            return model?.canPictureInPicture == true
         default: return true
         }
     }
@@ -157,6 +163,8 @@ final class NavigationMenuFixer: NSObject, NSMenuDelegate {
         case "Reload": model?.selectedTab?.reload()
         case "Back": model?.selectedTab?.goBack()
         case "Forward": model?.selectedTab?.goForward()
+        case "Enter Picture in Picture", "Exit Picture in Picture":
+            model?.togglePictureInPicture()
         default: break
         }
     }
@@ -168,6 +176,9 @@ final class NavigationMenuFixer: NSObject, NSMenuDelegate {
             case "Reload": item.isEnabled = model.canReload
             case "Back": item.isEnabled = model.canGoBack
             case "Forward": item.isEnabled = model.canGoForward
+            case "Enter Picture in Picture", "Exit Picture in Picture":
+                item.title = model.pictureInPictureActive ? "Exit Picture in Picture" : "Enter Picture in Picture"
+                item.isEnabled = model.canPictureInPicture
             default: continue
             }
             item.target = self
@@ -180,6 +191,8 @@ struct BrowserNavigationState: Equatable {
     var canGoBack: Bool
     var canGoForward: Bool
     var canReload: Bool
+    var canPictureInPicture: Bool = false
+    var isPictureInPictureActive: Bool = false
 }
 
 private struct BrowserNavigationStateKey: FocusedValueKey {
@@ -249,5 +262,19 @@ private struct ForwardCommand: View {
         Button("Forward") { model.selectedTab?.goForward() }
             .keyboardShortcut("]")
             .disabled(navigation?.canGoForward != true)
+    }
+}
+
+private struct PictureInPictureCommand: View {
+    var model: BrowserModel
+    @FocusedValue(\.browserNavigation) private var navigation
+
+    var body: some View {
+        let active = navigation?.isPictureInPictureActive == true
+        Button(active ? "Exit Picture in Picture" : "Enter Picture in Picture") {
+            model.togglePictureInPicture()
+        }
+        .keyboardShortcut("p", modifiers: [.command, .shift])
+        .disabled(navigation?.canPictureInPicture != true)
     }
 }

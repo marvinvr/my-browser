@@ -56,6 +56,13 @@ final class BrowserModel {
         if let itemID = session.selectedItemBySpace[resolved] {
             select(itemID)
         }
+        installPictureInPictureMonitoring()
+    }
+
+    deinit {
+        for token in pictureInPictureObservers {
+            NotificationCenter.default.removeObserver(token)
+        }
     }
 
     // MARK: Derived
@@ -75,6 +82,18 @@ final class BrowserModel {
     private(set) var canReload = false
     /// Bumped when the current page URL is copied, so address fields can flash a checkmark.
     private(set) var linkCopyGeneration = 0
+    /// Selected tab can enter or leave Picture in Picture. Menus observe these, not the tab.
+    private(set) var canPictureInPicture = false
+    private(set) var pictureInPictureActive = false
+    /// Tab whose video is in the system PiP panel, including while enter is still starting.
+    var pictureInPictureTabID: UUID?
+    @ObservationIgnored var pictureInPictureSession: PictureInPictureSession?
+    @ObservationIgnored var pictureInPictureForegroundID: UUID?
+    @ObservationIgnored var pictureInPictureEnterGeneration = 0
+    @ObservationIgnored var pictureInPictureIgnoreFocusUntil = Date.distantPast
+    @ObservationIgnored var pictureInPictureWindowFocused: Bool?
+    @ObservationIgnored var pictureInPictureFocusTask: Task<Void, Never>?
+    @ObservationIgnored nonisolated(unsafe) var pictureInPictureObservers: [NSObjectProtocol] = []
 
     /// Sites in sidebar order for the current space: favorites, pinned (depth-first, expanded folders only), tabs.
     var navigableItems: [SidebarItem] {
@@ -90,6 +109,7 @@ final class BrowserModel {
             select(itemID)
         } else {
             refreshNavigationState()
+            syncPictureInPictureForeground()
         }
     }
 
@@ -145,6 +165,7 @@ final class BrowserModel {
             extensions?.tabActivated(tab, previous: previous)
         }
         refreshNavigationState()
+        syncPictureInPictureForeground()
     }
 
     /// Opens `url` in a new `.tabs` item at the top of the current space. Background leaves the selection alone.
@@ -200,7 +221,10 @@ final class BrowserModel {
             select(neighbour)
         } else {
             session.selectedItemBySpace[spaceID] = nil
-            if spaceID == selectedSpaceID { refreshNavigationState() }
+            if spaceID == selectedSpaceID {
+                refreshNavigationState()
+                syncPictureInPictureForeground()
+            }
         }
     }
 
@@ -228,7 +252,10 @@ final class BrowserModel {
             select(replacement)
         } else {
             session.selectedItemBySpace[spaceID] = nil
-            if spaceID == selectedSpaceID { refreshNavigationState() }
+            if spaceID == selectedSpaceID {
+                refreshNavigationState()
+                syncPictureInPictureForeground()
+            }
         }
     }
 
@@ -401,6 +428,7 @@ final class BrowserModel {
                             setSidebarFocus(nil)
                         }
                         refreshNavigationState()
+                        syncPictureInPictureForeground()
                     }
                 } else {
                     session.selectedItemBySpace[origin] = replacement
@@ -464,6 +492,7 @@ final class BrowserModel {
     @discardableResult
     func presentPopup(configuration: WKWebViewConfiguration, url: URL?, spaceID: UUID) -> WKWebView? {
         guard library.space(spaceID) != nil else { return nil }
+        PictureInPictureWebKit.enable(configuration.preferences)
         let pageURL = url.flatMap { BrowserTab.isPageURL($0) ? $0 : nil }
         let title = pageURL.map { Self.fallbackTitle(for: $0) } ?? "New Tab"
         let item = library.addItem(
@@ -550,16 +579,26 @@ final class BrowserModel {
             guard tab.id == self?.selectedItemID else { return }
             self?.refreshNavigationState()
         }
+        tab.onPictureInPicture = { [weak self] tab in
+            self?.ingestPictureInPicture(tab)
+        }
+        tab.pictureInPictureHost = { [weak self] in
+            self?.pictureInPictureContainer()
+        }
     }
 
-    private func refreshNavigationState() {
+    func refreshNavigationState() {
         let tab = selectedTab
         let back = tab?.canGoBack == true
         let forward = tab?.canGoForward == true
         let reload = tab != nil
+        let pip = tab?.showsPictureInPictureButton == true
+        let pipActive = tab?.isPictureInPictureActive == true
         if canGoBack != back { canGoBack = back }
         if canGoForward != forward { canGoForward = forward }
         if canReload != reload { canReload = reload }
+        if canPictureInPicture != pip { canPictureInPicture = pip }
+        if pictureInPictureActive != pipActive { pictureInPictureActive = pipActive }
         NavigationCommands.apply(self)
     }
 
@@ -583,6 +622,7 @@ final class BrowserModel {
     }
 
     private func unloadTab(_ id: UUID) {
+        endPictureInPicture(for: id)
         if let tab = tabs[id] {
             extensions?.tabClosed(tab)
             tab.unload()

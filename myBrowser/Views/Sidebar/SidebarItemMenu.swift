@@ -24,6 +24,7 @@ struct SidebarItemMenu: ViewModifier {
                 if let url = link {
                     Button("Copy Link") { SidebarClipboard.copy(url) }
                 }
+                pictureInPictureButton
                 Divider()
                 Button("Close") { model.close(item.id) }
             } else {
@@ -34,6 +35,7 @@ struct SidebarItemMenu: ViewModifier {
                 if let url = link {
                     Button("Copy Link") { SidebarClipboard.copy(url) }
                 }
+                pictureInPictureButton
                 Button("Close") { model.close(item.id) }
                 Divider()
                 Button("Delete", role: .destructive) { model.delete(item.id) }
@@ -49,6 +51,15 @@ struct SidebarItemMenu: ViewModifier {
                     model.moveItem(item.id, toSpace: space.id, section: section, parentID: nil, position: .end)
                 }
                 .disabled(space.id == item.spaceID)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var pictureInPictureButton: some View {
+        if let tab = model.tabs[item.id], tab.showsPictureInPictureButton {
+            Button(tab.isPictureInPictureActive ? "Exit Picture in Picture" : "Enter Picture in Picture") {
+                model.togglePictureInPicture(item.id)
             }
         }
     }

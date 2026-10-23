@@ -11,12 +11,13 @@ struct SettingsView: View {
             ExtensionsSettingsView()
                 .tabItem { Label("Extensions", systemImage: "puzzlepiece.extension") }
         }
-        .frame(width: 520, height: 460)
+        .frame(width: 520, height: 520)
     }
 }
 
 private struct GeneralSettingsView: View {
     @AppStorage(SearchEngine.defaultsKey) private var searchEngine: SearchEngine = .google
+    @AppStorage(PictureInPictureSettings.autoDefaultsKey) private var autoPictureInPicture = true
     @AppStorage(SyncController.enabledDefaultsKey) private var iCloudSyncEnabled = false
 
     private var iCloudSync: Binding<Bool> {
@@ -35,6 +36,12 @@ private struct GeneralSettingsView: View {
                 ForEach(SearchEngine.allCases, id: \.self) { engine in
                     Text(engine.displayName).tag(engine)
                 }
+            }
+
+            Section {
+                Toggle("Automatic Picture in Picture", isOn: $autoPictureInPicture)
+            } footer: {
+                Text("A playing video moves to Picture in Picture when you leave its tab or the window.")
             }
 
             Section {

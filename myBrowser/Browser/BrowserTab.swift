@@ -21,6 +21,11 @@ final class BrowserTab: NSObject, Identifiable {
     private(set) var themeColor: NSColor?
     /// True once `loadIfNeeded` has created the web view. Tracked on its own: `webView` is not observed.
     private(set) var isLoaded = false
+    /// A large enough video is playing and the site allows Picture in Picture.
+    var hasPictureInPictureVideo = false
+    var isPictureInPictureActive = false
+    /// Toolbar and menus. Stays up while PiP is active so the video can be returned inline.
+    var showsPictureInPictureButton: Bool { hasPictureInPictureVideo || isPictureInPictureActive }
     @ObservationIgnored private(set) var webView: WKWebView?
 
     /// Called when the page wants a new tab (Cmd-click). `inBackground` is true.
@@ -31,6 +36,10 @@ final class BrowserTab: NSObject, Identifiable {
     @ObservationIgnored var onStateChange: ((BrowserTab) -> Void)?
     /// Called when back/forward availability changes, so menus can track the selected tab.
     @ObservationIgnored var onNavigationChange: ((BrowserTab) -> Void)?
+    /// Playing / Picture in Picture eligibility changed.
+    @ObservationIgnored var onPictureInPicture: ((BrowserTab) -> Void)?
+    /// View that keeps this web view inside a window while it is in Picture in Picture.
+    @ObservationIgnored var pictureInPictureHost: (() -> NSView?)?
     @ObservationIgnored var faviconStore: FaviconStore?
 
     @ObservationIgnored private let initialURL: URL?
@@ -49,6 +58,14 @@ final class BrowserTab: NSObject, Identifiable {
     @ObservationIgnored private var lastReloadTime: TimeInterval = -.infinity
     @ObservationIgnored private var downloads: [ObjectIdentifier: WKDownload] = [:]
     @ObservationIgnored private var webDelegate: TabWebDelegate?
+    @ObservationIgnored var pictureInPictureRelay: PictureInPictureRelay?
+    /// Latest frame info per document. WebKit hands out a new `WKFrameInfo` on every message.
+    @ObservationIgnored var pictureInPictureFrames: [String: PictureInPictureFrame] = [:]
+    /// Set while we close PiP ourselves, so the system panel's return path is not also a tab switch.
+    @ObservationIgnored var suppressPictureInPictureReturn = false
+    /// Stays true briefly after the last "playing" report. Hiding the app pauses the element
+    /// before the focus notification runs, and auto PiP still needs to catch that video.
+    @ObservationIgnored var pictureInPictureEligibleUntil = Date.distantPast
     /// Filled in by `BrowserModel` so this tab can answer `WKWebExtensionTab`.
     @ObservationIgnored var extensionBridge = ExtensionTabBridge()
 
@@ -127,6 +144,7 @@ final class BrowserTab: NSObject, Identifiable {
         observe(webView)
         self.webView = webView
         isLoaded = true
+        installPictureInPictureScript(on: webView)
     }
 
     /// Shows a previously cached icon immediately, before the page finishes loading.
@@ -143,6 +161,7 @@ final class BrowserTab: NSObject, Identifiable {
         observations.forEach { $0.invalidate() }
         observations.removeAll()
         downloads.removeAll()
+        tearDownPictureInPicture()
         webView?.stopLoading()
         webView?.navigationDelegate = nil
         webView?.uiDelegate = nil
@@ -243,6 +262,7 @@ final class BrowserTab: NSObject, Identifiable {
             favicon = faviconStore?.cachedFavicon(for: newURL)
             clearTheme()
         }
+        resetPictureInPictureFrames()
         onStateChange?(self)
     }
 

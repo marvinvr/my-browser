@@ -21,8 +21,9 @@ final class ProfileManager {
         configuration.websiteDataStore = dataStore(for: profileID)
         configuration.preferences.isElementFullscreenEnabled = true
         // AirPlay defaults to allowed; set it explicitly so a future default change can't turn it off.
-        // Picture-in-Picture has no macOS configuration flag (the iOS property is unavailable here) and stays at the system default, which allows it.
         configuration.allowsAirPlayForMediaPlayback = true
+        // macOS has no public allowsPictureInPictureMediaPlayback, and the private preference defaults to off.
+        PictureInPictureWebKit.enable(configuration.preferences)
         // Private preference. Turning it on is what makes the Develop menu / Web Inspector available.
         configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
         // Appended to WebKit's default UA so sites see a Safari-shaped token instead of a bare WebKit shell.

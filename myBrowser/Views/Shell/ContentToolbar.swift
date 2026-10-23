@@ -90,6 +90,7 @@ struct ContentToolbar: View {
                 .frame(minWidth: 40, maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(-1)
                 .padding(.leading, 6)
+            PictureInPictureButton(symbol: shown.symbol)
             ExtensionButtons()
                 .layoutPriority(1)
                 .padding(.leading, 4)
@@ -115,10 +116,13 @@ struct ContentToolbar: View {
             .frame(height: SidebarMetrics.navRowHeight)
             .padding(.top, max(0, SidebarMetrics.chromeCenterFromTop - SidebarMetrics.navRowHeight / 2))
 
-            AddressField(chrome: chrome, presentation: .pill)
-                .padding(.horizontal, 8)
-                .padding(.top, 4)
-                .padding(.bottom, 2)
+            HStack(spacing: 4) {
+                AddressField(chrome: chrome, presentation: .pill)
+                PictureInPictureButton(symbol: chrome.symbol)
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 4)
+            .padding(.bottom, 2)
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
                 ExtensionButtons()
@@ -156,6 +160,28 @@ struct ContentToolbar: View {
         .frame(height: SidebarMetrics.progressHeight)
         .accessibilityHidden(true)
         .allowsHitTesting(false)
+    }
+}
+
+/// Shown while the selected tab has a playing video that allows Picture in Picture.
+private struct PictureInPictureButton: View {
+    var symbol: Color
+
+    @Environment(BrowserModel.self) private var model
+
+    var body: some View {
+        let tab = model.selectedTab
+        let active = tab?.isPictureInPictureActive == true
+        if tab?.showsPictureInPictureButton == true {
+            ToolbarIconButton(
+                systemName: active ? "pip.exit" : "pip.enter",
+                help: active ? "Exit Picture in Picture" : "Enter Picture in Picture",
+                symbol: symbol
+            ) {
+                model.togglePictureInPicture()
+            }
+            .transition(.opacity)
+        }
     }
 }
 
