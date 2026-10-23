@@ -39,7 +39,8 @@ enum DebugSnapshot {
                 attachedModel?.openInCurrentTab(url)
             }
         })
-        relays.append(observe("ch.marvinvr.mybrowser.debug.reload") { _ in
+        relays.append(observe("ch.marvinvr.mybrowser.debug.reload") { note in
+            guard Self.addressedToThisProcess(note) else { return }
             Task { @MainActor in
                 attachedModel?.selectedTab?.reload()
             }
@@ -56,7 +57,8 @@ enum DebugSnapshot {
                 attachedModel?.selectedTab?.refreshThemeColor()
             }
         })
-        relays.append(observe("ch.marvinvr.mybrowser.debug.copy") { _ in
+        relays.append(observe("ch.marvinvr.mybrowser.debug.copy") { note in
+            guard Self.addressedToThisProcess(note) else { return }
             Task { @MainActor in
                 attachedModel?.copyCurrentLink()
             }
@@ -70,6 +72,7 @@ enum DebugSnapshot {
             }
         })
         relays.append(observe("ch.marvinvr.mybrowser.debug.space") { note in
+            guard Self.addressedToThisProcess(note) else { return }
             let name = note.userInfo?["name"] as? String
             let action = note.userInfo?["action"] as? String
             Task { @MainActor in
@@ -84,6 +87,7 @@ enum DebugSnapshot {
             }
         })
         relays.append(observe("ch.marvinvr.mybrowser.debug.eval") { note in
+            guard Self.addressedToThisProcess(note) else { return }
             let script = note.userInfo?["script"] as? String
             let path = note.userInfo?["path"] as? String
             Task { @MainActor in
@@ -103,6 +107,7 @@ enum DebugSnapshot {
             }
         })
         relays.append(observe("ch.marvinvr.mybrowser.debug.frames") { note in
+            guard Self.addressedToThisProcess(note) else { return }
             let dir = note.userInfo?["dir"] as? String
             let count = Self.intValue(note.userInfo?["count"]) ?? 20
             let interval = Self.intValue(note.userInfo?["interval"]) ?? 16
@@ -124,11 +129,15 @@ enum DebugSnapshot {
         })
     }
 
-    /// A note that carries `channel` is for one debug build. Other builds ignore it.
-    /// Notes without a channel stay shared, which is what the existing snapshot scripts send.
+    /// A note that carries `channel` is for one debug build.
+    /// A process with `MYBROWSER_DEBUG_SNAPSHOT_CHANNEL` or `MYBROWSER_DEBUG_SNAPSHOT_NAME`
+    /// ignores every other note, including unscoped ones, so a second debug app's
+    /// `debug.open` cannot navigate this tab. A process with neither set still accepts
+    /// unscoped notes, which is what the single-app snapshot scripts send.
     nonisolated private static func addressedToThisProcess(_ note: Notification) -> Bool {
-        guard let channel = note.userInfo?["channel"] as? String, !channel.isEmpty else { return true }
-        return channel == ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SNAPSHOT_NAME"]
+        let env = ProcessInfo.processInfo.environment
+        let channels = ["MYBROWSER_DEBUG_SNAPSHOT_CHANNEL", "MYBROWSER_DEBUG_SNAPSHOT_NAME"].compactMap { env[$0] }
+        return DebugNoteRouting.accepts(noteChannel: note.userInfo?["channel"] as? String, processChannels: channels)
     }
 
     /// Selector observer with `.deliverImmediately`, so `userInfo` survives when the app is not frontmost.
@@ -648,3 +657,17 @@ private final class SnapshotRelay: NSObject, @unchecked Sendable {
     }
 }
 #endif
+
+/// Which debug builds should act on a distributed notification.
+nonisolated enum DebugNoteRouting {
+    /// A process that set a private channel only accepts notes for that channel.
+    /// A process with no channel only accepts notes that name no channel.
+    static func accepts(noteChannel: String?, processChannels: [String]) -> Bool {
+        let mine = processChannels.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let trimmed = noteChannel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let addressed = (trimmed?.isEmpty == false) ? trimmed : nil
+        if mine.isEmpty { return addressed == nil }
+        guard let addressed else { return false }
+        return mine.contains(addressed)
+    }
+}
