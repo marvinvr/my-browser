@@ -198,6 +198,36 @@ struct SpaceSwipeTrackerTests {
         #expect(idle.interrupt() == .passthrough)
     }
 
+    @Test func settleSpringStartsAtRestAndArrives() {
+        #expect(abs(SpaceSwipeSpring.fraction(at: 0)) < 0.001)
+        #expect(SpaceSwipeSpring.fraction(at: 0.36) > 0.8)
+        #expect(SpaceSwipeSpring.fraction(at: 0.7) > 0.98)
+    }
+
+    @Test func prewarmNeighbourLoadsWithoutSelectingIt() throws {
+        let library = LibraryStore(directory: nil)
+        let session = SessionStore(directory: nil)
+        let model = BrowserModel(library: library, session: session)
+        let first = try #require(model.selectedSpace?.id)
+        let second = model.createSpace(name: "Work", symbol: "briefcase.fill", color: .orange)
+        model.selectSpace(first)
+        let item = library.addItem(
+            spaceID: second.id,
+            section: .tabs,
+            kind: .site,
+            title: "Beta",
+            url: URL(string: "https://beta.example"),
+            at: .end
+        )
+        session.selectedItemBySpace[second.id] = item.id
+
+        model.prewarmNeighbourSpaces()
+
+        #expect(model.selectedSpaceID == first)
+        #expect(model.tabs[item.id]?.isLoaded == true)
+        #expect(model.selectedTab?.id != item.id)
+    }
+
     @Test func nextAndPreviousKeepTheirDirectionAcrossAWrap() throws {
         let library = LibraryStore(directory: nil)
         let session = SessionStore(directory: nil)

@@ -22,15 +22,14 @@ struct WebContentView: View {
                 .frame(width: 1, height: 1)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
-            if let content, !downloadsOpen {
-                SplitCanvas(
-                    content: content,
-                    trafficClearance: trafficClearance,
-                    extensions: extensions
-                )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .transition(.opacity)
-            } else if content == nil {
+            SpaceContentRepresentable(
+                model: model,
+                hidden: downloadsOpen || content == nil,
+                trafficClearance: trafficClearance,
+                extensions: extensions
+            )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if content == nil, !downloadsOpen {
                 emptyState
                     .transition(.opacity)
             }

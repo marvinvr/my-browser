@@ -180,6 +180,15 @@ enum DebugSnapshot {
                 model.selectSpace(space.id)
             }
         })
+        relays.append(observe("ch.marvinvr.mybrowser.debug.spaceSwitch") { note in
+            guard Self.addressedToThisProcess(note) else { return }
+            let action = note.userInfo?["action"] as? String ?? "click"
+            let clip = note.userInfo?["clip"] as? String
+            Task { @MainActor in
+                guard let model = attachedModel else { return }
+                await DebugSnapshot.measureSpaceSwitch(action: action, clip: clip, model: model)
+            }
+        })
         relays.append(observe("ch.marvinvr.mybrowser.debug.eval") { note in
             guard Self.addressedToThisProcess(note) else { return }
             let script = note.userInfo?["script"] as? String
@@ -451,6 +460,98 @@ enum DebugSnapshot {
         return relay
     }
 
+    /// Paints two spaces and replays a click or a sidebar swipe. Writes `prepared` / `clicked` / `swiped`
+    /// under `/tmp/my-browser-shots/space-switch/` when that step finishes.
+    @MainActor
+    private static func measureSpaceSwitch(action: String, clip: String?, model: BrowserModel) async {
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 200 }) {
+            window.makeKeyAndOrderFront(nil)
+        }
+        switch action {
+        case "prepare":
+            await prepareSpaceSwitchMeasure(model)
+            writeSpaceSwitchReady("prepared")
+        case "click":
+            let recording = clip.map { directory in
+                Task { await recordFrames(directory: directory, count: 24, interval: 16) }
+            }
+            try? await Task.sleep(for: .milliseconds(48))
+            SpaceSwitchTrace.mark("measure-click")
+            model.selectNextSpace()
+            await recording?.value
+            writeSpaceSwitchReady("clicked")
+        case "swipe":
+            await replaySpaceSwipe(model: model, clip: clip)
+            writeSpaceSwitchReady("swiped")
+        default:
+            break
+        }
+    }
+
+    @MainActor
+    private static func prepareSpaceSwitchMeasure(_ model: BrowserModel) async {
+        if model.library.orderedSpaces.count < 2 {
+            _ = model.createSpace(name: "Work", symbol: "briefcase.fill", color: .orange)
+        }
+        let spaces = Array(model.library.orderedSpaces.prefix(2))
+        let pages = [("Alpha", "#c0392b"), ("Beta", "#1a5276")]
+        let directory = URL(fileURLWithPath: "/tmp/my-browser-shots/space-switch", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for (space, page) in zip(spaces, pages) {
+            model.selectSpace(space.id)
+            if model.selectedTab == nil {
+                let item = model.library.addItem(
+                    spaceID: space.id,
+                    section: .tabs,
+                    title: page.0,
+                    url: URL(string: "https://example.com/\(page.0)")
+                )
+                model.select(item.id)
+            }
+            let html = """
+            <html><head><title>\(page.0)</title></head>
+            <body style="margin:0;background:\(page.1);color:white;font:96px -apple-system,sans-serif">
+            <div style="padding:72px">\(page.0)</div></body></html>
+            """
+            let file = directory.appending(path: "\(page.0).html")
+            try? html.write(to: file, atomically: true, encoding: .utf8)
+            model.selectedTab?.load(file)
+        }
+        if let first = spaces.first {
+            model.selectSpace(first.id)
+        }
+        model.prewarmNeighbourSpaces()
+        try? await Task.sleep(for: .milliseconds(700))
+    }
+
+    @MainActor
+    private static func replaySpaceSwipe(model: BrowserModel, clip: String?) async {
+        let recording = clip.map { directory in
+            Task { await recordFrames(directory: directory, count: 60, interval: 16) }
+        }
+        try? await Task.sleep(for: .milliseconds(32))
+        SpaceSwitchTrace.mark("measure-swipe")
+        var time = CACurrentMediaTime()
+        SpaceSwipeDebugInject.send?(SpaceSwipeSample(phase: .began, deltaX: 0, deltaY: 0, time: time))
+        for _ in 0..<10 {
+            time += 0.02
+            SpaceSwipeDebugInject.send?(
+                SpaceSwipeSample(phase: .changed, deltaX: -28, deltaY: 0, time: time)
+            )
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        time += 0.02
+        SpaceSwipeDebugInject.send?(SpaceSwipeSample(phase: .ended, deltaX: 0, deltaY: 0, time: time))
+        try? await Task.sleep(for: .milliseconds(520))
+        await recording?.value
+    }
+
+    private static func writeSpaceSwitchReady(_ name: String) {
+        let url = URL(fileURLWithPath: "/tmp/my-browser-shots/space-switch/\(name)", isDirectory: false)
+        try? Data("ok\n".utf8).write(to: url)
+    }
+
     /// Composited window frames. `CGWindowListCreateImage` is unavailable to other processes here,
     /// but the app can still read its own window. Used to record sidebar motion.
     @MainActor
@@ -462,7 +563,15 @@ enum DebugSnapshot {
         let step = max(interval, 8)
         for index in 0..<frames {
             let started = Date()
-            if let image = ownWindowImage() {
+            let image: CGImage?
+            if let windowImage = ownWindowImage(), frameHasInk(windowImage) {
+                image = windowImage
+            } else {
+                // The window server sometimes returns a full-size black bitmap.
+                // Draw the chrome and each visible page instead.
+                image = await composedFrame()
+            }
+            if let image {
                 let url = folder.appendingPathComponent(String(format: "f%02d.png", index))
                 Task.detached {
                     let rep = NSBitmapImageRep(cgImage: image)
@@ -478,6 +587,71 @@ enum DebugSnapshot {
             }
         }
         try? await Task.sleep(for: .milliseconds(200))
+    }
+
+    /// A refused window-server capture is a full-size black image, not nil.
+    private static func frameHasInk(_ image: CGImage) -> Bool {
+        let rep = NSBitmapImageRep(cgImage: image)
+        let samples = [
+            (image.width / 2, image.height / 2),
+            (image.width / 5, image.height / 3),
+            (image.width * 3 / 4, image.height / 2),
+        ]
+        for (x, y) in samples {
+            guard let color = rep.colorAt(x: x, y: y) else { continue }
+            var red: CGFloat = 0
+            var green: CGFloat = 0
+            var blue: CGFloat = 0
+            color.getRed(&red, green: &green, blue: &blue, alpha: nil)
+            if red > 0.02 || green > 0.02 || blue > 0.02 { return true }
+        }
+        return false
+    }
+
+    /// Chrome from `cacheDisplay`, pages from `takeSnapshot`, placed at their current frames.
+    private static func composedFrame() async -> CGImage? {
+        guard let window = targetWindow(preferring: nil),
+              let content = window.contentView,
+              content.bounds.width > 1, content.bounds.height > 1 else { return nil }
+        content.layoutSubtreeIfNeeded()
+        let bounds = content.bounds
+        let scale = window.backingScaleFactor
+        guard let output = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(bounds.width * scale),
+            pixelsHigh: Int(bounds.height * scale),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ), let cache = content.bitmapImageRepForCachingDisplay(in: bounds) else { return nil }
+        output.size = bounds.size
+        content.cacheDisplay(in: bounds, to: cache)
+        let chrome = NSImage(size: bounds.size)
+        chrome.addRepresentation(cache)
+
+        var pages: [(NSImage, NSRect)] = []
+        for webView in webViews(in: content) where webView.bounds.width > 2 && webView.bounds.height > 2 && !webView.isHidden {
+            let frame = webView.convert(webView.bounds, to: content)
+            let visible = frame.intersection(bounds)
+            guard visible.width > 8, visible.height > bounds.height * 0.4 else { continue }
+            guard let shot = await snapshotOrTimeout(webView) else { continue }
+            pages.append((shot, imageRect(for: frame, in: content)))
+        }
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: output)
+        NSColor.windowBackgroundColor.setFill()
+        NSRect(origin: .zero, size: bounds.size).fill()
+        chrome.draw(in: NSRect(origin: .zero, size: bounds.size), from: .zero, operation: .sourceOver, fraction: 1)
+        for (shot, frame) in pages {
+            shot.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        return output.cgImage
     }
 
     nonisolated private static func intValue(_ value: Any?) -> Int? {

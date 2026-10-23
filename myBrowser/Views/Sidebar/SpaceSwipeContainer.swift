@@ -30,9 +30,13 @@ struct SpaceSwipeContainer<Content: View>: View {
     @State private var displayedSpaceID: UUID?
     @State private var offset: CGFloat = 0
     @State private var settleToken = 0
-    @State private var commitInFlight = false
     @State private var columnWidth: CGFloat = SidebarMetrics.defaultWidth
     @State private var swipeGate = HapticGate<SpaceSwipeAction>()
+    /// Space the finger started on. The columns stay built around it until the spring ends.
+    @State private var gestureAnchor: UUID?
+    /// Selection already applied for this drag. `.none` means the anchor is still selected.
+    @State private var previewAction: SpaceSwipeAction = .none
+    @State private var swipeSettling = false
 
     private let forcedOffset = SpaceSwipeDebug.forcedOffset
 
@@ -124,7 +128,11 @@ struct SpaceSwipeContainer<Content: View>: View {
         case .passthrough, .consume:
             break
         case .tracking(let value):
+            beginTrackingIfNeeded()
             noteSpaceDetent(for: value)
+            let anchor = gestureAnchor ?? displayedSpaceID ?? model.selectedSpaceID
+            model.spaceContent.track?(anchor, value, columnWidth)
+            commitPreview(for: value, anchor: anchor)
             settleToken += 1
             var transaction = Transaction()
             transaction.animation = SpaceSwipeMotion.tracking
@@ -133,37 +141,85 @@ struct SpaceSwipeContainer<Content: View>: View {
             noteSpaceDetent(action)
             settleToken += 1
             let token = settleToken
+            let anchor = gestureAnchor ?? displayedSpaceID ?? model.selectedSpaceID
+            model.spaceContent.gestureActive = true
+            swipeSettling = true
+            commit(action, anchor: anchor, kind: "swipe-settle")
+            model.spaceContent.settle?(value, columnWidth)
             withAnimation(SpaceSwipeMotion.settle) {
                 offset = value
             } completion: {
                 guard token == settleToken else { return }
-                finishSwipe(action)
+                SpaceSwitchTrace.mark("sidebar-settled")
+                endSwipe()
             }
         }
     }
 
-    private func finishSwipe(_ action: SpaceSwipeAction) {
+    private func beginTrackingIfNeeded() {
+        guard swipeSettling || gestureAnchor == nil else { return }
+        swipeSettling = false
+        previewAction = .none
+        gestureAnchor = displayedSpaceID ?? model.selectedSpaceID
+        model.spaceContent.gestureActive = true
+    }
+
+    /// Selects the neighbour the finger has crossed the commit line toward, or returns to the anchor.
+    private func commitPreview(for offset: CGFloat, anchor: UUID) {
+        let spaces = model.library.orderedSpaces
+        let index = spaces.firstIndex { $0.id == anchor } ?? 0
+        let action = SpaceSwipeTracker.armedDetent(
+            offset: offset,
+            width: columnWidth,
+            canGoPrevious: index > 0,
+            canGoNext: index + 1 < spaces.count
+        )
+        commit(action, anchor: anchor, kind: "swipe-threshold")
+    }
+
+    private func commit(_ action: SpaceSwipeAction, anchor: UUID, kind: String) {
+        guard action != previewAction || kind == "swipe-settle" else { return }
+        let target = spaceID(for: action, anchor: anchor)
+        previewAction = action
+        guard model.selectedSpaceID != target else { return }
+        let started = SpaceSwitchTrace.begin(kind)
+        model.spaceContent.gestureActive = true
+        model.selectSpace(target)
+        let shown = model.spaceContent.isShowing?(target) == true
+        SpaceSwitchTrace.end(started, kind, shown ? "visible" : "pending")
+    }
+
+    private func spaceID(for action: SpaceSwipeAction, anchor: UUID) -> UUID {
+        let spaces = model.library.orderedSpaces
+        guard let index = spaces.firstIndex(where: { $0.id == anchor }) else { return anchor }
         switch action {
         case .none:
-            break
-        case .selectNext:
-            commitInFlight = true
-            model.selectNextSpace()
+            return anchor
         case .selectPrevious:
-            commitInFlight = true
-            model.selectPreviousSpace()
+            return index > 0 ? spaces[index - 1].id : anchor
+        case .selectNext:
+            return index + 1 < spaces.count ? spaces[index + 1].id : anchor
         }
+    }
+
+    private func endSwipe() {
+        model.spaceContent.gestureActive = false
+        gestureAnchor = nil
+        previewAction = .none
+        swipeSettling = false
+        model.spaceContent.endGesture?()
         snap(to: model.selectedSpaceID)
         relay.noteSettleFinished()
     }
 
     private func handleSpaceChange(to newID: UUID) {
-        if displayedSpaceID == newID {
-            commitInFlight = false
+        if model.spaceContent.gestureActive {
             return
         }
-        if commitInFlight || forcedOffset != nil {
-            commitInFlight = false
+        if displayedSpaceID == newID {
+            return
+        }
+        if forcedOffset != nil {
             snap(to: newID)
             return
         }
@@ -276,6 +332,16 @@ nonisolated final class SpaceSwipeRelay: @unchecked Sendable {
         lock.unlock()
     }
 
+    #if DEBUG
+    /// Measurement hook. Same machine as a real scroll sample, without the hit test.
+    func debugHandle(_ sample: SpaceSwipeSample) -> SpaceSwipeUpdate {
+        lock.lock()
+        let update = tracker.handle(sample)
+        lock.unlock()
+        return update
+    }
+    #endif
+
     /// The app or the window lost focus while a drag was still down.
     func interrupt() {
         lock.lock()
@@ -337,11 +403,26 @@ private struct SpaceSwipeMonitor: NSViewRepresentable {
     func makeNSView(context: Context) -> SpaceSwipeMonitorView {
         let coordinator = context.coordinator
         relay.setHandler { update in
-            Task { @MainActor in
-                coordinator.deliver(update)
+            // The local monitor is on the main thread. Delivering here keeps the page on this event.
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    coordinator.deliver(update)
+                }
+            } else {
+                DispatchQueue.main.async {
+                    coordinator.deliver(update)
+                }
             }
         }
-        return SpaceSwipeMonitorView(relay: relay)
+        let view = SpaceSwipeMonitorView(relay: relay)
+        #if DEBUG
+        SpaceSwipeDebugInject.send = { sample in
+            let update = relay.debugHandle(sample)
+            guard update != .passthrough else { return }
+            coordinator.deliver(update)
+        }
+        #endif
+        return view
     }
 
     func updateNSView(_ view: SpaceSwipeMonitorView, context: Context) {
@@ -389,6 +470,9 @@ private final class SpaceSwipeMonitorView: NSView {
             monitors.clear()
             observers.clear()
             relay.setHitBox(windowNumber: 0, frameInWindow: .zero)
+            #if DEBUG
+            SpaceSwipeDebugInject.send = nil
+            #endif
             return
         }
         installLifecycleObservers()

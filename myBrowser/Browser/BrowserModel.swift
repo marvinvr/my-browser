@@ -76,6 +76,7 @@ final class BrowserModel {
     }
 
     deinit {
+        neighbourPrewarm?.cancel()
         archiveLoop?.cancel()
         for token in pictureInPictureObservers {
             NotificationCenter.default.removeObserver(token)
@@ -130,6 +131,9 @@ final class BrowserModel {
     @ObservationIgnored var pictureInPictureIgnoreFocusUntil = Date.distantPast
     @ObservationIgnored var pictureInPictureWindowFocused: Bool?
     @ObservationIgnored var pictureInPictureFocusTask: Task<Void, Never>?
+    /// Content card. The view installs the closures. Nil closures in tests.
+    @ObservationIgnored let spaceContent = SpaceContentSurface()
+    @ObservationIgnored private var neighbourPrewarm: Task<Void, Never>?
     @ObservationIgnored nonisolated(unsafe) var pictureInPictureObservers: [NSObjectProtocol] = []
     @ObservationIgnored nonisolated(unsafe) var archiveObservers: [NSObjectProtocol] = []
     @ObservationIgnored nonisolated(unsafe) var archiveLoop: Task<Void, Never>?
@@ -144,12 +148,62 @@ final class BrowserModel {
 
     func selectSpace(_ id: UUID) {
         guard library.space(id) != nil else { return }
+        let switching = id != selectedSpaceID
+        let trace = switching && !spaceContent.gestureActive ? SpaceSwitchTrace.begin("click") : nil
+        // The page moves before the rest of the switch. A swipe already has the frames.
+        if switching, spaceContent.reveal != nil {
+            warmSpace(id)
+            if !spaceContent.gestureActive {
+                _ = spaceContent.reveal?(id)
+            }
+        }
         adoptSpace(id)
         if let itemID = session.selectedItemBySpace[id] {
             select(itemID)
         } else {
             refreshNavigationState()
             syncPictureInPictureForeground()
+        }
+        if let trace {
+            let shown = spaceContent.isShowing?(id) == true
+            SpaceSwitchTrace.end(trace, "click", shown ? "visible" : "pending")
+        }
+        if switching, spaceContent.reveal != nil {
+            scheduleNeighbourPrewarm()
+        }
+    }
+
+    /// Loads the space's selected page without changing selection. The web view stays in `tabs`.
+    func warmSpace(_ spaceID: UUID) {
+        guard let itemID = session.selectedItemBySpace[spaceID], library.item(itemID) != nil else { return }
+        guard let content = displayedContent(for: itemID) else { return }
+        for pane in content.panes {
+            let created = !pane.tab.isLoaded
+            pane.tab.loadIfNeeded(using: profiles)
+            if created {
+                extensions?.tabOpened(pane.tab)
+            }
+        }
+    }
+
+    /// Selected pages of the spaces beside the current one. Called after launch and after a switch.
+    func prewarmNeighbourSpaces() {
+        let spaces = library.orderedSpaces
+        guard let index = spaces.firstIndex(where: { $0.id == selectedSpaceID }) else { return }
+        for delta in [-1, 1] {
+            let neighbor = index + delta
+            guard spaces.indices.contains(neighbor) else { continue }
+            warmSpace(spaces[neighbor].id)
+        }
+        spaceContent.sync?()
+    }
+
+    private func scheduleNeighbourPrewarm() {
+        neighbourPrewarm?.cancel()
+        neighbourPrewarm = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard let self, !Task.isCancelled else { return }
+            self.prewarmNeighbourSpaces()
         }
     }
 

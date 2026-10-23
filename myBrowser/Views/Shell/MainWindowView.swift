@@ -56,6 +56,9 @@ struct MainWindowView: View {
             if clamped != storedSidebarWidth {
                 storedSidebarWidth = clamped
             }
+            Task { @MainActor in
+                model.prewarmNeighbourSpaces()
+            }
         }
     }
 
