@@ -19,6 +19,16 @@ final class ProfileManager {
     func configuration(for profileID: UUID) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore(for: profileID)
+        Self.prepare(configuration)
+        if let controller = extensionController?(profileID) {
+            configuration.webExtensionController = controller
+        }
+        return configuration
+    }
+
+    /// Preferences for a configuration no web view owns yet. Popups and extension pages only need
+    /// `PageRenderingRate.apply`; this is the full set for a tab the app creates itself.
+    static func prepare(_ configuration: WKWebViewConfiguration) {
         configuration.preferences.isElementFullscreenEnabled = true
         // AirPlay defaults to allowed; set it explicitly so a future default change can't turn it off.
         configuration.allowsAirPlayForMediaPlayback = true
@@ -27,11 +37,8 @@ final class ProfileManager {
         // Private preference. Turning it on is what makes the Develop menu / Web Inspector available.
         configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
         // Appended to WebKit's default UA so sites see a Safari-shaped token instead of a bare WebKit shell.
-        configuration.applicationNameForUserAgent = Self.safariApplicationName
-        if let controller = extensionController?(profileID) {
-            configuration.webExtensionController = controller
-        }
-        return configuration
+        configuration.applicationNameForUserAgent = safariApplicationName
+        PageRenderingRate.apply(to: configuration.preferences)
     }
 
     /// Safari-like application token for macOS 26. `applicationNameForUserAgent` is appended to the stock WebKit UA.

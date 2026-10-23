@@ -488,11 +488,12 @@ final class BrowserModel {
         linkCopyGeneration &+= 1
     }
 
-    /// window.open / target=_blank. The new web view uses `configuration` unchanged, is inserted at the top of `.tabs`, and is selected.
+    /// window.open / target=_blank. The new web view uses `configuration` with the 60fps page cap off, is inserted at the top of `.tabs`, and is selected.
     @discardableResult
     func presentPopup(configuration: WKWebViewConfiguration, url: URL?, spaceID: UUID) -> WKWebView? {
         guard library.space(spaceID) != nil else { return nil }
         PictureInPictureWebKit.enable(configuration.preferences)
+        PageRenderingRate.apply(to: configuration.preferences)
         let pageURL = url.flatMap { BrowserTab.isPageURL($0) ? $0 : nil }
         let title = pageURL.map { Self.fallbackTitle(for: $0) } ?? "New Tab"
         let item = library.addItem(

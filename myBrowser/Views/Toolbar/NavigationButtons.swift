@@ -97,7 +97,7 @@ private struct ReloadButton: View {
 
     var body: some View {
         Button(action: activate) {
-            TimelineView(.animation(minimumInterval: 1 / 60, paused: !animating)) { context in
+            TimelineView(.animation(paused: !animating)) { context in
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 12, weight: .semibold))
                     .imageScale(.medium)
