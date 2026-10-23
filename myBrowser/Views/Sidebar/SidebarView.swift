@@ -97,6 +97,7 @@ struct SidebarView: View {
         .padding(.leading, SidebarMetrics.leadingInset)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
+        .background { SidebarClickMarker() }
     }
 
     private func askRename(_ item: SidebarItem) {
@@ -153,6 +154,116 @@ private struct TabsTail: View {
             .contextMenu {
                 Button("New Folder", action: onNewFolder)
             }
+    }
+}
+
+/// Row buttons are SwiftUI, so the view that is actually hit — not the hosting view —
+/// decides whether the click that activates the window is delivered. Mark the sidebar
+/// scroll view and answer yes for views under it. Classes that implement the method
+/// themselves are patched too; anything outside the scroll view keeps its old answer.
+private enum SidebarActivatingClick {
+    private typealias AcceptsIMP = @convention(c) (AnyObject, Selector, NSEvent?) -> Bool
+
+    nonisolated(unsafe) private static var installed = false
+    nonisolated(unsafe) private static var rootKey: UInt8 = 0
+    nonisolated(unsafe) private static var patched = Set<ObjectIdentifier>()
+    /// Row classes are shared, so a few walks at startup cover every later row.
+    nonisolated(unsafe) private static var walks = 0
+    private static let selector = #selector(NSView.acceptsFirstMouse(for:))
+
+    static func install() {
+        guard !installed else { return }
+        installed = true
+        patch(NSView.self)
+    }
+
+    static func mark(_ view: NSView) {
+        objc_setAssociatedObject(view, &rootKey, true as NSNumber, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
+    static func contains(_ view: NSView) -> Bool {
+        var node: NSView? = view
+        var depth = 0
+        while let current = node, depth < 40 {
+            if objc_getAssociatedObject(current, &rootKey) != nil { return true }
+            node = current.superview
+            depth += 1
+        }
+        return false
+    }
+
+    /// New row classes show up as the sidebar builds. Patching a class once covers later rows.
+    static func patchTreeIfNeeded(_ root: NSView) {
+        guard walks < 4, !root.subviews.isEmpty else { return }
+        walks += 1
+        patchTree(root)
+    }
+
+    private static func patchTree(_ root: NSView) {
+        patchIfImplemented(type(of: root))
+        for subview in root.subviews {
+            patchTree(subview)
+        }
+    }
+
+    private static func patch(_ cls: AnyClass) {
+        let id = ObjectIdentifier(cls)
+        guard patched.insert(id).inserted, let method = class_getInstanceMethod(cls, selector) else { return }
+        let original = unsafeBitCast(method_getImplementation(method), to: AcceptsIMP.self)
+        let sel = selector
+        let block: @convention(block) (AnyObject, NSEvent?) -> Bool = { object, event in
+            if let view = object as? NSView, contains(view) { return true }
+            return original(object, sel, event)
+        }
+        method_setImplementation(method, imp_implementationWithBlock(block))
+    }
+
+    /// `class_getInstanceMethod` walks superclasses. Only replace a method this class declares,
+    /// or the superclass implementation (and every other view) would change with it.
+    private static func patchIfImplemented(_ cls: AnyClass) {
+        if patched.contains(ObjectIdentifier(cls)) { return }
+        var count: UInt32 = 0
+        guard let list = class_copyMethodList(cls, &count) else { return }
+        defer { free(list) }
+        for index in 0..<Int(count) where method_getName(list[index]) == selector {
+            patch(cls)
+            return
+        }
+    }
+}
+
+/// Sits in the scroll content so its ancestor scroll view can be marked. It never takes a hit.
+private struct SidebarClickMarker: NSViewRepresentable {
+    func makeNSView(context: Context) -> SidebarClickMarkerView {
+        SidebarActivatingClick.install()
+        return SidebarClickMarkerView()
+    }
+
+    func updateNSView(_ view: SidebarClickMarkerView, context: Context) {
+        view.tagScrollView()
+    }
+}
+
+private final class SidebarClickMarkerView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        tagScrollView()
+    }
+
+    func tagScrollView() {
+        var node: NSView? = superview
+        var depth = 0
+        while let view = node, depth < 40 {
+            if view is NSScrollView {
+                SidebarActivatingClick.mark(view)
+                SidebarActivatingClick.patchTreeIfNeeded(view)
+                return
+            }
+            node = view.superview
+            depth += 1
+        }
     }
 }
 

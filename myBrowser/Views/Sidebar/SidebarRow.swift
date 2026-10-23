@@ -277,4 +277,8 @@ private struct FlatLabel: NSViewRepresentable {
 
 private final class FlatLabelField: NSTextField {
     override var allowsVibrancy: Bool { false }
+
+    /// The field is only a title. A hit here never reaches the row button, so the
+    /// first click looks dead and a second click is required.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
