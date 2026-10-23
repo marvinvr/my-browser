@@ -1,6 +1,34 @@
 {
   "releases": [
     {
+      "version": "0.4.2",
+      "build": "7",
+      "commit": "a983afcd8729a789448c6d4a9cd1a9516549ddd7",
+      "date": "2026-10-23T09:02:12Z",
+      "url": "https://github.com/marvinvr/my-browser/releases/download/v0.4.2/myBrowser-0.4.2-7.dmg",
+      "length": 5098537,
+      "edSignature": "2UGvLojWUIEQsPA7egcxIlMPpMWLzJzPH64dhh6Zki7+0lnaI/qepipd6AhFTiCWdJR1hN3JHJVVQzvYTEvKCg==",
+      "minimumSystemVersion": "26.0",
+      "notes": [
+        "Redraw the open folder as one connected flap",
+        "Draw expanded folders as an open outline",
+        "Note why a sidebar row takes the first click",
+        "Fix sidebar rows that ignore the first click",
+        "Inset sidebar content to match the traffic lights",
+        "Round favicon corners to a quarter of the icon",
+        "Inset the traffic lights six points to the right",
+        "Request current Chrome builds from the Web Store",
+        "Enlarge sidebar text and icons by one point",
+        "Release v0.4.1",
+        "Ask 1Password to authorize the browser from a content script",
+        "Release v0.4.0",
+        "Keep a loaded blank pinned pane on close",
+        "Fix split view section, PiP, and pane controls",
+        "Deliver the 1Password native-port handshake for passkeys"
+      ],
+      "page": "https://github.com/marvinvr/my-browser/releases/tag/v0.4.2"
+    },
+    {
       "version": "0.4.1",
       "build": "6",
       "commit": "47498462109f52ae82d5f3aeca965b18bdd1ea24",
