@@ -287,6 +287,16 @@ final class BrowserTab: NSObject, Identifiable {
         lastReloadTime = now
         webView.reload()
     }
+
+    /// Shift-Command-R. Shares the reload guard so a menu item and the key monitor cannot both fire.
+    func reloadFromOrigin() {
+        guard let webView else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastReloadTime >= 0.2 else { return }
+        lastReloadTime = now
+        webView.reloadFromOrigin()
+    }
+
     func stopLoading() { webView?.stopLoading() }
 
     // MARK: Observation

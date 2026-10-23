@@ -146,6 +146,8 @@ private struct PanePill: View {
 final class SplitPaneContainer: NSView {
     var pillState: PanePillModel?
     private var webView: WKWebView?
+    /// Non-flipped, so WebKit can dock the inspector along the bottom of the page.
+    private let pageHost = InspectorDockHost()
     private let dim = SplitPassView()
     private let ring = SplitFocusRing()
     private let placeholder = NSTextField(labelWithString: "")
@@ -161,6 +163,8 @@ final class SplitPaneContainer: NSView {
         wantsLayer = true
         layer?.masksToBounds = true
         layer?.cornerCurve = .continuous
+        pageHost.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(pageHost)
         dim.translatesAutoresizingMaskIntoConstraints = false
         ring.translatesAutoresizingMaskIntoConstraints = false
         placeholder.translatesAutoresizingMaskIntoConstraints = false
@@ -192,30 +196,36 @@ final class SplitPaneContainer: NSView {
 
     /// Frame, not constraints. A flipped container plus edge constraints left the page
     /// shifted and wide enough to cover the gap between panes.
+    /// The page lives in `pageHost`. Setting the web view to this container's bounds
+    /// covers a docked inspector, and this container is flipped, which puts that dock on top.
     func showWebView(_ next: WKWebView?) {
         guard webView !== next else {
             placeholder.isHidden = next != nil
-            webView?.frame = bounds
             return
         }
         if let webView {
+            // The inspector frontend is a sibling of this page. Leaving it behind
+            // docks the next page against the previous page's inspector.
+            if WebInspector.isDocked(webView) {
+                WebInspector.close(webView)
+            }
             webView.removeFromSuperview()
         }
         webView = next
+        pageHost.webView = next
         placeholder.isHidden = next != nil
         guard let next else { return }
         next.translatesAutoresizingMaskIntoConstraints = true
         next.clipsToBounds = true
-        addSubview(next, positioned: .below, relativeTo: dim)
-        next.frame = bounds
+        pageHost.addSubview(next)
+        next.frame = pageHost.bounds
+        pageHost.needsLayout = true
     }
 
     override func layout() {
         super.layout()
         placePill()
-        // A fullscreen video's window is not this pane. Resizing it here would pull it back.
-        guard let webView, webView.window === window else { return }
-        webView.frame = bounds
+        pageHost.frame = bounds
     }
 
     func apply(split: Bool, focused: Bool, hovered: Bool, title: String) {

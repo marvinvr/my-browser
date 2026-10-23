@@ -84,15 +84,20 @@ final class ExtensionPopupPanel: NSObject, WKWebExtensionWindow, WKWebExtensionT
             backing: .buffered,
             defer: false
         )
+        WebInspector.enableDeveloperExtras(configuration.preferences)
         webView = WKWebView(frame: NSRect(origin: .zero, size: size), configuration: configuration)
         super.init()
         panel.title = "Extension popup"
         panel.identifier = NSUserInterfaceItemIdentifier("extension-popup")
         panel.isReleasedWhenClosed = false
         panel.level = .floating
-        webView.autoresizingMask = [.width, .height]
         webView.isInspectable = true
-        panel.contentView = webView
+        let host = InspectorDockHost(frame: NSRect(origin: .zero, size: size))
+        host.autoresizingMask = [.width, .height]
+        host.webView = webView
+        host.addSubview(webView)
+        webView.frame = host.bounds
+        panel.contentView = host
         panel.setFrameOrigin(Self.origin(for: requestedFrame, size: size))
         NotificationCenter.default.addObserver(
             self,

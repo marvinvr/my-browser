@@ -403,6 +403,7 @@ final class DownloadManager {
     func auxiliaryWebView(profileID: UUID, configuration: WKWebViewConfiguration) -> WKWebView {
         if let existing = auxiliary[profileID] { return existing }
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
+        webView.isInspectable = true
         auxiliary[profileID] = webView
         return webView
     }

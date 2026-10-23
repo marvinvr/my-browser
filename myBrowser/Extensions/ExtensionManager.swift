@@ -33,6 +33,8 @@ final class ExtensionManager {
     @ObservationIgnored private var anchors: [String: AnchorBox] = [:]
     @ObservationIgnored private var iconCache: [String: NSImage] = [:]
     @ObservationIgnored private var popupPanels: [ExtensionPopupPanel] = []
+    /// Background pages WebKit has created. The public context API does not return the view.
+    @ObservationIgnored private var backgroundWebViews: [ObjectIdentifier: WKWebView] = [:]
     @ObservationIgnored private var promptTail: Task<Bool, Never>?
     @ObservationIgnored private var focusObserver: NSObjectProtocol?
     @ObservationIgnored weak var model: BrowserModel?
@@ -129,6 +131,7 @@ final class ExtensionManager {
         configuration.defaultWebsiteDataStore = store
         configuration.webViewConfiguration.websiteDataStore = store
         configuration.webViewConfiguration.applicationNameForUserAgent = ProfileManager.safariApplicationName
+        WebInspector.enableDeveloperExtras(configuration.webViewConfiguration.preferences)
         PageRenderingRate.apply(to: configuration.webViewConfiguration.preferences)
         // Extension pages only. The script fills out the notifications stub before
         // the page's own scripts. The service worker is checked separately.
@@ -767,9 +770,8 @@ final class ExtensionManager {
         }
         let context = WKWebExtensionContext(for: ext)
         applyIdentity(record, to: context)
-        #if DEBUG
+        // Release builds stay inspectable. This is a browser, not an embedded web view.
         context.isInspectable = true
-        #endif
         apply(record, to: context)
         let controller = controller(for: profileID)
         announceWindow(profileID: profileID, controller: controller)
@@ -815,8 +817,49 @@ final class ExtensionManager {
             return
         }
         try? controller.unload(context)
+        backgroundWebViews[ObjectIdentifier(context)] = nil
         contexts[profileID]?[id] = nil
         revision &+= 1
+    }
+
+    /// Enabled extensions in one profile, by name. Inspect Extension… shows this list.
+    func inspectionTargets(in profileID: UUID) -> [(id: String, name: String)] {
+        records
+            .filter { $0.isEnabled(in: profileID) }
+            .map { (id: $0.id, name: $0.name) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Remembers a background web view from the private controller delegate.
+    func noteBackgroundWebView(_ webView: WKWebView, for context: WKWebExtensionContext) {
+        webView.isInspectable = true
+        backgroundWebViews[ObjectIdentifier(context)] = webView
+    }
+
+    /// Opens the inspector on an extension's background page. Loads that page first when it is lazy.
+    func inspectBackground(extensionID: String, profileID: UUID) {
+        guard let context = contexts[profileID]?[extensionID] else { return }
+        context.isInspectable = true
+        if let webView = backgroundWebView(for: context) {
+            WebInspector.open(.inspector, on: webView)
+            return
+        }
+        context.loadBackgroundContent { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                guard let webView = self.backgroundWebView(for: context) else { return }
+                WebInspector.open(.inspector, on: webView)
+            }
+        }
+    }
+
+    private func backgroundWebView(for context: WKWebExtensionContext) -> WKWebView? {
+        if let stored = backgroundWebViews[ObjectIdentifier(context)] { return stored }
+        let selector = NSSelectorFromString("backgroundWebView")
+        guard context.responds(to: selector),
+              let webView = context.perform(selector)?.takeUnretainedValue() as? WKWebView else { return nil }
+        noteBackgroundWebView(webView, for: context)
+        return webView
     }
 
     /// Chrome Web Store ids keep `runtime.id`. The base URL stays `webkit-extension://`.

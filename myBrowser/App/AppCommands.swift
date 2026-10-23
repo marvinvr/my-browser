@@ -59,6 +59,8 @@ struct AppCommands: Commands {
             BackCommand(model: model)
             ForwardCommand(model: model)
             PictureInPictureCommand(model: model)
+            Divider()
+            DeveloperMenu(model: model)
         }
 
         CommandMenu("History") {
@@ -151,6 +153,8 @@ enum NavigationCommands {
         case "Stack Vertically", "Side by Side":
             item.title = model.splitAxisMenuTitle
             item.isEnabled = model.canToggleSplitAxis
+        case "Show Web Inspector", "Show JavaScript Console", "Show Page Source", "Reload Ignoring Cache":
+            item.isEnabled = model.canReload
         default:
             return false
         }
@@ -179,11 +183,13 @@ final class NavigationMenuFixer: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         prior(of: menu)?.menuNeedsUpdate?(menu)
         reapply(menu)
+        populateExtensions(in: menu)
     }
 
     func menuWillOpen(_ menu: NSMenu) {
         prior(of: menu)?.menuWillOpen?(menu)
         reapply(menu)
+        populateExtensions(in: menu)
     }
 
     func menuDidClose(_ menu: NSMenu) {
@@ -206,7 +212,38 @@ final class NavigationMenuFixer: NSObject, NSMenuDelegate {
             return model?.canSwapPanes == true
         case "Stack Vertically", "Side by Side":
             return model?.canToggleSplitAxis == true
+        case "Show Web Inspector", "Show JavaScript Console", "Show Page Source", "Reload Ignoring Cache":
+            return model?.canReload == true
         default: return true
+        }
+    }
+
+    @objc func inspectExtension(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String else { return }
+        model?.inspectExtension(id: id)
+    }
+
+    /// SwiftUI builds Inspect Extension… once. The list is filled when the Developer menu opens.
+    private func populateExtensions(in menu: NSMenu) {
+        guard let model,
+              let item = menu.items.first(where: { $0.title == "Inspect Extension…" }),
+              let submenu = item.submenu else { return }
+        let targets = model.extensionInspectionTargets
+        let wanted = targets.isEmpty ? ["No Extensions"] : targets.map(\.name)
+        let current = submenu.items.map(\.title)
+        if current == wanted, targets.isEmpty || submenu.items.allSatisfy({ $0.target === self }) { return }
+        submenu.removeAllItems()
+        if targets.isEmpty {
+            let none = NSMenuItem(title: "No Extensions", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            submenu.addItem(none)
+            return
+        }
+        for target in targets {
+            let entry = NSMenuItem(title: target.name, action: #selector(inspectExtension(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = target.id
+            submenu.addItem(entry)
         }
     }
 
@@ -222,6 +259,10 @@ final class NavigationMenuFixer: NSObject, NSMenuDelegate {
         case "Focus Next Pane": model?.focusAdjacentPane(offset: 1)
         case "Focus Previous Pane": model?.focusAdjacentPane(offset: -1)
         case "Stack Vertically", "Side by Side": model?.toggleSelectedSplitAxis()
+        case "Show Web Inspector": model?.showWebInspector()
+        case "Show JavaScript Console": model?.showJavaScriptConsole()
+        case "Show Page Source": model?.showPageSource()
+        case "Reload Ignoring Cache": model?.reloadIgnoringCache()
         default: break
         }
     }
@@ -323,6 +364,29 @@ private struct ForwardCommand: View {
         Button("Forward") { model.selectedTab?.goForward() }
             .keyboardShortcut("]")
             .disabled(navigation?.canGoForward != true)
+    }
+}
+
+private struct DeveloperMenu: View {
+    var model: BrowserModel
+
+    var body: some View {
+        Menu("Developer") {
+            Button("Show Web Inspector") { model.showWebInspector() }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+            Button("Show JavaScript Console") { model.showJavaScriptConsole() }
+                .keyboardShortcut("c", modifiers: [.command, .option])
+            Button("Show Page Source") { model.showPageSource() }
+                .keyboardShortcut("u", modifiers: [.command, .option])
+            Divider()
+            Button("Reload Ignoring Cache") { model.reloadIgnoringCache() }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+            Divider()
+            Menu("Inspect Extension…") {
+                Button("No Extensions") {}
+                    .disabled(true)
+            }
+        }
     }
 }
 

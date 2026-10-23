@@ -42,8 +42,8 @@ final class ProfileManager {
         configuration.allowsAirPlayForMediaPlayback = true
         // macOS has no public allowsPictureInPictureMediaPlayback, and the private preference defaults to off.
         PictureInPictureWebKit.enable(configuration.preferences)
-        // Private preference. Turning it on is what makes the Develop menu / Web Inspector available.
-        configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        // On in Release. This is what puts Inspect Element on the context menu.
+        WebInspector.enableDeveloperExtras(configuration.preferences)
         // Appended to WebKit's default UA so sites see a Safari-shaped token instead of a bare WebKit shell.
         configuration.applicationNameForUserAgent = safariApplicationName
         PageRenderingRate.apply(to: configuration.preferences)

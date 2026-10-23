@@ -3,6 +3,7 @@ import AppKit
 /// One local key monitor for shortcuts SwiftUI menus don't deliver reliably.
 /// Control-Tab switches tabs. Escape closes the command bar, or stops the load when it is hidden.
 /// ⌘R reloads here and the event is swallowed, so the Reload menu item does not fire as well.
+/// ⇧⌘R reloads ignoring cache. ⌥⌘I, ⌥⌘C, and ⌥⌘U open the inspector.
 /// Ctrl+R is swallowed and does nothing (Safari). Key repeat does not reload again.
 final class KeyMonitor {
     static let shared = KeyMonitor()
@@ -43,7 +44,11 @@ final class KeyMonitor {
         if keyCode == tKey, flags == [.command, .shift] { return true }
         if keyCode == wKey, flags == [.command, .shift] { return true }
         // ⌘R is reload. Ctrl+R is eaten so it does not reload and does not reach the page.
-        if keyCode == rKey && (flags == .command || flags == .control) { return true }
+        // ⇧⌘R reloads ignoring cache. The web view would otherwise swallow it.
+        if keyCode == rKey && (flags == .command || flags == .control || flags == [.command, .shift]) { return true }
+        if keyCode == iKey, flags == [.command, .option] { return true }
+        if keyCode == cKey, flags == [.command, .option] { return true }
+        if keyCode == uKey, flags == [.command, .option] { return true }
         if keyCode == pKey, flags == [.command, .shift] { return true }
         // ⌘⇧J opens Downloads. Eaten so the web view does not also see it.
         if keyCode == jKey, flags == [.command, .shift] { return true }
@@ -103,9 +108,28 @@ final class KeyMonitor {
                 }
                 return true
             }
+            if flags == [.command, .shift] {
+                if !isRepeat {
+                    model.reloadIgnoringCache()
+                }
+                return true
+            }
             if flags == .control {
                 return true
             }
+        }
+
+        if keyCode == Self.iKey, flags == [.command, .option] {
+            if !isRepeat { model.showWebInspector() }
+            return true
+        }
+        if keyCode == Self.cKey, flags == [.command, .option] {
+            if !isRepeat { model.showJavaScriptConsole() }
+            return true
+        }
+        if keyCode == Self.uKey, flags == [.command, .option] {
+            if !isRepeat { model.showPageSource() }
+            return true
         }
 
         if keyCode == Self.pKey, flags == [.command, .shift] {
@@ -148,6 +172,9 @@ final class KeyMonitor {
     nonisolated private static let tKey: UInt16 = 17
     nonisolated private static let wKey: UInt16 = 13
     nonisolated private static let rKey: UInt16 = 15
+    nonisolated private static let cKey: UInt16 = 8
+    nonisolated private static let iKey: UInt16 = 34
+    nonisolated private static let uKey: UInt16 = 32
     nonisolated private static let pKey: UInt16 = 35
     nonisolated private static let jKey: UInt16 = 38
 }

@@ -114,6 +114,11 @@ final class BrowserModel {
     /// Selected tab can enter or leave Picture in Picture. Menus observe these, not the tab.
     private(set) var canPictureInPicture = false
     private(set) var pictureInPictureActive = false
+    /// The user opened a docked inspector. Cleared when that inspector is detached or closed.
+    @ObservationIgnored var wantsDockedInspector = false
+    /// A focus change closed the dock and the next pane is not in a window yet.
+    @ObservationIgnored var dockMoveInFlight = false
+    @ObservationIgnored var dockMoveGeneration = 0
     /// Tab whose video is in the system PiP panel, including while enter is still starting.
     var pictureInPictureTabID: UUID?
     @ObservationIgnored var pictureInPictureSession: PictureInPictureSession?
@@ -212,6 +217,7 @@ final class BrowserModel {
         }
         if previous?.id != tab.id {
             extensions?.tabActivated(tab, previous: previous)
+            noteInspectorFocus(from: previous, to: tab)
         }
         refreshNavigationState()
         syncPictureInPictureForeground()
@@ -255,6 +261,7 @@ final class BrowserModel {
         }
         if let focused = tabs[focus], previous?.id != focused.id {
             extensions?.tabActivated(focused, previous: previous)
+            noteInspectorFocus(from: previous, to: focused)
         }
         refreshNavigationState()
         // Moving between panes that are still on screen must not send the other pane to Picture in Picture.
@@ -902,6 +909,7 @@ final class BrowserModel {
         configuration.upgradeKnownHostsToHTTPS = false
         configuration.defaultWebpagePreferences.preferredHTTPSNavigationPolicy = .keepAsRequested
         PictureInPictureWebKit.enable(configuration.preferences)
+        WebInspector.enableDeveloperExtras(configuration.preferences)
         PageRenderingRate.apply(to: configuration.preferences)
         profiles.prepareConfiguration?(configuration, profileID)
         let pageURL = url.flatMap { BrowserTab.isPageURL($0) ? $0 : nil }

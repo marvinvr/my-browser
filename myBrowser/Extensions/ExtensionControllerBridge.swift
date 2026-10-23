@@ -6,6 +6,16 @@ import WebKit
 final class ExtensionControllerBridge: NSObject, WKWebExtensionControllerDelegate {
     weak var manager: ExtensionManager?
 
+    /// Private `WKWebExtensionControllerDelegate` hook. WebKit calls it when the background page is created.
+    @objc(_webExtensionController:didCreateBackgroundWebView:forExtensionContext:)
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        didCreateBackgroundWebView webView: WKWebView,
+        forExtensionContext context: WKWebExtensionContext
+    ) {
+        manager?.noteBackgroundWebView(webView, for: context)
+    }
+
     func webExtensionController(
         _ controller: WKWebExtensionController,
         openWindowsFor extensionContext: WKWebExtensionContext
