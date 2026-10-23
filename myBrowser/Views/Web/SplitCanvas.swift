@@ -34,7 +34,7 @@ final class SplitCanvasView: NSView {
     private var liveShares: [Double]?
     private var dragOrigin: [Double]?
     private var hoveredID: UUID?
-    private var dropIndex: Int?
+    private var dropZone: SplitDropZone?
     private var containers: [UUID: SplitPaneContainer] = [:]
     private var pills: [UUID: PanePillModel] = [:]
     private var dividers: [SplitDividerView] = []
@@ -52,15 +52,15 @@ final class SplitCanvasView: NSView {
         highlight.isHidden = true
         addSubview(highlight)
         addSubview(catcher)
-        catcher.allows = { [weak self] id, index in self?.allows(id, at: index) ?? false }
+        catcher.allows = { [weak self] id, zone in self?.allows(id, zone) ?? false }
         catcher.onHover = { [weak self] id in self?.setHovered(id) }
         catcher.onFocus = { [weak self] id in self?.focus(id) }
-        catcher.onHighlight = { [weak self] index in
-            guard let self, self.dropIndex != index else { return }
-            self.dropIndex = index
+        catcher.onHighlight = { [weak self] zone in
+            guard let self, self.dropZone != zone else { return }
+            self.dropZone = zone
             self.needsLayout = true
         }
-        catcher.onDrop = { [weak self] id, index in self?.drop(id, at: index) }
+        catcher.onDrop = { [weak self] id, zone in self?.drop(id, zone: zone) }
     }
 
     required init?(coder: NSCoder) { nil }
@@ -103,15 +103,23 @@ final class SplitCanvasView: NSView {
         catcher.frame = bounds
         catcher.hoverIDs = content.panes.map(\.id)
         catcher.paneFrames = frames
-        catcher.spans = spans
-        catcher.vertical = vertical
-        if let dropIndex, let preview = SplitGeometry.preview(for: dropIndex, spans: spans) {
-            highlight.frame = SplitGeometry.rect(span: preview, vertical: vertical, cross: cross)
+        catcher.mode = dropMode(for: content)
+        if let zone = dropZone ?? SplitGeometry.debugDropZone() {
+            highlight.frame = SplitGeometry.previewRect(for: zone, size: bounds.size)
             highlight.isHidden = false
             highlight.needsDisplay = true
         } else {
             highlight.isHidden = true
         }
+    }
+
+    /// A single page, or a pinned split we must not edit, can start side by side or stacked.
+    /// A Tabs split adds a pane along its own axis.
+    private func dropMode(for content: DisplayedContent) -> SplitDropMode {
+        if content.isSplit, model?.library.item(content.itemID)?.section == .tabs {
+            return content.axis == .vertical ? .vertical : .horizontal
+        }
+        return .choose
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -277,27 +285,27 @@ final class SplitCanvasView: NSView {
         }
     }
 
-    private func drop(_ tabID: UUID, at insertion: Int) {
-        dropIndex = nil
+    private func drop(_ tabID: UUID, zone: SplitDropZone) {
+        dropZone = nil
         highlight.isHidden = true
-        guard let content, allows(tabID, at: insertion) else { return }
+        guard let content, allows(tabID, zone) else { return }
         Haptics.play(.drop)
-        let index = destination(for: tabID, insertion: insertion)
-        if content.isSplit {
-            model?.addToSplit(tabID: tabID, splitID: content.itemID, at: index)
-            model?.focusPane(tabID: tabID)
+        if content.isSplit, model?.library.item(content.itemID)?.section == .tabs {
+            let insertion = SplitGeometry.insertionIndex(for: zone, paneCount: content.panes.count)
+            let index = destination(for: tabID, insertion: insertion)
+            if let joined = model?.addToSplit(tabID: tabID, splitID: content.itemID, at: index) {
+                model?.focusPane(tabID: joined.id)
+            }
         } else {
-            // Visual order can put the drop on the leading edge. The open page stays the anchor,
-            // so its section, folder, and place are the ones the split keeps.
-            let ids = index == 0 ? [tabID, content.itemID] : [content.itemID, tabID]
-            guard model?.createSplit(tabIDs: ids, anchoredOn: content.itemID) != nil else { return }
-            model?.focusPane(tabID: tabID)
+            let anchor = content.isSplit ? content.focusedID : content.itemID
+            model?.openSplit(dropping: tabID, beside: anchor, on: zone)
         }
     }
 
-    private func allows(_ tabID: UUID, at insertion: Int) -> Bool {
+    private func allows(_ tabID: UUID, _ zone: SplitDropZone) -> Bool {
         guard let content, canAccept(tabID) else { return false }
         guard let current = content.panes.firstIndex(where: { $0.id == tabID }) else { return true }
+        let insertion = SplitGeometry.insertionIndex(for: zone, paneCount: content.panes.count)
         return SplitGeometry.finalIndex(current: current, insertion: insertion) != current
     }
 
@@ -308,18 +316,15 @@ final class SplitCanvasView: NSView {
 
     private func canAccept(_ tabID: UUID) -> Bool {
         guard let model, let content else { return false }
-        guard let item = model.library.item(tabID), item.kind == .site, item.section != .favorites else { return false }
-        guard let host = model.library.item(content.itemID),
-              item.spaceID == host.spaceID,
-              item.section == host.section else { return false }
-        if let container = model.library.splitContainer(of: tabID) {
-            return content.isSplit && container.id == content.itemID
-        }
-        if content.isSplit {
+        guard let item = model.library.item(tabID), item.kind == .site else { return false }
+        guard item.section == .tabs || item.section == .pinned || item.section == .favorites else { return false }
+        guard let host = model.library.item(content.itemID), item.spaceID == host.spaceID else { return false }
+        if content.isSplit, host.section == .tabs {
+            if content.panes.contains(where: { $0.id == tabID }) { return true }
             return content.panes.count < SidebarItem.maximumSplitMembers
-                || content.panes.contains { $0.id == tabID }
         }
-        return tabID != content.itemID
+        let anchor = content.isSplit ? content.focusedID : content.itemID
+        return tabID != anchor
     }
 }
 
@@ -330,13 +335,13 @@ final class SplitHighlightView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        let rect = bounds.insetBy(dx: 3, dy: 3)
+        let rect = bounds.insetBy(dx: 8, dy: 8)
         guard rect.width > 1, rect.height > 1 else { return }
-        let path = NSBezierPath(roundedRect: rect, xRadius: SplitMetrics.cornerRadius, yRadius: SplitMetrics.cornerRadius)
-        NSColor.controlAccentColor.withAlphaComponent(0.16).setFill()
+        let path = NSBezierPath(roundedRect: rect, xRadius: 12, yRadius: 12)
+        NSColor.labelColor.withAlphaComponent(0.16).setFill()
         path.fill()
-        NSColor.controlAccentColor.withAlphaComponent(0.55).setStroke()
-        path.lineWidth = 1.5
+        NSColor.labelColor.withAlphaComponent(0.38).setStroke()
+        path.lineWidth = 1
         path.stroke()
     }
 }
@@ -461,13 +466,12 @@ final class SplitDividerView: NSView {
 private struct SplitDropCatcher: NSViewRepresentable {
     var paneIDs: [UUID]
     var paneFrames: [CGRect]
-    var spans: [SplitSpan]
-    var vertical: Bool
-    var allows: (UUID, Int) -> Bool
+    var mode: SplitDropMode
+    var allows: (UUID, SplitDropZone) -> Bool
     var onHover: (UUID?) -> Void
     var onFocus: (UUID) -> Void
-    var onHighlight: (Int?) -> Void
-    var onDrop: (UUID, Int) -> Void
+    var onHighlight: (SplitDropZone?) -> Void
+    var onDrop: (UUID, SplitDropZone) -> Void
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: SplitDropCatcherView, context: Context) -> CGSize? {
         CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
@@ -486,8 +490,7 @@ private struct SplitDropCatcher: NSViewRepresentable {
     private func apply(to view: SplitDropCatcherView) {
         view.hoverIDs = paneIDs
         view.paneFrames = paneFrames
-        view.spans = spans
-        view.vertical = vertical
+        view.mode = mode
         view.allows = allows
         view.onHover = onHover
         view.onFocus = onFocus
@@ -498,17 +501,16 @@ private struct SplitDropCatcher: NSViewRepresentable {
 
 final class SplitDropCatcherView: NSView {
     var paneFrames: [CGRect] = []
-    var spans: [SplitSpan] = []
-    var vertical = false
-    var allows: (UUID, Int) -> Bool = { _, _ in false }
+    var mode: SplitDropMode = .choose
+    var allows: (UUID, SplitDropZone) -> Bool = { _, _ in false }
     var onHover: (UUID?) -> Void = { _ in }
     var onFocus: (UUID) -> Void = { _ in }
-    var onHighlight: (Int?) -> Void = { _ in }
-    var onDrop: (UUID, Int) -> Void = { _, _ in }
+    var onHighlight: (SplitDropZone?) -> Void = { _ in }
+    var onDrop: (UUID, SplitDropZone) -> Void = { _, _ in }
 
     private let monitors = SplitEventBox()
     private let bridge = SplitEventBridge()
-    private var highlighted: Int?
+    private var highlighted: SplitDropZone?
     private var lastHover: UUID?
 
     override var isFlipped: Bool { true }
@@ -526,7 +528,7 @@ final class SplitDropCatcherView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let id = Self.armedID(), bounds.contains(convert(point, from: superview)) else { return nil }
         let local = convert(point, from: superview)
-        guard let index = dropIndex(at: local), allows(id, index) else { return nil }
+        guard let zone = dropZone(at: local), allows(id, zone) else { return nil }
         return self
     }
 
@@ -583,41 +585,35 @@ final class SplitDropCatcherView: NSView {
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let local = convert(sender.draggingLocation, from: nil)
         defer { publish(nil) }
-        guard let id = draggedID(from: sender), let index = dropIndex(at: local), allows(id, index) else {
+        guard let id = draggedID(from: sender), let zone = dropZone(at: local), allows(id, zone) else {
             return false
         }
-        onDrop(id, index)
+        onDrop(id, zone)
         return true
     }
 
     private func updateDrag(_ sender: NSDraggingInfo) -> NSDragOperation {
         let local = convert(sender.draggingLocation, from: nil)
-        guard let id = draggedID(from: sender), let index = dropIndex(at: local), allows(id, index) else {
+        guard let id = draggedID(from: sender), let zone = dropZone(at: local), allows(id, zone) else {
             publish(nil)
             return []
         }
-        publish(index)
+        publish(zone)
         return .move
     }
 
-    private func publish(_ index: Int?) {
-        guard index != highlighted else { return }
-        highlighted = index
-        onHighlight(index)
-        if index != nil {
+    /// One pulse when the pointer crosses into a different half. Repeating the same zone is silent.
+    private func publish(_ zone: SplitDropZone?) {
+        guard zone != highlighted else { return }
+        highlighted = zone
+        onHighlight(zone)
+        if zone != nil {
             Haptics.play(.dropSlot)
         }
     }
 
-    private func dropIndex(at local: CGPoint) -> Int? {
-        guard bounds.contains(local) else { return nil }
-        let point = vertical ? local.y : local.x
-        return SplitGeometry.dropIndex(
-            at: point,
-            spans: spans,
-            edgeFraction: SplitMetrics.edgeFraction,
-            dividerReach: SplitMetrics.dividerReach
-        )
+    private func dropZone(at local: CGPoint) -> SplitDropZone? {
+        SplitGeometry.dropZone(at: local, size: bounds.size, mode: mode)
     }
 
     var hoverIDs: [UUID] = []

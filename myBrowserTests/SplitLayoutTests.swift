@@ -54,29 +54,39 @@ struct SplitLayoutTests {
         #expect(near(lengths[1], 240, tolerance: 0.5))
     }
 
-    @Test func dropZonesAreEdgesAndGaps() {
-        let single = [SplitSpan(origin: 0, length: 800)]
-        #expect(SplitGeometry.dropIndex(at: 10, spans: single, edgeFraction: 0.3, dividerReach: 28) == 0)
-        #expect(SplitGeometry.dropIndex(at: 400, spans: single, edgeFraction: 0.3, dividerReach: 28) == nil)
-        #expect(SplitGeometry.dropIndex(at: 700, spans: single, edgeFraction: 0.3, dividerReach: 28) == 1)
+    @Test func aNewSplitUsesWholeHalvesAndEdgeBands() {
+        let size = CGSize(width: 800, height: 600)
+        let band = size.height * 0.20
 
-        let pair = [SplitSpan(origin: 0, length: 400), SplitSpan(origin: 406, length: 400)]
-        #expect(SplitGeometry.dropIndex(at: 20, spans: pair, edgeFraction: 0.3, dividerReach: 28) == 0)
-        #expect(SplitGeometry.dropIndex(at: 200, spans: pair, edgeFraction: 0.3, dividerReach: 28) == nil)
-        #expect(SplitGeometry.dropIndex(at: 403, spans: pair, edgeFraction: 0.3, dividerReach: 28) == 1)
-        #expect(SplitGeometry.dropIndex(at: 760, spans: pair, edgeFraction: 0.3, dividerReach: 28) == 2)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: 100, y: 300), size: size, mode: .choose) == .leading)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: 500, y: 300), size: size, mode: .choose) == .trailing)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: 10, y: band), size: size, mode: .choose) == .top)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: 790, y: band + 1), size: size, mode: .choose) == .trailing)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: 10, y: size.height - band), size: size, mode: .choose) == .bottom)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: 399, y: 300), size: size, mode: .choose) == .leading)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: 400, y: 300), size: size, mode: .choose) == .trailing)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: -1, y: 300), size: size, mode: .choose) == nil)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: 10, y: 10), size: CGSize(width: 0, height: 0), mode: .choose) == nil)
     }
 
-    @Test func previewIsHalfAPane() {
-        let spans = [SplitSpan(origin: 0, length: 400), SplitSpan(origin: 406, length: 400)]
-        let leading = SplitGeometry.preview(for: 0, spans: spans)
-        #expect(leading?.origin == 0)
-        #expect(leading?.length == 200)
-        let between = SplitGeometry.preview(for: 1, spans: spans)
-        #expect(between?.length == 200)
-        let trailing = SplitGeometry.preview(for: 2, spans: spans)
-        #expect(trailing?.origin == 606)
-        #expect(trailing?.length == 200)
+    @Test func anOpenSplitUsesTheWholeCardAlongItsAxis() {
+        let size = CGSize(width: 800, height: 600)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: 10, y: 10), size: size, mode: .horizontal) == .leading)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: 790, y: 590), size: size, mode: .horizontal) == .trailing)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: 10, y: 10), size: size, mode: .vertical) == .top)
+        #expect(SplitGeometry.dropZone(at: CGPoint(x: 790, y: 400), size: size, mode: .vertical) == .bottom)
+    }
+
+    @Test func previewCoversTheChosenHalf() {
+        let size = CGSize(width: 800, height: 600)
+        #expect(SplitGeometry.previewRect(for: .leading, size: size) == CGRect(x: 0, y: 0, width: 400, height: 600))
+        #expect(SplitGeometry.previewRect(for: .trailing, size: size) == CGRect(x: 400, y: 0, width: 400, height: 600))
+        #expect(SplitGeometry.previewRect(for: .top, size: size) == CGRect(x: 0, y: 0, width: 800, height: 300))
+        #expect(SplitGeometry.previewRect(for: .bottom, size: size) == CGRect(x: 0, y: 300, width: 800, height: 300))
+        #expect(SplitGeometry.insertionIndex(for: .leading, paneCount: 3) == 0)
+        #expect(SplitGeometry.insertionIndex(for: .top, paneCount: 3) == 0)
+        #expect(SplitGeometry.insertionIndex(for: .trailing, paneCount: 3) == 3)
+        #expect(SplitGeometry.insertionIndex(for: .bottom, paneCount: 2) == 2)
     }
 
     @Test func movingForwardUsesTheFinalIndex() {

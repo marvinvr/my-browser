@@ -69,17 +69,58 @@ extension BrowserModel {
         )
     }
 
-    /// Groups 2...4 sites into one split at the anchor's place and selects it.
+    /// Groups 2...4 pages into one temporary split in Tabs and selects it.
     ///
-    /// `anchoredOn` nil uses the first id. Focus is the site that was current when it is one of
-    /// the members, otherwise the first pane. Returns nil when `LibraryStore.createSplit` rejects
-    /// the ids. See that method for the rules.
+    /// A loose tab joins as itself. A pin, a favorite, or a member of a pinned split is copied
+    /// into a fresh tab; the original stays where it is, including its home URL. The split is
+    /// never created in Pinned. `anchoredOn` nil uses the first id. When that page is a loose tab,
+    /// the split takes its place. Otherwise the split is inserted at the top of Tabs.
+    /// `displayedID` copies the live page instead of the pin's home. Focus is the site that was
+    /// current when it joined, otherwise the first pane.
     @discardableResult
-    func createSplit(tabIDs: [UUID], axis: SidebarItem.SplitAxis = .horizontal, anchoredOn anchorID: UUID? = nil) -> SidebarItem? {
+    func createSplit(
+        tabIDs: [UUID],
+        axis: SidebarItem.SplitAxis = .horizontal,
+        anchoredOn anchorID: UUID? = nil,
+        displayedID: UUID? = nil
+    ) -> SidebarItem? {
+        var ordered: [UUID] = []
+        var seen: Set<UUID> = []
+        for id in tabIDs where seen.insert(id).inserted {
+            ordered.append(id)
+        }
+        guard (SidebarItem.minimumSplitMembers...SidebarItem.maximumSplitMembers).contains(ordered.count) else { return nil }
+        let requestedAnchor = anchorID ?? ordered[0]
+        guard ordered.contains(requestedAnchor) else { return nil }
+        let sources = ordered.compactMap { library.item($0) }
+        guard sources.count == ordered.count, sources.allSatisfy({ $0.kind == .site }) else { return nil }
+        let spaceID = sources[0].spaceID
+        guard sources.allSatisfy({ $0.spaceID == spaceID }) else { return nil }
+        guard sources.allSatisfy({ $0.section == .tabs || $0.section == .pinned || $0.section == .favorites }) else { return nil }
+
+        let anchorWasLooseTab = library.item(requestedAnchor)?.section == .tabs
+            && library.splitContainer(of: requestedAnchor) == nil
+        var resolved: [UUID] = []
+        var copies: [UUID] = []
+        for id in ordered {
+            guard let participant = tabsParticipant(for: id, joining: nil, displayed: id == displayedID) else {
+                for copy in copies { library.deleteItem(copy) }
+                return nil
+            }
+            if participant != id { copies.append(participant) }
+            resolved.append(participant)
+        }
+        let resolvedAnchor = resolved[ordered.firstIndex(of: requestedAnchor) ?? 0]
         let previous = selectedItemID
         let previousFocus = previous.flatMap { library.item($0)?.isSplit == true ? resolvedFocus(in: $0) : $0 }
         let storedAxis: SidebarItem.SplitAxis? = axis == .horizontal ? nil : axis
-        guard let split = library.createSplit(tabIDs: tabIDs, axis: storedAxis, anchoredOn: anchorID) else { return nil }
+        guard let split = library.createSplit(tabIDs: resolved, axis: storedAxis, anchoredOn: resolvedAnchor) else {
+            for copy in copies { library.deleteItem(copy) }
+            return nil
+        }
+        if !anchorWasLooseTab {
+            library.moveItem(split.id, to: .tabs, parentID: nil, at: .start)
+        }
         let members = library.splitMembers(of: split.id)
         let focus = members.first { $0.id == previousFocus }?.id ?? members.first?.id
         if let focus {
@@ -89,25 +130,43 @@ extension BrowserModel {
         return library.item(split.id)
     }
 
-    /// Adds a site to a split at `index` (0 = leftmost) and returns the moved site.
+    /// Opens a temporary split of the page on screen and the dropped page, on `zone`'s side.
     ///
-    /// When `tabID` was the selected site, the split becomes selected and that pane is focused.
-    /// Adding a pane while the split is already selected loads the new pane.
-    /// Returns nil when the store rejects the add (full split, other space, not a site).
+    /// The split is a new Tabs group. A pin or favorite is copied. Returns nil when the two
+    /// pages are the same item or they do not share a space.
+    @discardableResult
+    func openSplit(dropping draggedID: UUID, beside anchorID: UUID, on zone: SplitDropZone) -> SidebarItem? {
+        guard draggedID != anchorID else { return nil }
+        guard let dragged = library.item(draggedID), let anchor = library.item(anchorID) else { return nil }
+        guard dragged.kind == .site, anchor.kind == .site, dragged.spaceID == anchor.spaceID else { return nil }
+        let axis: SidebarItem.SplitAxis = zone.isVertical ? .vertical : .horizontal
+        let ids = zone.placesDraggedFirst ? [draggedID, anchorID] : [anchorID, draggedID]
+        guard let split = createSplit(tabIDs: ids, axis: axis, anchoredOn: anchorID, displayedID: anchorID) else { return nil }
+        let members = library.splitMembers(of: split.id)
+        let focus = zone.placesDraggedFirst ? members.first?.id : members.last?.id
+        if let focus { focusPane(tabID: focus) }
+        return library.item(split.id)
+    }
+
+    /// Adds a page to a Tabs split at `index` (0 = leftmost) and returns the pane that joined.
+    ///
+    /// A pin or favorite is copied into a fresh tab. The original is not moved. A pinned split
+    /// is left alone: this returns nil rather than adopting the page into Pinned.
+    /// When the added page was the selected site, the split becomes selected and that pane is focused.
+    /// Adding a pane while the split is already selected loads the new pane and focuses it.
     @discardableResult
     func addToSplit(tabID: UUID, splitID: UUID, at index: Int) -> SidebarItem? {
-        let wasSelected = selectedItemID == tabID
-        guard library.addToSplit(tabID: tabID, splitID: splitID, at: index) != nil else { return nil }
-        if wasSelected {
-            session.focusedPaneBySplit[splitID] = tabID
-            select(splitID)
-        } else if selectedItemID == splitID, let item = library.item(tabID) {
-            let tab = ensureTab(for: item)
-            let created = !tab.isLoaded
-            tab.loadIfNeeded(using: profiles)
-            if created { extensions?.tabOpened(tab) }
+        guard let split = library.item(splitID), split.isSplit, split.section == .tabs else { return nil }
+        guard let memberID = tabsParticipant(for: tabID, joining: splitID, displayed: false) else { return nil }
+        let wasSelected = selectedItemID == memberID
+        guard library.addToSplit(tabID: memberID, splitID: splitID, at: index) != nil else {
+            if memberID != tabID { library.deleteItem(memberID) }
+            return nil
         }
-        return library.item(tabID)
+        if wasSelected || selectedItemID == splitID {
+            select(memberID)
+        }
+        return library.item(memberID)
     }
 
     /// Pulls a member out and places it immediately after the split.
@@ -216,26 +275,28 @@ extension BrowserModel {
         return library.splitMembers(of: id).count == 2
     }
 
-    /// A loose pinned or tabs site. Favorites and panes that are already in a split cannot start another.
+    /// A loose pin, favorite, or tab. A page that is already inside a split cannot start another.
     func canStartSplit(from itemID: UUID) -> Bool {
         guard let item = library.item(itemID), item.kind == .site else { return false }
-        guard item.section == .pinned || item.section == .tabs else { return false }
+        guard item.section == .pinned || item.section == .tabs || item.section == .favorites else { return false }
         return library.splitContainer(of: itemID) == nil
     }
 
-    /// The selected site, when it can share a new split with `itemID`.
+    /// The selected site, when it can share a new temporary split with `itemID`.
+    /// The two pages do not have to share a section. A pin is copied, not moved.
     func selectedSplitPartner(for itemID: UUID) -> SidebarItem? {
         guard canStartSplit(from: itemID), let item = library.item(itemID) else { return nil }
         guard let selected = selectedItemID, selected != itemID, let partner = library.item(selected) else { return nil }
-        guard canStartSplit(from: partner.id), partner.spaceID == item.spaceID, partner.section == item.section else { return nil }
+        guard canStartSplit(from: partner.id), partner.spaceID == item.spaceID else { return nil }
         return partner
     }
 
-    /// The selected split, when `itemID` can be added and the split has fewer than four panes.
+    /// The selected Tabs split, when `itemID` can be added and the split has fewer than four panes.
+    /// A pinned split is not offered: adding would change that pin.
     func selectedSplitToJoin(for itemID: UUID) -> SidebarItem? {
         guard canStartSplit(from: itemID), let item = library.item(itemID) else { return nil }
         guard let selected = selectedItemID, let split = library.item(selected), split.isSplit else { return nil }
-        guard split.spaceID == item.spaceID, split.section == item.section else { return nil }
+        guard split.section == .tabs, split.spaceID == item.spaceID else { return nil }
         guard library.splitMembers(of: split.id).count < SidebarItem.maximumSplitMembers else { return nil }
         return split
     }
@@ -254,10 +315,11 @@ extension BrowserModel {
         .map { $0 }
     }
 
-    /// Groups the selected site with a new empty tab, or adds one to the selected split.
+    /// Groups the selected page with a new empty tab, or adds one to the selected Tabs split.
     ///
-    /// The new pane is focused and the command bar opens on it. Returns false when the
-    /// selection cannot grow a split (a favorite, a folder, or a split that already has four panes).
+    /// The new pane is focused and the command bar opens on it. A pin or favorite stays put:
+    /// the split is a new Tabs group holding a fresh tab for that page. A pinned split is not
+    /// given a new pane. Returns false for a folder, or a Tabs split that already has four panes.
     @discardableResult
     func openInSplitView() -> Bool {
         guard let id = selectedItemID else { return false }
@@ -269,14 +331,20 @@ extension BrowserModel {
     func openInSplitView(anchoredOn itemID: UUID) -> Bool {
         guard let item = library.item(itemID) else { return false }
         if item.isSplit {
-            return addBlankPane(to: item.id)
+            if item.section == .tabs { return addBlankPane(to: item.id) }
+            guard let focus = resolvedFocus(in: item.id), let page = library.item(focus) else { return false }
+            return openBlankSplit(copying: page)
         }
         if item.kind == .site, let split = library.splitContainer(of: itemID) {
-            return addBlankPane(to: split.id)
+            if split.section == .tabs { return addBlankPane(to: split.id) }
+            return openBlankSplit(copying: item)
         }
         guard canStartSplit(from: itemID) else { return false }
-        guard let blank = makeBlankTab(in: item.spaceID, section: item.section) else { return false }
-        guard createSplit(tabIDs: [item.id, blank.id]) != nil else {
+        if item.section != .tabs {
+            return openBlankSplit(copying: item)
+        }
+        guard let blank = makeBlankTab(in: item.spaceID) else { return false }
+        guard createSplit(tabIDs: [item.id, blank.id], anchoredOn: item.id) != nil else {
             library.deleteItem(blank.id)
             return false
         }
@@ -319,11 +387,28 @@ extension BrowserModel {
         focusPane(tabID: members[next].id)
     }
 
+    /// A new Tabs split: a fresh tab for `item`'s page, plus an empty tab. `item` is not moved.
+    private func openBlankSplit(copying item: SidebarItem) -> Bool {
+        guard let copy = copyAsTab(item, displayed: true) else { return false }
+        guard let blank = makeBlankTab(in: item.spaceID) else {
+            library.deleteItem(copy.id)
+            return false
+        }
+        guard createSplit(tabIDs: [copy.id, blank.id], anchoredOn: copy.id) != nil else {
+            library.deleteItem(blank.id)
+            library.deleteItem(copy.id)
+            return false
+        }
+        focusPane(tabID: blank.id)
+        presentCommandBar(.editCurrent)
+        return true
+    }
+
     private func addBlankPane(to splitID: UUID) -> Bool {
-        guard let split = library.item(splitID), split.isSplit else { return false }
+        guard let split = library.item(splitID), split.isSplit, split.section == .tabs else { return false }
         let members = library.splitMembers(of: splitID)
         guard members.count < SidebarItem.maximumSplitMembers else { return false }
-        guard let blank = makeBlankTab(in: split.spaceID, section: split.section) else { return false }
+        guard let blank = makeBlankTab(in: split.spaceID) else { return false }
         guard addToSplit(tabID: blank.id, splitID: splitID, at: members.count) != nil else {
             library.deleteItem(blank.id)
             return false
@@ -333,12 +418,55 @@ extension BrowserModel {
         return true
     }
 
-    /// A new empty pane in `section`, so a pinned split does not adopt a `.tabs` row.
-    private func makeBlankTab(in spaceID: UUID, section: SidebarItem.Section) -> SidebarItem? {
-        guard section == .pinned || section == .tabs, library.space(spaceID) != nil else { return nil }
+    /// A loose tab for `item`'s page. The original pin or favorite is not modified.
+    /// `displayed` uses the live page when this item is on screen; otherwise the saved URL.
+    private func copyAsTab(_ item: SidebarItem, displayed: Bool) -> SidebarItem? {
+        guard item.kind == .site, library.space(item.spaceID) != nil else { return nil }
+        let url: URL?
+        let title: String
+        if displayed, let tab = tabs[item.id], let live = tab.url {
+            url = live
+            title = tab.title.isEmpty ? item.title : tab.title
+        } else {
+            url = item.url
+            title = item.title
+        }
+        return library.addItem(
+            spaceID: item.spaceID,
+            section: .tabs,
+            kind: .site,
+            title: title,
+            url: url,
+            at: .start
+        )
+    }
+
+    /// The tabs site that should join a temporary split.
+    /// Pins and favorites are copied. A member of another Tabs split is lifted out first.
+    /// A member of a pinned split is copied, so closing the new split cannot touch that pin.
+    private func tabsParticipant(for itemID: UUID, joining splitID: UUID?, displayed: Bool) -> UUID? {
+        guard let item = library.item(itemID), item.kind == .site else { return nil }
+        switch item.section {
+        case .tabs:
+            if let container = library.splitContainer(of: itemID) {
+                if container.id == splitID { return itemID }
+                if container.section != .tabs {
+                    return copyAsTab(item, displayed: displayed)?.id
+                }
+                guard separate(tabID: itemID) != nil else { return nil }
+            }
+            return library.item(itemID)?.kind == .site ? itemID : nil
+        case .pinned, .favorites:
+            return copyAsTab(item, displayed: displayed)?.id
+        }
+    }
+
+    /// A new empty tab. Splits opened from a pin use this, not a pinned row.
+    private func makeBlankTab(in spaceID: UUID) -> SidebarItem? {
+        guard library.space(spaceID) != nil else { return nil }
         return library.addItem(
             spaceID: spaceID,
-            section: section,
+            section: .tabs,
             kind: .site,
             title: "New Tab",
             url: nil,

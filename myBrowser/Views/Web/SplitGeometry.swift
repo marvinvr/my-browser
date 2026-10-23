@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 /// Layout numbers for a split in the content card.
 enum SplitMetrics {
@@ -7,10 +8,36 @@ enum SplitMetrics {
     static let cornerRadius: CGFloat = 8
     /// Drag target centered on the gap. Wider than the gap so the pointer can grab it.
     static let dividerHit: CGFloat = 10
-    /// Outer fraction of an edge pane that accepts a new pane.
-    static let edgeFraction: CGFloat = 0.30
-    /// How far from a gap the pointer still counts as "between panes".
-    static let dividerReach: CGFloat = 28
+    /// Outer fraction of the card height that starts a stacked split.
+    /// The rest of the card is the left and right halves.
+    static let stackEdgeFraction: CGFloat = 0.20
+}
+
+/// Where a sidebar item will sit when it is dropped on the content card.
+enum SplitDropZone: Equatable {
+    case leading
+    case trailing
+    case top
+    case bottom
+
+    /// The dropped page is the first pane (left, or top).
+    var placesDraggedFirst: Bool {
+        self == .leading || self == .top
+    }
+
+    var isVertical: Bool {
+        self == .top || self == .bottom
+    }
+}
+
+/// Which halves the pointer can choose. A new split offers a stack near the top and bottom.
+enum SplitDropMode: Equatable {
+    /// Top and bottom bands stack. Between them, the card is the left and right halves.
+    case choose
+    /// The whole card is the left and right halves.
+    case horizontal
+    /// The whole card is the top and bottom halves.
+    case vertical
 }
 
 /// One pane's extent along the split axis. Origin is the leading edge.
@@ -111,49 +138,73 @@ enum SplitGeometry {
         return next
     }
 
-    /// Insertion index for a drop, or nil when the point is in the middle of a pane.
-    /// `spans.count` means after the last pane.
-    static func dropIndex(
-        at point: CGFloat,
-        spans: [SplitSpan],
-        edgeFraction: CGFloat,
-        dividerReach: CGFloat
-    ) -> Int? {
-        guard let first = spans.first, let last = spans.last, first.length > 1 else { return nil }
-        if point <= first.origin + first.length * edgeFraction {
-            return 0
+    /// The half under `point`. Nil when the card has no size or the point is outside it.
+    ///
+    /// `.choose` uses the top and bottom `stackEdgeFraction` of the height for a stacked split.
+    /// Everywhere else is the left or right half, including the middle of the card.
+    /// `.horizontal` and `.vertical` split the whole card in two along that axis.
+    static func dropZone(
+        at point: CGPoint,
+        size: CGSize,
+        mode: SplitDropMode,
+        stackEdgeFraction: CGFloat = SplitMetrics.stackEdgeFraction
+    ) -> SplitDropZone? {
+        guard size.width > 1, size.height > 1 else { return nil }
+        guard point.x >= 0, point.y >= 0, point.x <= size.width, point.y <= size.height else { return nil }
+        switch mode {
+        case .horizontal:
+            return point.x < size.width / 2 ? .leading : .trailing
+        case .vertical:
+            return point.y < size.height / 2 ? .top : .bottom
+        case .choose:
+            let fraction = min(max(stackEdgeFraction, 0), 0.49)
+            let band = size.height * fraction
+            if point.y <= band { return .top }
+            if point.y >= size.height - band { return .bottom }
+            return point.x < size.width / 2 ? .leading : .trailing
         }
-        if point >= last.origin + last.length * (1 - edgeFraction) {
-            return spans.count
-        }
-        guard spans.count >= 2 else { return nil }
-        for index in 0..<(spans.count - 1) {
-            let end = spans[index].origin + spans[index].length
-            let next = spans[index + 1].origin
-            let mid = (end + next) / 2
-            let reach = max(dividerReach, (next - end) / 2 + 4)
-            if abs(point - mid) <= reach {
-                return index + 1
-            }
-        }
-        return nil
     }
 
-    /// Half of the neighbouring pane, where the dropped page will sit.
-    static func preview(for index: Int, spans: [SplitSpan]) -> SplitSpan? {
-        guard let first = spans.first, let last = spans.last else { return nil }
-        if index <= 0 {
-            return SplitSpan(origin: first.origin, length: first.length / 2)
+    /// The half of the card the dropped page will occupy.
+    static func previewRect(for zone: SplitDropZone, size: CGSize) -> CGRect {
+        let width = max(size.width, 0)
+        let height = max(size.height, 0)
+        switch zone {
+        case .leading:
+            return CGRect(x: 0, y: 0, width: width / 2, height: height)
+        case .trailing:
+            return CGRect(x: width / 2, y: 0, width: width / 2, height: height)
+        case .top:
+            return CGRect(x: 0, y: 0, width: width, height: height / 2)
+        case .bottom:
+            return CGRect(x: 0, y: height / 2, width: width, height: height / 2)
         }
-        if index >= spans.count {
-            let length = last.length / 2
-            return SplitSpan(origin: last.origin + last.length - length, length: length)
+    }
+
+    /// Index passed to `addToSplit`. `paneCount` means after the last pane.
+    static func insertionIndex(for zone: SplitDropZone, paneCount: Int) -> Int {
+        switch zone {
+        case .leading, .top:
+            return 0
+        case .trailing, .bottom:
+            return max(paneCount, 0)
         }
-        let previous = spans[index - 1]
-        let next = spans[index]
-        let length = min(previous.length, next.length) / 2
-        let boundary = (previous.origin + previous.length + next.origin) / 2
-        return SplitSpan(origin: boundary - length / 2, length: length)
+    }
+
+    /// `MYBROWSER_DEBUG_SPLIT_DROP=leading|trailing|top|bottom` freezes the overlay for a snapshot.
+    static func debugDropZone() -> SplitDropZone? {
+        switch ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SPLIT_DROP"]?.lowercased() {
+        case "leading", "left":
+            return .leading
+        case "trailing", "right":
+            return .trailing
+        case "top":
+            return .top
+        case "bottom":
+            return .bottom
+        default:
+            return nil
+        }
     }
 
     static func rect(span: SplitSpan, vertical: Bool, cross: CGFloat) -> CGRect {

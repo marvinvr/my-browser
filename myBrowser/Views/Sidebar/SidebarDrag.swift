@@ -409,24 +409,26 @@ enum SidebarDropResolver {
         }
     }
 
-    /// A loose pinned or tabs site can join the hovered site, or a split that still has room.
-    /// Favorites, folders, and a dragged split stay on the reorder path.
+    /// A loose pin, tab, or favorite can join the hovered site, or a Tabs split that still has room.
+    /// A pinned split stays a reorder target so the drop cannot edit it. Folders and a dragged split do too.
     private static func canJoinSplit(
         row: SidebarDropRow,
         draggingID: UUID?,
         section: SidebarItem.Section,
         library: LibraryStore
     ) -> Bool {
-        guard section == .pinned || section == .tabs else { return false }
+        guard section == .pinned || section == .tabs || section == .favorites else { return false }
         guard let draggingID, draggingID != row.id, let dragged = library.item(draggingID) else { return false }
-        guard dragged.kind == .site, dragged.section != .favorites, library.splitContainer(of: draggingID) == nil else { return false }
+        guard dragged.kind == .site, library.splitContainer(of: draggingID) == nil else { return false }
+        guard dragged.section == .tabs || dragged.section == .pinned || dragged.section == .favorites else { return false }
         guard let target = library.item(row.id), target.spaceID == dragged.spaceID else { return false }
         if target.isSplit {
+            guard target.section == .tabs else { return false }
             let members = library.splitMembers(of: target.id)
             return members.count < SidebarItem.maximumSplitMembers && !members.contains { $0.id == draggingID }
         }
-        guard target.kind == .site, target.section != .favorites, library.splitContainer(of: target.id) == nil else { return false }
-        return target.section == .pinned || target.section == .tabs
+        guard target.kind == .site, library.splitContainer(of: target.id) == nil else { return false }
+        return target.section == .pinned || target.section == .tabs || target.section == .favorites
     }
 
     static func visibleRows(section: SidebarItem.Section, spaceID: UUID, library: LibraryStore) -> [SidebarDropRow] {
@@ -666,10 +668,11 @@ final class SidebarInteraction {
     private func joinSplit(draggingID: UUID?, targetID: UUID) -> Bool {
         guard let model, let draggingID, let target = model.library.item(targetID) else { return false }
         if target.isSplit {
+            guard target.section == .tabs else { return false }
             let index = model.library.splitMembers(of: targetID).count
             return model.addToSplit(tabID: draggingID, splitID: targetID, at: index) != nil
         }
-        return model.createSplit(tabIDs: [targetID, draggingID]) != nil
+        return model.createSplit(tabIDs: [targetID, draggingID], anchoredOn: targetID) != nil
     }
 
     private static func libraryPosition(_ position: SidebarDropPosition) -> LibraryStore.Position {

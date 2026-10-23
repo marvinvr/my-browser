@@ -802,6 +802,19 @@ enum DebugSnapshot {
                 appendChrome(sibling, to: &pageChrome, content: content)
             }
         }
+        // The drop preview sits above the panes. The page image painted below covers it,
+        // so draw the highlight again after the pages.
+        var dropOverlays: [(NSImage, NSRect)] = []
+        func collectDropOverlays(_ view: NSView) {
+            if let highlight = view as? SplitHighlightView, !highlight.isHidden,
+               highlight.bounds.width > 1, highlight.bounds.height > 1 {
+                appendChrome(highlight, to: &dropOverlays, content: content)
+            }
+            for subview in view.subviews {
+                collectDropOverlays(subview)
+            }
+        }
+        collectDropOverlays(content)
         let sheetImage = attachedSheetImage(on: window, content: content)
         let commandFill = commandBarFill(for: window)
 
@@ -853,6 +866,9 @@ enum DebugSnapshot {
             shot.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
         }
         for (image, frame) in pageChrome {
+            image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
+        }
+        for (image, frame) in dropOverlays {
             image.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
         }
         if let sheet = sheetImage {
