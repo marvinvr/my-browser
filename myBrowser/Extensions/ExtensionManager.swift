@@ -24,6 +24,7 @@ final class ExtensionManager {
     private(set) var isBusy = false
 
     @ObservationIgnored private let bridge = ExtensionControllerBridge()
+    @ObservationIgnored let nativeMessaging = NativeMessagingCenter()
     @ObservationIgnored private var controllers: [UUID: WKWebExtensionController] = [:]
     @ObservationIgnored private var contexts: [UUID: [String: WKWebExtensionContext]] = [:]
     @ObservationIgnored private var snapshots: [UUID: TabSnapshot] = [:]
@@ -31,6 +32,7 @@ final class ExtensionManager {
     @ObservationIgnored private var announcedWindows: Set<UUID> = []
     @ObservationIgnored private var anchors: [String: AnchorBox] = [:]
     @ObservationIgnored private var iconCache: [String: NSImage] = [:]
+    @ObservationIgnored private var popupPanels: [ExtensionPopupPanel] = []
     @ObservationIgnored private var promptTail: Task<Bool, Never>?
     @ObservationIgnored private var focusObserver: NSObjectProtocol?
     @ObservationIgnored weak var model: BrowserModel?
@@ -57,8 +59,54 @@ final class ExtensionManager {
         self.model = model
         window.model = model
         observeFocus()
-        Task { await loadEnabled() }
     }
+
+    /// Loads enabled extensions after the first frame. Doing it from `init` runs during
+    /// SwiftUI's launch notification and trips a main-actor assertion when a large
+    /// extension (1Password) is already installed.
+    func loadEnabledExtensions() async {
+        await loadEnabled()
+        #if DEBUG
+        debugLoadNote(debugLoadReport())
+        #endif
+        // A second bump after the await. SwiftUI can miss the mutation that lands
+        // inside the load continuation, so the toolbar stays empty.
+        revision &+= 1
+    }
+
+    #if DEBUG
+    private func debugLoadNote(_ text: String) {
+        guard let library = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_LIBRARY"], !library.isEmpty else { return }
+        try? text.write(
+            to: URL(fileURLWithPath: library, isDirectory: true).appendingPathComponent("ext-load.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    private func debugLoadReport() -> String {
+        var lines = [
+            "selected=\(model?.selectedSpace?.profileID.uuidString ?? "nil")",
+            "records=\(records.count)",
+            "contexts=\(contexts.values.reduce(0) { $0 + $1.count })",
+            "error=\(lastError ?? "")"
+        ]
+        for record in records {
+            lines.append("record \(record.id) enabled=\(record.enabledProfileIDs.map(\.uuidString).joined(separator: ","))")
+        }
+        for (profileID, map) in contexts {
+            for (id, context) in map {
+                let errs = context.errors.prefix(3).map(\.localizedDescription).joined(separator: " | ")
+                lines.append("ctx \(profileID.uuidString) \(id) loaded=\(context.isLoaded) inject=\(context.hasInjectedContent) allHosts=\(context.hasAccessToAllHosts) action=\(context.action(for: nil) != nil) base=\(context.baseURL.absoluteString) errs=\(errs)")
+            }
+        }
+        if let tab = model?.selectedTab {
+            let attached = tab.webView?.configuration.webExtensionController != nil
+            lines.append("tab \(tab.profileID.uuidString) webExt=\(attached) host=\(tab.url?.host ?? "")")
+        }
+        return lines.joined(separator: "\n")
+    }
+    #endif
 
     func save() {
         do {
@@ -77,7 +125,18 @@ final class ExtensionManager {
         configuration.webViewConfiguration.websiteDataStore = store
         configuration.webViewConfiguration.applicationNameForUserAgent = ProfileManager.safariApplicationName
         PageRenderingRate.apply(to: configuration.webViewConfiguration.preferences)
+        // Extension pages only. The script fills out the notifications stub before
+        // the page's own scripts. The service worker is checked separately.
+        configuration.webViewConfiguration.userContentController.addUserScript(Self.notificationsShimScript)
         let controller = WKWebExtensionController(configuration: configuration)
+        // Release WebKit hides `chrome.notifications` unless the controller is in
+        // testing mode. What it exposes there is a partial stub: `onClicked` exists,
+        // `onClosed` does not. 1Password's service worker reads both while the module
+        // is still evaluating. This SDK has no `WebExtensionNotificationsEnabled`
+        // preference. `_setTestingMode:` is the switch WebKit uses.
+        if controller.responds(to: Selector(("_setTestingMode:"))) {
+            controller.setValue(true, forKey: "testingMode")
+        }
         controller.delegate = bridge
         controllers[profileID] = controller
         return controller
@@ -85,17 +144,18 @@ final class ExtensionManager {
 
     func toolbarItems(profileID: UUID, tab: BrowserTab?) -> [ExtensionToolbarItem] {
         _ = revision
+        _ = tab
         guard let loaded = contexts[profileID] else { return [] }
         return records.compactMap { record in
-            guard let context = loaded[record.id] else { return nil }
-            guard let action = context.action(for: tab) ?? context.action(for: nil) else { return nil }
-            let image = action.icon(for: CGSize(width: 32, height: 32)) ?? iconCache[record.id] ?? icon(for: record)
+            guard loaded[record.id] != nil else { return nil }
+            // The manifest icon. Reading `WKWebExtension.Action` here walks the tab and,
+            // for 1Password, drops the whole SwiftUI toolbar update.
             return ExtensionToolbarItem(
                 id: record.id,
-                label: action.label.isEmpty ? record.name : action.label,
-                badge: action.badgeText,
-                isEnabled: action.isEnabled,
-                image: image
+                label: record.name,
+                badge: "",
+                isEnabled: true,
+                image: iconCache[record.id] ?? icon(for: record)
             )
         }
     }
@@ -110,6 +170,17 @@ final class ExtensionManager {
         contexts[profileID]?[extensionID]?.performAction(for: tab)
     }
 
+    /// `windows.create({type:"popup"})` for an extension page. 1Password opens its detached popup this way.
+    func presentDetachedPopup(url: URL, configuration: WKWebViewConfiguration, frame: CGRect) -> ExtensionPopupPanel {
+        let panel = ExtensionPopupPanel(url: url, configuration: configuration, requestedFrame: frame)
+        popupPanels.append(panel)
+        panel.onClose = { [weak self, weak panel] in
+            guard let panel else { return }
+            self?.popupPanels.removeAll { $0 === panel }
+        }
+        return panel
+    }
+
     func presentPopup(for action: WKWebExtension.Action) {
         guard action.presentsPopup, let popover = action.popupPopover else { return }
         popover.behavior = .transient
@@ -117,12 +188,232 @@ final class ExtensionManager {
         if let identifier, let anchor = anchors[identifier]?.view, anchor.window != nil {
             popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
             self.schedulePopupTag(popover)
+            fitPopup(popover, action: action)
             return
         }
         guard let content = NSApp.keyWindow?.contentView ?? NSApp.mainWindow?.contentView else { return }
         let rect = NSRect(x: content.bounds.midX - 1, y: content.isFlipped ? 40 : content.bounds.height - 40, width: 2, height: 2)
         popover.show(relativeTo: rect, of: content, preferredEdge: .minY)
         schedulePopupTag(popover)
+        fitPopup(popover, action: action)
+    }
+
+    func performExtensionCommand(for event: NSEvent) -> Bool {
+        guard !event.isARepeat else { return false }
+        guard let profileID = model?.selectedSpace?.profileID, let loaded = contexts[profileID] else { return false }
+        for context in loaded.values where context.performCommand(for: event) {
+            return true
+        }
+        return false
+    }
+
+    func stopNativeHosts() {
+        nativeMessaging.stopAll()
+    }
+
+    /// WebKit sizes the popover from the popup document. A page that lays out after load
+    /// (the 1Password popup does) otherwise stays at the empty size.
+    private func fitPopup(_ popover: NSPopover, action: WKWebExtension.Action) {
+        let delays: [Duration] = [.milliseconds(50), .milliseconds(250), .milliseconds(700)]
+        for delay in delays {
+            Task { @MainActor in
+                try? await Task.sleep(for: delay)
+                guard popover.isShown, let webView = action.popupWebView else { return }
+                let script = """
+                (() => {
+                  const doc = document.documentElement;
+                  const body = document.body;
+                  const w = Math.max(doc ? doc.scrollWidth : 0, body ? body.scrollWidth : 0, doc ? doc.offsetWidth : 0);
+                  const h = Math.max(doc ? doc.scrollHeight : 0, body ? body.scrollHeight : 0, doc ? doc.offsetHeight : 0);
+                  const root = document.getElementById("root");
+                  const text = body ? (body.innerText || "") : "";
+                  const words = ["Unlock", "Locked", "Sign in", "1Password", "Loading", "Error", "Integrate"].filter((word) => text.includes(word));
+                  const errs = (globalThis.__mbPageErrors || []).slice(0, 4);
+                  return {w: Math.ceil(w), h: Math.ceil(h), kids: root ? root.childElementCount : -1, textLen: text.length, title: document.title || "", ready: document.readyState, words, errs};
+                })()
+                """
+                let result = try? await webView.evaluateJavaScript(script)
+                #if DEBUG
+                if let library = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_LIBRARY"], !library.isEmpty {
+                    let note = "\(delay): \(String(describing: result ?? "nil"))\n"
+                    let url = URL(fileURLWithPath: library, isDirectory: true).appendingPathComponent("popup-structure.txt")
+                    if let data = note.data(using: .utf8) {
+                        if FileManager.default.fileExists(atPath: url.path) {
+                            let handle = try? FileHandle(forWritingTo: url)
+                            try? handle?.seekToEnd()
+                            try? handle?.write(data)
+                            try? handle?.close()
+                        } else {
+                            try? data.write(to: url)
+                        }
+                    }
+                }
+                #endif
+                guard let size = Self.popupSize(from: result) else { return }
+                let current = popover.contentSize
+                if abs(current.width - size.width) > 8 || abs(current.height - size.height) > 8 {
+                    popover.contentSize = size
+                }
+            }
+        }
+    }
+
+    /// WebKit's testing-mode `chrome.notifications` has `onClicked` and not `onClosed`.
+    /// `webNavigation` is missing `onCreatedNavigationTarget`. `storage.managed` is absent.
+    /// 1Password reads all three while starting. A property set once at evaluation is gone
+    /// by the time that async init runs, so the fill is repeated for a few seconds.
+    private static let notificationsShimMarker = "/* mb-notifications-shim */"
+    private static let notificationsShimVersion = "/* mb-shim-keep */"
+
+    private static let notificationsShimSource = """
+    /* mb-notifications-shim */
+    /* mb-shim-keep */
+    (() => {
+      const event = () => ({
+        addListener() {},
+        removeListener() {},
+        hasListener() { return false; },
+        hasListeners() { return false; }
+      });
+      const fillEvents = (api, names) => {
+        if (!api || typeof api !== "object") return;
+        for (const name of names) {
+          if (!api[name]) { try { api[name] = event(); } catch (e) {} }
+        }
+      };
+      const fillNotifications = (api) => {
+        fillEvents(api, ["onClicked", "onButtonClicked", "onClosed", "onShown"]);
+        if (!api || typeof api !== "object") return;
+        const ok = (value) => () => Promise.resolve(value);
+        if (typeof api.create !== "function") { try { api.create = ok(""); } catch (e) {} }
+        if (typeof api.update !== "function") { try { api.update = ok(false); } catch (e) {} }
+        if (typeof api.clear !== "function") { try { api.clear = ok(true); } catch (e) {} }
+        if (typeof api.getAll !== "function") { try { api.getAll = ok([]); } catch (e) {} }
+        if (typeof api.getPermissionLevel !== "function") { try { api.getPermissionLevel = ok("granted"); } catch (e) {} }
+      };
+      const managedArea = () => ({
+        get(keys, callback) {
+          const value = {};
+          if (typeof keys === "function") { keys(value); return; }
+          if (typeof callback === "function") { callback(value); return; }
+          return Promise.resolve(value);
+        },
+        set(_items, callback) {
+          if (typeof _items === "function") { _items(); return; }
+          if (typeof callback === "function") { callback(); return; }
+          return Promise.resolve();
+        },
+        remove(_keys, callback) {
+          if (typeof _keys === "function") { _keys(); return; }
+          if (typeof callback === "function") { callback(); return; }
+          return Promise.resolve();
+        },
+        clear(callback) {
+          if (typeof callback === "function") { callback(); return; }
+          return Promise.resolve();
+        },
+        onChanged: event()
+      });
+      const fillStorage = (storage) => {
+        if (!storage || typeof storage !== "object") return;
+        if (!storage.managed) {
+          try { storage.managed = managedArea(); } catch (e) {}
+        } else if (!storage.managed.onChanged) {
+          try { storage.managed.onChanged = event(); } catch (e) {}
+        }
+      };
+      const fillNamespace = (namespace) => {
+        if (!namespace) return;
+        fillNotifications(namespace.notifications);
+        fillStorage(namespace.storage);
+        fillEvents(namespace.webNavigation, [
+          "onCreatedNavigationTarget",
+          "onHistoryStateUpdated",
+          "onReferenceFragmentUpdated",
+          "onTabReplaced"
+        ]);
+      };
+      const fill = () => {
+        try {
+          fillNamespace(globalThis.chrome);
+          if (globalThis.browser && globalThis.browser !== globalThis.chrome) fillNamespace(globalThis.browser);
+        } catch (e) {}
+      };
+      fill();
+      let ticks = 0;
+      const timer = setInterval(() => {
+        ticks += 1;
+        fill();
+        if (ticks >= 480) clearInterval(timer);
+      }, 25);
+      const errors = [];
+      try { globalThis.__mbPageErrors = errors; } catch (e) {}
+      try {
+        addEventListener("error", (event) => {
+          errors.push(String(event.message || (event.error && event.error.message) || "error").slice(0, 180));
+        });
+        addEventListener("unhandledrejection", (event) => {
+          const reason = event.reason;
+          errors.push(String((reason && (reason.message || reason)) || "rejection").slice(0, 180));
+        });
+      } catch (e) {}
+    })();
+
+    """
+
+    /// Runs in extension pages (popup, options). The service worker does not run user scripts,
+    /// so `installServiceWorkerNotificationsShim` writes the same prelude into that file.
+    private static let notificationsShimScript = WKUserScript(
+        source: notificationsShimSource,
+        injectionTime: .atDocumentStart,
+        forMainFrameOnly: true
+    )
+
+    /// Prepends the compatibility prelude to an MV3 service worker that asks for notifications
+    /// or webNavigation. Static `import` stays legal: a statement may precede import declarations.
+    /// The prelude runs before the rest of that module's body.
+    static func installServiceWorkerNotificationsShim(in folder: URL) {
+        let manifestURL = folder.appending(path: "manifest.json", directoryHint: .notDirectory)
+        guard let data = try? Data(contentsOf: manifestURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let permissions = json["permissions"] as? [String],
+              permissions.contains("notifications") || permissions.contains("webNavigation"),
+              let background = json["background"] as? [String: Any],
+              let worker = background["service_worker"] as? String,
+              !worker.isEmpty,
+              !worker.hasPrefix("/"),
+              !worker.contains("..") else { return }
+        let file = folder.appending(path: worker, directoryHint: .notDirectory)
+        guard FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) else { return }
+        guard var body = try? String(contentsOf: file, encoding: .utf8) else { return }
+        if body.hasPrefix(notificationsShimMarker) {
+            let head = body.prefix(5000)
+            if head.contains(notificationsShimVersion) { return }
+            guard let end = body.range(of: "\n})();\n\n") else { return }
+            body = String(body[end.upperBound...])
+        }
+        body = notificationsShimSource + body
+        try? body.write(to: file, atomically: true, encoding: .utf8)
+    }
+
+    private static func popupSize(from result: Any?) -> NSSize? {
+        let values: [String: Any]
+        if let dictionary = result as? [String: Any] {
+            values = dictionary
+        } else if let dictionary = result as? NSDictionary {
+            values = dictionary as? [String: Any] ?? [:]
+        } else {
+            return nil
+        }
+        guard let width = number(values["w"]), let height = number(values["h"]), width > 40, height > 40 else { return nil }
+        return NSSize(width: min(max(width, 160), 480), height: min(max(height, 80), 680))
+    }
+
+    private static func number(_ value: Any?) -> CGFloat? {
+        if let number = value as? NSNumber { return CGFloat(number.doubleValue) }
+        if let number = value as? Double { return CGFloat(number) }
+        if let number = value as? Int { return CGFloat(number) }
+        return nil
     }
 
     private func schedulePopupTag(_ popover: NSPopover) {
@@ -326,6 +617,7 @@ final class ExtensionManager {
         }
         do {
             let prepared = try await prepare()
+            Self.installServiceWorkerNotificationsShim(in: prepared.directory)
             for profileID in records.first(where: { $0.id == prepared.id })?.enabledProfileIDs ?? [] {
                 unload(id: prepared.id, profileID: profileID)
             }
@@ -415,6 +707,7 @@ final class ExtensionManager {
     private func load(_ record: ExtensionRecord, profileID: UUID, existing: WKWebExtension? = nil, reloadPages: Bool = false) async throws {
         if contexts[profileID]?[record.id] != nil { return }
         let folder = directory.appending(path: record.directory, directoryHint: .isDirectory)
+        Self.installServiceWorkerNotificationsShim(in: folder)
         let ext: WKWebExtension
         if let existing {
             ext = existing
@@ -423,8 +716,7 @@ final class ExtensionManager {
             try Self.validate(ext)
         }
         let context = WKWebExtensionContext(for: ext)
-        context.uniqueIdentifier = record.id
-        context.inspectionName = record.name
+        applyIdentity(record, to: context)
         #if DEBUG
         context.isInspectable = true
         #endif
@@ -434,13 +726,32 @@ final class ExtensionManager {
         do {
             try controller.load(context)
         } catch {
-            throw ExtensionInstallError.webKit(error.localizedDescription)
+            if context.baseURL.scheme == "chrome-extension" {
+                context.baseURL = URL(string: "webkit-extension://\(record.id)/") ?? context.baseURL
+                do {
+                    try controller.load(context)
+                } catch {
+                    throw ExtensionInstallError.webKit(error.localizedDescription)
+                }
+            } else {
+                throw ExtensionInstallError.webKit(error.localizedDescription)
+            }
         }
         var loaded = contexts[profileID] ?? [:]
         loaded[record.id] = context
         contexts[profileID] = loaded
+        // Tabs that opened before this context loaded were announced to the controller
+        // only. Tell this extension about them, then reload so document_start scripts run.
+        if let model {
+            for tab in model.tabs.values where tab.profileID == profileID && tab.isLoaded {
+                context.didOpenTab(tab)
+            }
+            if let selected = model.selectedTab, selected.profileID == profileID {
+                context.didActivateTab(selected, previousActiveTab: nil)
+            }
+        }
         revision &+= 1
-        if reloadPages, ext.hasInjectedContent {
+        if reloadPages, context.hasInjectedContent {
             model?.reloadWebTabs(in: profileID)
         }
     }
@@ -453,6 +764,15 @@ final class ExtensionManager {
         try? controller.unload(context)
         contexts[profileID]?[id] = nil
         revision &+= 1
+    }
+
+    /// Chrome Web Store ids keep `runtime.id`. The base URL stays `webkit-extension://`.
+    /// Assigning `chrome-extension://` makes `WKWebExtensionController.load` hang instead of
+    /// throwing (1Password on macOS 27), so the fallback never runs. Native hosts still get
+    /// `chrome-extension://<id>/` as their origin argument.
+    private func applyIdentity(_ record: ExtensionRecord, to context: WKWebExtensionContext) {
+        context.uniqueIdentifier = record.id
+        context.inspectionName = record.name
     }
 
     private func apply(_ record: ExtensionRecord, to context: WKWebExtensionContext) {

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Not referenced by project.yml and not used by scripts/release.sh.
+	     Point both at this file only after the Developer ID profile for
+	     ch.marvinvr.mybrowser includes com.apple.developer.web-browser.public-key-credential
+	     and that profile is embedded at Contents/embedded.provisionprofile.
+	     Without the profile the process is SIGKILL (exit 137) before main. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.developer.web-browser.public-key-credential</key>
+	<true/>
+</dict>
+</plist>

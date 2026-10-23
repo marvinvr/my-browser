@@ -86,8 +86,12 @@ final class TabWebDelegate: NSObject, WKUIDelegate, WKNavigationDelegate {
         adopt(download, webView: webView)
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        tab?.fetchFaviconIfNeeded()
+    /// WebKit calls this on the main thread from the run loop, sometimes while a MainActor
+    /// task is suspended (extension load). A MainActor method then fails its executor check.
+    nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Task { @MainActor in
+            self.tab?.fetchFaviconIfNeeded()
+        }
     }
 
     private func adopt(_ download: WKDownload, webView: WKWebView) {

@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 
 /// Settings scene (⌘,). General holds the search engine, tab archive, and iCloud Sync; Appearance holds the address bar and Dock icon; Extensions holds installed web extensions.
@@ -11,7 +12,7 @@ struct SettingsView: View {
             ExtensionsSettingsView()
                 .tabItem { Label("Extensions", systemImage: "puzzlepiece.extension") }
         }
-        .frame(width: 520, height: 560)
+        .frame(width: 560, height: 560)
     }
 }
 
@@ -20,6 +21,7 @@ private struct GeneralSettingsView: View {
     @AppStorage(TabArchiveInterval.defaultsKey) private var archiveAfter: TabArchiveInterval = .twentyFourHours
     @AppStorage(PictureInPictureSettings.autoDefaultsKey) private var autoPictureInPicture = true
     @AppStorage(SyncController.enabledDefaultsKey) private var iCloudSyncEnabled = false
+    @Environment(PasskeyBroker.self) private var passkeys
 
     private var iCloudSync: Binding<Bool> {
         Binding(
@@ -76,6 +78,19 @@ private struct GeneralSettingsView: View {
                     Text("Requires iCloud container — coming soon")
                 }
             }
+
+            Section {
+                LabeledContent("Passkeys", value: passkeys.statusLabel)
+                if passkeys.access != .authorized {
+                    Button("Allow Passkeys…") { passkeys.requestAccess() }
+                }
+                Button("AutoFill Providers…") {
+                    ASSettingsHelper.openCredentialProviderAppSettings { _ in }
+                }
+            } footer: {
+                Text(passkeys.footer)
+            }
+            .onAppear { passkeys.refresh() }
         }
         .formStyle(.grouped)
     }

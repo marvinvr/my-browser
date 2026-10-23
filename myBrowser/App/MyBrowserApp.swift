@@ -10,6 +10,7 @@ struct MyBrowserApp: App {
             MainWindowView()
                 .environment(appDelegate.model)
                 .environment(appDelegate.extensions)
+                .environment(appDelegate.passkeys)
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
@@ -19,6 +20,7 @@ struct MyBrowserApp: App {
             SettingsView()
                 .environment(appDelegate.model)
                 .environment(appDelegate.extensions)
+                .environment(appDelegate.passkeys)
         }
     }
 }
@@ -30,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model: BrowserModel
     let sync: SyncController
     let extensions: ExtensionManager
+    let passkeys = PasskeyBroker()
     let updater = Updater()
 
     override init() {
@@ -53,12 +56,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppIconApplier.apply()
         updater.start()
         model.startArchiveMonitoring()
+        passkeys.requestAccessIfEntitled()
         #if DEBUG
         applyDebugAppearance()
         applyDebugAddressBar()
         applyDebugScene()
         if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_COMMAND_BAR"] == "1" {
             model.showCommandBar(.newTab)
+        }
+        if let raw = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_OPEN_URL"],
+           let url = URL(string: raw),
+           let scheme = url.scheme?.lowercased(),
+           scheme == "http" || scheme == "https" {
+            model.openInCurrentTab(url)
         }
         if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SETTINGS"] == "1" {
             openSettingsForDebug()
@@ -79,7 +89,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         installDebugExtensionsIfRequested()
+        // On the main thread, not a later MainActor task: distributed-notification observers
+        // only fire on the thread that registered them.
         DebugSnapshot.install(model: model)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            Task { @MainActor in
+                await self.extensions.loadEnabledExtensions()
+                DebugSnapshot.reregister()
+            }
+        }
         installDebugToggle()
         #endif
     }
@@ -105,7 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     await extensions.installFromChromeWebStore(storeID)
                 }
                 if let filePath, !filePath.isEmpty {
-                    await extensions.install(from: URL(fileURLWithPath: filePath))
+                    let preferred = env["MYBROWSER_DEBUG_EXTENSION_ID"]
+                    await extensions.install(from: URL(fileURLWithPath: filePath), preferredID: preferred)
                 }
                 if wantsPopup {
                     try? await Task.sleep(for: .milliseconds(500))
@@ -363,8 +382,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         restoreDebugAddressBar()
         #endif
+        extensions.stopNativeHosts()
         extensions.save()
         model.saveState()
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let pages = urls.filter { url in
+            guard let scheme = url.scheme?.lowercased() else { return false }
+            return scheme == "http" || scheme == "https"
+        }
+        guard !pages.isEmpty else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        for url in pages.dropLast() {
+            model.openInNewTab(url, inBackground: true)
+        }
+        if let last = pages.last {
+            model.openInNewTab(last)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

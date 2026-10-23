@@ -13,24 +13,112 @@ enum DebugSnapshot {
     static func install(model: BrowserModel) {
         attachedModel = model
         guard relays.isEmpty else { return }
+        register(model: model)
+    }
+
+    /// Extension load stops distributed notifications from arriving. Register again afterwards.
+    static func reregister() {
+        let center = DistributedNotificationCenter.default()
+        for relay in relays {
+            center.removeObserver(relay)
+        }
+        relays.removeAll()
+        guard let model = attachedModel else { return }
+        register(model: model)
+    }
+
+    private static func register(model: BrowserModel) {
+        _ = model
         // `.capture` is the same shot as `.snapshot`. Snapshot scripts can use it when another
         // debug build is already listening for `.snapshot`.
         // A private channel so a second debug build does not write this process's window
         // over the requested path. Either env var is accepted.
-        var names = ["ch.marvinvr.mybrowser.debug.snapshot", "ch.marvinvr.mybrowser.debug.capture"]
+        // A private channel opts out of the shared names. Other debug builds post those
+        // during launch, and handling one inside didFinishLaunching crashes SwiftUI.
+        let privateChannel = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SNAPSHOT_CHANNEL"]
+        let privateName = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_SNAPSHOT_NAME"]
+        var names: [String] = []
+        if (privateChannel == nil || privateChannel?.isEmpty == true),
+           (privateName == nil || privateName?.isEmpty == true) {
+            names = ["ch.marvinvr.mybrowser.debug.snapshot", "ch.marvinvr.mybrowser.debug.capture"]
+        }
         for key in ["MYBROWSER_DEBUG_SNAPSHOT_NAME", "MYBROWSER_DEBUG_SNAPSHOT_CHANNEL"] {
-            if let extra = ProcessInfo.processInfo.environment[key], !extra.isEmpty {
+            if let extra = ProcessInfo.processInfo.environment[key], !extra.isEmpty, !names.contains(extra) {
                 names.append(extra)
             }
         }
         for name in names {
             relays.append(observe(name) { note in
-                let path = note.userInfo?["path"] as? String
-                let window = note.userInfo?["window"] as? String
+                let info = note.userInfo
+                if let ack = info?["ack"] as? String {
+                    Self.writeDebug("ok", to: ack)
+                }
+                if let script = info?["script"] as? String, let path = info?["path"] as? String {
+                    Self.writeDebug("pending", to: path)
+                    let popup = (info?["popupScript"] as? String) == "1"
+                    Task { @MainActor in
+                        let result: String
+                        let webView = popup
+                            ? DebugSnapshot.extensionPopupWebView()
+                            : attachedModel?.selectedTab?.webView
+                        if let webView {
+                            result = await DebugSnapshot.evalOrTimeout(webView, script: script)
+                        } else {
+                            result = popup ? "error: no popup" : "error: no web view"
+                        }
+                        Self.writeDebug(result, to: path)
+                    }
+                    return
+                }
+                if let raw = info?["url"] as? String, let url = URL(string: raw),
+                   let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+                    Task { @MainActor in
+                        attachedModel?.openInCurrentTab(url)
+                    }
+                    return
+                }
+                if info?["popup"] as? String == "1" {
+                    let extensionID = (info?["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                        ?? "aeblfdkhhhdcdjpifhhbdiojplfjncoa"
+                    Task { @MainActor in
+                        guard let model = attachedModel, let profileID = model.selectedSpace?.profileID else { return }
+                        model.extensions?.performAction(extensionID: extensionID, profileID: profileID, tab: model.selectedTab)
+                    }
+                    return
+                }
+                if info?["settings"] as? String == "1" {
+                    Task { @MainActor in
+                        NSApp.activate(ignoringOtherApps: true)
+                        if let item = Self.menuItem(containing: "Settings") ?? Self.menuItem(containing: "Preferences") {
+                            NSApp.sendAction(item.action ?? Selector(("showSettingsWindow:")), to: item.target, from: item)
+                        } else {
+                            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                        }
+                    }
+                    return
+                }
+                if let mode = (info?["appearance"] as? String)?.lowercased() {
+                    Task { @MainActor in
+                        switch mode {
+                        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+                        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+                        default: break
+                        }
+                        attachedModel?.selectedTab?.refreshThemeColor()
+                    }
+                    return
+                }
+                let path = (info?["path"] as? String).map(Self.debugPath)
+                let window = info?["window"] as? String
                 Task { @MainActor in
                     await DebugSnapshot.capture(to: path, preferring: window)
                 }
             })
+        }
+        if let library = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_LIBRARY"], !library.isEmpty {
+            let note = names.joined(separator: "\n") + "\n"
+            let url = URL(fileURLWithPath: library, isDirectory: true).appendingPathComponent("debug-channels.txt")
+            try? note.write(to: url, atomically: true, encoding: .utf8)
         }
         relays.append(observe("ch.marvinvr.mybrowser.debug.open") { note in
             guard Self.addressedToThisProcess(note) else { return }
@@ -90,7 +178,7 @@ enum DebugSnapshot {
         relays.append(observe("ch.marvinvr.mybrowser.debug.eval") { note in
             guard Self.addressedToThisProcess(note) else { return }
             let script = note.userInfo?["script"] as? String
-            let path = note.userInfo?["path"] as? String
+            let path = (note.userInfo?["path"] as? String).map(Self.debugPath)
             Task { @MainActor in
                 guard let script, let path, path.hasPrefix("/") else { return }
                 let result: String
@@ -279,6 +367,69 @@ enum DebugSnapshot {
         return DebugNoteRouting.accepts(noteChannel: note.userInfo?["channel"] as? String, processChannels: channels)
     }
 
+    private static func menuItem(containing needle: String) -> NSMenuItem? {
+        func walk(_ menu: NSMenu?) -> NSMenuItem? {
+            for item in menu?.items ?? [] {
+                if item.title.localizedCaseInsensitiveContains(needle) { return item }
+                if let found = walk(item.submenu) { return found }
+            }
+            return nil
+        }
+        return walk(NSApp.mainMenu)
+    }
+
+    /// `{pid}` in a debug path becomes this process id, so several debug builds do not share one file.
+    nonisolated private static func debugPath(_ path: String) -> String {
+        path.replacingOccurrences(of: "{pid}", with: String(ProcessInfo.processInfo.processIdentifier))
+    }
+
+    nonisolated private static func writeDebug(_ text: String, to path: String) {
+        let path = debugPath(path)
+        guard path.hasPrefix("/") else { return }
+        try? Data(text.utf8).write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    /// Page JavaScript can stall when an extension content script is busy. Always return.
+    @MainActor
+    private static func evalOrTimeout(_ webView: WKWebView, script: String) async -> String {
+        let once = OnceBox()
+        return await withCheckedContinuation { continuation in
+            Task { @MainActor in
+                let result: String
+                do {
+                    let value = try await webView.evaluateJavaScript(script)
+                    result = String(describing: value ?? "nil")
+                } catch {
+                    result = "error: \(error.localizedDescription)"
+                }
+                if once.claim() { continuation.resume(returning: result) }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                if once.claim() { continuation.resume(returning: "error: timed out") }
+            }
+        }
+    }
+
+    /// `takeSnapshot` can stall on a heavy extension page. Skip that web view and keep the chrome.
+    @MainActor
+    private static func snapshotOrTimeout(_ webView: WKWebView) async -> NSImage? {
+        let once = OnceBox()
+        let box = SnapshotImageBox()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            Task { @MainActor in
+                let configuration = WKSnapshotConfiguration()
+                box.image = try? await webView.takeSnapshot(configuration: configuration)
+                if once.claim() { continuation.resume() }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 6_000_000_000)
+                if once.claim() { continuation.resume() }
+            }
+        }
+        return box.image
+    }
+
     /// Selector observer with `.deliverImmediately`, so `userInfo` survives when the app is not frontmost.
     private static func observe(
         _ name: String,
@@ -388,8 +539,7 @@ enum DebugSnapshot {
         // cacheDisplay leaves WKWebView blank, including an extension popup's page.
         var pages: [(NSImage, NSRect)] = []
         for webView in webViews(in: content) where webView.bounds.width > 1 && webView.bounds.height > 1 {
-            let configuration = WKSnapshotConfiguration()
-            guard let shot = try? await webView.takeSnapshot(configuration: configuration) else { continue }
+            guard let shot = await snapshotOrTimeout(webView) else { continue }
             let frame = webView.convert(webView.bounds, to: content)
             pages.append((shot, imageRect(for: frame, in: content)))
         }
@@ -476,6 +626,22 @@ enum DebugSnapshot {
 
         guard let data = output.representation(using: .png, properties: [:]) else { return }
         try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    /// The extension action popover. Its page is not the selected tab.
+    private static func extensionPopupWebView() -> WKWebView? {
+        for window in NSApp.windows {
+            let identifier = window.identifier?.rawValue.lowercased() ?? ""
+            let title = window.title.lowercased()
+            let popup = identifier.contains("extension-popup")
+                || title.contains("extension popup")
+                || title == "1password"
+            guard popup, let content = window.contentView else { continue }
+            if let webView = webViews(in: content).first(where: { $0.bounds.width > 1 && $0.bounds.height > 1 }) {
+                return webView
+            }
+        }
+        return nil
     }
 
     private static func webViews(in view: NSView) -> [WKWebView] {
@@ -803,7 +969,7 @@ enum DebugSnapshot {
             if hint == "settings" {
                 let settings = candidates.filter { window in
                     let area = window.frame.width * window.frame.height
-                    return window.frame.width < 700 && window.frame.height < 600 && area > 40_000
+                    return window.frame.width < 800 && window.frame.height < 780 && area > 40_000
                 }
                 if let match = settings.min(by: { $0.frame.width < $1.frame.width }) {
                     return match
@@ -1179,6 +1345,25 @@ nonisolated private final class PopupShot: NSObject, @unchecked Sendable {
             DispatchQueue.main.sync(execute: work)
         }
     }
+}
+
+/// One resume across the page call and its deadline. Notification delivery is not the main actor.
+private nonisolated final class OnceBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
+    }
+}
+
+@MainActor
+private final class SnapshotImageBox {
+    var image: NSImage?
 }
 
 /// Holds the distributed-notification callback. Not main-actor isolated: delivery can hop afterwards.

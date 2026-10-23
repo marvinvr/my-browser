@@ -35,11 +35,28 @@ final class ExtensionControllerBridge: NSObject, WKWebExtensionControllerDelegat
             completionHandler(nil, ExtensionInstallError.webKit("Private windows aren't available."))
             return
         }
+        if configuration.windowType == .popup,
+           let url = configuration.tabURLs.first,
+           BrowserTab.isExtensionPageURL(url),
+           let webConfiguration = extensionContext.webViewConfiguration {
+            let popup = manager.presentDetachedPopup(url: url, configuration: webConfiguration, frame: configuration.frame)
+            completionHandler(popup, nil)
+            return
+        }
         if configuration.tabURLs.isEmpty {
             _ = model.openTabForExtension(url: nil, active: configuration.shouldBeFocused)
         } else {
             for url in configuration.tabURLs {
-                _ = model.openTabForExtension(url: url, active: false)
+                if BrowserTab.isExtensionPageURL(url), let webConfiguration = extensionContext.webViewConfiguration {
+                    _ = model.presentPopup(
+                        configuration: webConfiguration,
+                        url: url,
+                        spaceID: model.selectedSpaceID,
+                        selectTab: configuration.shouldBeFocused
+                    )
+                } else {
+                    _ = model.openTabForExtension(url: url, active: false)
+                }
             }
             if configuration.shouldBeFocused {
                 NSApp.activate(ignoringOtherApps: true)
@@ -60,13 +77,19 @@ final class ExtensionControllerBridge: NSObject, WKWebExtensionControllerDelegat
         }
         let parent = configuration.parentTab as? BrowserTab
         if let url = configuration.url,
-           controller.extensionContext(for: url) != nil,
+           BrowserTab.isExtensionPageURL(url),
            let webConfiguration = extensionContext.webViewConfiguration {
-            _ = model.presentPopup(configuration: webConfiguration, url: url, spaceID: model.selectedSpaceID)
-            if configuration.shouldBePinned, let tab = model.selectedTab {
+            let webView = model.presentPopup(
+                configuration: webConfiguration,
+                url: url,
+                spaceID: model.selectedSpaceID,
+                selectTab: configuration.shouldBeActive
+            )
+            let tab = model.tabs.values.first { $0.webView === webView }
+            if configuration.shouldBePinned, let tab {
                 model.pin(tab.id)
             }
-            completionHandler(model.selectedTab, nil)
+            completionHandler(tab ?? model.selectedTab, nil)
             return
         }
         guard let tab = model.openTabForExtension(url: configuration.url, active: configuration.shouldBeActive || configuration.shouldBePinned, parent: parent) else {
@@ -167,9 +190,76 @@ final class ExtensionControllerBridge: NSObject, WKWebExtensionControllerDelegat
         completionHandler(nil)
     }
 
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        sendMessage message: Any,
+        toApplicationWithIdentifier applicationIdentifier: String?,
+        for extensionContext: WKWebExtensionContext
+    ) async throws -> Any? {
+        guard let manager else {
+            throw ExtensionInstallError.webKit("No window is open.")
+        }
+        let messaging = manager.nativeMessaging
+        return try await withCheckedThrowingContinuation { continuation in
+            let box = NativeJSONContinuation(continuation)
+            messaging.send(
+                message: message,
+                identifier: applicationIdentifier,
+                context: extensionContext,
+                reply: { box.resume($0) }
+            )
+        }
+    }
+
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        connectUsing port: WKWebExtension.MessagePort,
+        for extensionContext: WKWebExtensionContext,
+        completionHandler: @escaping ((any Error)?) -> Void
+    ) {
+        guard let manager else {
+            completionHandler(ExtensionInstallError.webKit("No window is open."))
+            return
+        }
+        manager.nativeMessaging.connect(port: port, context: extensionContext, completion: completionHandler)
+    }
+
     private static func hostPattern(for url: URL) -> String? {
         guard let host = url.host, !host.isEmpty else { return url.absoluteString }
         let scheme = url.scheme ?? "*"
         return "\(scheme)://\(host)/*"
+    }
+}
+
+/// Resumes the WebKit reply off the main actor. `Any` JSON is not `Sendable`, so it is
+/// decoded here and handed to the continuation once.
+nonisolated private final class NativeJSONContinuation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Any?, Error>?
+
+    init(_ continuation: CheckedContinuation<Any?, Error>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ result: Result<Data, NativeMessagingError>) {
+        let object: Any?
+        let failure: Error?
+        switch result {
+        case .success(let data):
+            object = try? JSONSerialization.jsonObject(with: data)
+            failure = object == nil ? NativeMessagingError.invalidMessage : nil
+        case .failure(let error):
+            object = nil
+            failure = error
+        }
+        lock.lock()
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        if let failure {
+            continuation?.resume(throwing: failure)
+        } else {
+            continuation?.resume(returning: object)
+        }
     }
 }

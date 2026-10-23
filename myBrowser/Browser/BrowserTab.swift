@@ -54,6 +54,8 @@ final class BrowserTab: NSObject, Identifiable {
     @ObservationIgnored var wantsHTTPSFirst = false
     @ObservationIgnored private var navigationGeneration = 0
     @ObservationIgnored private var httpsFirstAttempt: HTTPSFirstAttempt?
+    /// The first navigation waits one turn so `didOpenTab` can register content scripts, including all frames.
+    @ObservationIgnored private var initialLoadPending = false
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var metaTheme: ThemeSample?
     @ObservationIgnored private var underPageTheme: ThemeSample?
@@ -104,7 +106,17 @@ final class BrowserTab: NSObject, Identifiable {
 
         let webView = WKWebView(frame: .zero, configuration: profiles.configuration(for: profileID))
         attach(webView)
+        initialLoadPending = true
+        // `select` calls `didOpenTab` before this task runs, so document_start scripts see the navigation.
+        Task { @MainActor [weak self] in
+            self?.performInitialLoad()
+        }
+        useCachedFavicon()
+    }
 
+    private func performInitialLoad() {
+        guard initialLoadPending, let webView else { return }
+        initialLoadPending = false
         if let pendingURL {
             let httpsFirst = wantsHTTPSFirst
             wantsHTTPSFirst = false
@@ -118,8 +130,6 @@ final class BrowserTab: NSObject, Identifiable {
             wantsHTTPSFirst = false
             beginNavigation(initialURL, in: webView, httpsFirst: httpsFirst)
         }
-
-        useCachedFavicon()
     }
 
     /// WebKit ignores `interactionState` until the view is in a window and has a real frame.
@@ -211,6 +221,7 @@ final class BrowserTab: NSObject, Identifiable {
         pendingURL = url
         storedInteractionState = nil
         wantsHTTPSFirst = httpsFirst
+        initialLoadPending = false
         if self.url != url {
             self.url = url
             onStateChange?(self)
@@ -381,6 +392,14 @@ final class BrowserTab: NSObject, Identifiable {
     static func isPageURL(_ url: URL) -> Bool {
         switch url.scheme?.lowercased() {
         case "http", "https", "file": true
+        default: false
+        }
+    }
+
+    /// Extension documents (`app.html`, a detached popup). Not a web page, and not loaded by `isPageURL`.
+    static func isExtensionPageURL(_ url: URL) -> Bool {
+        switch url.scheme?.lowercased() {
+        case "webkit-extension", "chrome-extension": true
         default: false
         }
     }

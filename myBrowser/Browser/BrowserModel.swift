@@ -591,30 +591,38 @@ final class BrowserModel {
         linkCopyGeneration &+= 1
     }
 
-    /// window.open / target=_blank. The new web view uses `configuration` with the 60fps page cap off, is inserted at the top of `.tabs`, and is selected.
+    /// window.open / target=_blank, and an extension page opened as a tab.
+    /// The new web view uses `configuration` with the 60fps page cap off and is inserted at the top of `.tabs`.
+    /// An extension URL is loaded here. A normal page URL is left for WebKit, which navigates the view it asked for.
     @discardableResult
-    func presentPopup(configuration: WKWebViewConfiguration, url: URL?, spaceID: UUID) -> WKWebView? {
+    func presentPopup(configuration: WKWebViewConfiguration, url: URL?, spaceID: UUID, selectTab: Bool = true) -> WKWebView? {
         guard library.space(spaceID) != nil else { return nil }
         configuration.upgradeKnownHostsToHTTPS = false
         configuration.defaultWebpagePreferences.preferredHTTPSNavigationPolicy = .keepAsRequested
         PictureInPictureWebKit.enable(configuration.preferences)
         PageRenderingRate.apply(to: configuration.preferences)
         let pageURL = url.flatMap { BrowserTab.isPageURL($0) ? $0 : nil }
-        let title = pageURL.map { Self.fallbackTitle(for: $0) } ?? "New Tab"
+        let extensionURL = url.flatMap { BrowserTab.isExtensionPageURL($0) ? $0 : nil }
+        let storedURL = pageURL ?? extensionURL
+        let title = storedURL.map { Self.fallbackTitle(for: $0) } ?? "New Tab"
         let item = library.addItem(
             spaceID: spaceID,
             section: .tabs,
             kind: .site,
             title: title,
-            url: pageURL,
+            url: storedURL,
             at: .start
         )
         let profileID = library.space(spaceID)?.profileID ?? spaceID
         let webView = WKWebView(frame: .zero, configuration: configuration)
-        let tab = BrowserTab(id: item.id, profileID: profileID, title: title, url: pageURL, adopting: webView)
+        let tab = BrowserTab(id: item.id, profileID: profileID, title: title, url: storedURL, adopting: webView)
         wire(tab, spaceID: spaceID)
         tabs[item.id] = tab
         extensions?.tabOpened(tab)
+        if let extensionURL {
+            webView.load(URLRequest(url: extensionURL))
+        }
+        guard selectTab else { return tab.webView }
         if selectedSpaceID != spaceID {
             adoptSpace(spaceID)
         }
