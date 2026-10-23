@@ -98,9 +98,8 @@ private struct FolderRow: View {
         let leading = SidebarDropGeometry.rowLeading + CGFloat(depth) * SidebarDropGeometry.indent
 
         let label = HStack(spacing: 8) {
-            // No open-folder symbol. The fill is the expanded state and magic-replaces
-            // with the outline on the same spring as the rows below. The frame stays put.
-            Image(systemName: item.isExpanded ? "folder.fill" : "folder")
+            // Custom outline, same weight as `folder`, with the front flap open.
+            Image(systemName: item.isExpanded ? "folder.open" : "folder")
                 .font(.system(size: SidebarMetrics.folderSymbol))
                 .foregroundStyle(.secondary)
                 // Replace runs on its own timeline. Double speed finishes with the 0.2s spring.
