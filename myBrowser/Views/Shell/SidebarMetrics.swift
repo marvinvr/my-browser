@@ -72,8 +72,11 @@ nonisolated enum SidebarMetrics {
     /// Vertical centre of the traffic lights and the toolbar controls, measured from the top of the window.
     /// Shared by both address-bar positions so collapsing the sidebar does not move the lights.
     static let chromeCenterFromTop: CGFloat = contentInset + (toolbarHeight - progressHeight) / 2
-    /// Leading room the collapsed toolbar keeps clear for the traffic lights.
-    static let minimumTrafficClearance: CGFloat = 74
+    /// How far the traffic lights sit to the right of AppKit's titlebar position.
+    /// A full-height sidebar wants the same inset Arc and Safari use, not the flush system default.
+    static let trafficLightShiftX: CGFloat = 6
+    /// Leading room the collapsed toolbar keeps clear for the traffic lights, including `trafficLightShiftX`.
+    static let minimumTrafficClearance: CGFloat = 80
 }
 
 /// Window coordinates of the traffic lights. `WindowConfigurator` keeps their centre on `chromeCenterFromTop`.

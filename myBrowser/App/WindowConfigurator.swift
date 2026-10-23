@@ -2,9 +2,9 @@ import AppKit
 import SwiftUI
 
 /// Grabs the hosting window once attached and applies the borderless full-size titlebar.
-/// Moves the traffic lights so their vertical centre matches the toolbar, and republishes
-/// their geometry. AppKit resets the buttons on resize and when leaving fullscreen, so the
-/// position is applied again after those.
+/// Moves the traffic lights right of AppKit's titlebar slot and onto the toolbar's vertical
+/// centre, then republishes their geometry. AppKit resets the buttons on resize and when
+/// leaving fullscreen, so the position is applied again after those.
 struct WindowConfigurator: NSViewRepresentable {
     @Binding var anchor: TrafficLightAnchor
 
@@ -30,6 +30,8 @@ struct WindowConfigurator: NSViewRepresentable {
         private var positionScheduled = false
         /// True while fullscreen is transitioning or active. The system owns the buttons then.
         private var suspendPositioning = false
+        /// AppKit's leading edge for each light, in window coordinates, before `trafficLightShiftX`.
+        private var systemMinX: [NSWindow.ButtonType: CGFloat] = [:]
 
         private static let observed: [Notification.Name] = [
             NSWindow.didResizeNotification,
@@ -117,6 +119,7 @@ struct WindowConfigurator: NSViewRepresentable {
             guard !suspendPositioning, let window, let content = window.contentView else { return }
             guard !window.styleMask.contains(.fullScreen), content.bounds.height > 1 else { return }
             let kinds: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+            let shift = SidebarMetrics.trafficLightShiftX
             for kind in kinds {
                 guard let button = window.standardWindowButton(kind),
                       let container = button.superview else { continue }
@@ -125,14 +128,28 @@ struct WindowConfigurator: NSViewRepresentable {
                 let contentInWindow = content.convert(content.bounds, to: nil)
                 let desiredCenter = contentInWindow.maxY - SidebarMetrics.chromeCenterFromTop
                 let desiredOriginY = desiredCenter - current.height / 2
-                let delta = desiredOriginY - current.minY
-                guard abs(delta) > 0.5 else { continue }
-                // Flipped containers grow downward, so the window-space delta flips sign.
-                let applied = container.isFlipped ? -delta : delta
+                let desiredOriginX = systemLeading(kind, currentMinX: current.minX) + shift
+                let deltaX = desiredOriginX - current.minX
+                let deltaY = desiredOriginY - current.minY
+                guard abs(deltaX) > 0.5 || abs(deltaY) > 0.5 else { continue }
+                // Flipped containers grow downward, so the window-space delta flips sign. X does not.
                 var origin = button.frame.origin
-                origin.y += applied
+                origin.x += deltaX
+                origin.y += container.isFlipped ? -deltaY : deltaY
                 button.setFrameOrigin(origin)
             }
+        }
+
+        /// The system slot, not the slot we already applied. Resize and fullscreen exit put the
+        /// button back on the system edge; a later pass must not treat that as a new origin and drift.
+        /// A position to the right of the first system edge is our inset. Only a new edge further
+        /// left replaces it.
+        private func systemLeading(_ kind: NSWindow.ButtonType, currentMinX: CGFloat) -> CGFloat {
+            if let known = systemMinX[kind], currentMinX >= known - 1 {
+                return known
+            }
+            systemMinX[kind] = currentMinX
+            return currentMinX
         }
 
         private func publishAnchor() {
