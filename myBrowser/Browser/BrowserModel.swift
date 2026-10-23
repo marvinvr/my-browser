@@ -25,6 +25,9 @@ final class BrowserModel {
 
     /// Live tabs by item id. Missing means the item is not loaded.
     private(set) var tabs: [UUID: BrowserTab] = [:]
+    /// Splits this window has already shown. The first show loads every pane.
+    /// A later focus change loads the focused pane only.
+    @ObservationIgnored private var presentedSplitIDs: Set<UUID> = []
     enum SpaceSwitchDirection: Equatable {
         case previous
         case next
@@ -36,6 +39,8 @@ final class BrowserModel {
     private(set) var lastSpaceSwitchDirection: SpaceSwitchDirection = .next
     /// `nil` = command bar hidden.
     var commandBarMode: CommandBarMode?
+    /// Bumped when the bar should open fresh, even if `commandBarMode` did not change.
+    private(set) var commandBarGeneration = 0
     /// File → Import… presents the import sheet from the main window.
     var isPresentingImport = false
 
@@ -62,7 +67,19 @@ final class BrowserModel {
 
     var selectedSpace: Space? { library.space(selectedSpaceID) }
     var selectedItemID: UUID? { session.selectedItemBySpace[selectedSpaceID] }
-    var selectedTab: BrowserTab? { selectedItemID.flatMap { tabs[$0] } }
+    /// The site the toolbar drives. When the selection is a split, this is the focused pane.
+    var selectedTab: BrowserTab? {
+        guard let id = selectedItemID, let item = library.item(id) else { return nil }
+        switch item.kind {
+        case .site:
+            return tabs[id]
+        case .split:
+            guard let focus = resolvedFocus(in: id) else { return nil }
+            return tabs[focus]
+        case .folder:
+            return nil
+        }
+    }
     /// Row the keyboard acts on. A folder can be focused while the open tab stays loaded.
     var sidebarFocusID: UUID?
     /// Site rows read this instead of the library, so a folder toggle does not redraw every row.
@@ -76,7 +93,8 @@ final class BrowserModel {
     /// Bumped when the current page URL is copied, so address fields can flash a checkmark.
     private(set) var linkCopyGeneration = 0
 
-    /// Sites in sidebar order for the current space: favorites, pinned (depth-first, expanded folders only), tabs.
+    /// Sites in sidebar order: favorites, pinned (depth-first, expanded folders only), tabs.
+    /// A split is replaced by its panes, so each page is one stop and the container is not a second one.
     var navigableItems: [SidebarItem] {
         navigableItems(in: selectedSpaceID)
     }
@@ -125,8 +143,19 @@ final class BrowserModel {
     // MARK: Tabs
 
     /// Selects an item and creates its live tab if needed. The web view itself is created by `BrowserTab.loadIfNeeded`.
+    ///
+    /// A split selects that row and shows its panes. A member selects the split and focuses that pane.
     func select(_ itemID: UUID) {
-        guard let item = library.item(itemID), item.kind == .site else { return }
+        guard let item = library.item(itemID) else { return }
+        if item.isSplit {
+            selectSplit(item, focus: nil)
+            return
+        }
+        if item.kind == .site, let split = library.splitContainer(of: itemID) {
+            selectSplit(split, focus: itemID)
+            return
+        }
+        guard item.kind == .site else { return }
         setSidebarFocus(itemID)
         let previous = selectedTab
         if selectedSpaceID != item.spaceID {
@@ -147,17 +176,59 @@ final class BrowserModel {
         refreshNavigationState()
     }
 
+    /// Selects a split. `focus` nil keeps the stored pane, or the first pane when that id is gone.
+    /// The first time the split is shown, every pane loads. A focus change loads the focused pane
+    /// and leaves an unloaded sibling alone.
+    private func selectSplit(_ split: SidebarItem, focus requested: UUID?) {
+        let members = library.splitMembers(of: split.id)
+        guard !members.isEmpty else { return }
+        let focus: UUID
+        if let requested, members.contains(where: { $0.id == requested }) {
+            focus = requested
+        } else if let stored = session.focusedPaneBySplit[split.id], members.contains(where: { $0.id == stored }) {
+            focus = stored
+        } else {
+            focus = members[0].id
+        }
+        let alreadySelected = session.selectedItemBySpace[split.spaceID] == split.id
+        let previous = selectedTab
+        session.focusedPaneBySplit[split.id] = focus
+        setSidebarFocus(split.id)
+        if selectedSpaceID != split.spaceID {
+            adoptSpace(split.spaceID)
+        }
+        if !alreadySelected {
+            session.selectedItemBySpace[split.spaceID] = split.id
+        }
+        // Relaunch already has the split selected and an empty presented set, so that still loads every pane.
+        // Closing a pinned pane while the split stays selected does not, so the closed pane stays unloaded.
+        let firstShow = !alreadySelected || !presentedSplitIDs.contains(split.id)
+        presentedSplitIDs.insert(split.id)
+        for member in members {
+            let keepLoaded = tabs[member.id]?.isLoaded == true
+            guard member.id == focus || keepLoaded || firstShow else { continue }
+            let tab = ensureTab(for: member)
+            let created = !tab.isLoaded
+            tab.loadIfNeeded(using: profiles)
+            if created { extensions?.tabOpened(tab) }
+        }
+        if let focused = tabs[focus], previous?.id != focused.id {
+            extensions?.tabActivated(focused, previous: previous)
+        }
+        refreshNavigationState()
+    }
+
     /// Opens `url` in a new `.tabs` item at the top of the current space. Background leaves the selection alone.
     func openInNewTab(_ url: URL, inBackground: Bool = false) {
         guard let spaceID = selectedSpace?.id else { return }
         openInNewTab(url, spaceID: spaceID, inBackground: inBackground)
     }
 
-    /// Loads `url` in the selected tab, or a new tab when nothing is selected.
+    /// Loads `url` in the selected tab (the focused pane, when a split is selected), or a new tab.
     func openInCurrentTab(_ url: URL) {
-        if let id = selectedItemID, library.item(id)?.kind == .site {
-            select(id)
-            tabs[id]?.load(url)
+        if let tab = selectedTab {
+            select(tab.id)
+            tab.load(url)
         } else {
             openInNewTab(url)
         }
@@ -170,7 +241,17 @@ final class BrowserModel {
     }
 
     func close(_ itemID: UUID) {
-        guard let item = library.item(itemID), item.kind == .site else { return }
+        guard let item = library.item(itemID) else { return }
+        if item.isSplit {
+            guard let focus = resolvedFocus(in: item.id) else { return }
+            close(focus)
+            return
+        }
+        if item.kind == .site, let split = library.splitContainer(of: itemID) {
+            closeSplitMember(item, split: split)
+            return
+        }
+        guard item.kind == .site else { return }
         let spaceID = item.spaceID
         let wasSelected = session.selectedItemBySpace[spaceID] == itemID
         let order = navigableItems(in: spaceID)
@@ -204,26 +285,122 @@ final class BrowserModel {
         }
     }
 
+    /// Close one pane. A tabs pane is removed and remembered for reopen. A pinned pane unloads and stays.
+    /// Removing a tabs pane dissolves the split when one member would be left.
+    private func closeSplitMember(_ item: SidebarItem, split: SidebarItem) {
+        let members = library.splitMembers(of: split.id)
+        let wasFocused = resolvedFocus(in: split.id) == item.id
+        let splitSelected = session.selectedItemBySpace[split.spaceID] == split.id
+        let state = capturedState(for: item.id)
+
+        if item.section == .tabs {
+            var snapshot = item
+            snapshot.parentID = nil
+            snapshot.splitFraction = nil
+            if let tab = tabs[item.id] {
+                if let liveURL = tab.url { snapshot.url = liveURL }
+                if !tab.title.isEmpty { snapshot.title = tab.title }
+            }
+            session.closedTabs.append(SessionStore.ClosedTab(item: snapshot, interactionState: state))
+            if session.closedTabs.count > Self.closedTabLimit {
+                session.closedTabs.removeFirst(session.closedTabs.count - Self.closedTabLimit)
+            }
+            session.interactionStates[item.id] = nil
+            library.deleteItem(item.id)
+        } else if let state {
+            session.interactionStates[item.id] = state
+        }
+        unloadTab(item.id)
+        if sidebarFocusID == item.id { setSidebarFocus(split.id) }
+        noteSplitMemberRemoved(itemID: item.id, split: split, members: members, wasFocused: wasFocused, splitSelected: splitSelected)
+    }
+
+    /// Deletes one pane for good (no reopen entry) and dissolves the split at one member.
+    private func deleteSplitMember(_ item: SidebarItem, split: SidebarItem) {
+        let members = library.splitMembers(of: split.id)
+        let wasFocused = resolvedFocus(in: split.id) == item.id
+        let splitSelected = session.selectedItemBySpace[split.spaceID] == split.id
+        session.interactionStates[item.id] = nil
+        unloadTab(item.id)
+        if sidebarFocusID == item.id { setSidebarFocus(nil) }
+        library.deleteItem(item.id)
+        noteSplitMemberRemoved(itemID: item.id, split: split, members: members, wasFocused: wasFocused, splitSelected: splitSelected)
+    }
+
+    private func noteSplitMemberRemoved(
+        itemID: UUID,
+        split: SidebarItem,
+        members: [SidebarItem],
+        wasFocused: Bool,
+        splitSelected: Bool
+    ) {
+        let splitLive = library.item(split.id)?.isSplit == true
+        if splitLive {
+            if wasFocused, let next = neighbourMember(in: members, closing: itemID, remaining: library.splitMembers(of: split.id)) {
+                session.focusedPaneBySplit[split.id] = next.id
+            }
+            if splitSelected, split.spaceID == selectedSpaceID {
+                select(split.id)
+            }
+            return
+        }
+        session.focusedPaneBySplit[split.id] = nil
+        guard splitSelected else { return }
+        let survivor = members.first { $0.id != itemID && library.item($0.id) != nil }
+        if split.spaceID == selectedSpaceID {
+            if let survivor {
+                select(survivor.id)
+            } else {
+                session.selectedItemBySpace[split.spaceID] = nil
+                refreshNavigationState()
+            }
+        } else {
+            session.selectedItemBySpace[split.spaceID] = survivor?.id
+        }
+    }
+
+    /// The next remaining pane after `id`, else the previous one.
+    private func neighbourMember(in old: [SidebarItem], closing id: UUID, remaining: [SidebarItem]) -> SidebarItem? {
+        guard let index = old.firstIndex(where: { $0.id == id }) else { return remaining.first }
+        let contains: (SidebarItem) -> Bool = { candidate in remaining.contains { $0.id == candidate.id } }
+        if let next = old[(index + 1)...].first(where: contains) {
+            return remaining.first { $0.id == next.id }
+        }
+        if index > 0, let previous = old[..<index].last(where: contains) {
+            return remaining.first { $0.id == previous.id }
+        }
+        return remaining.first
+    }
+
     /// Removes an item for good. Unloads every site tab the deletion covers, moves the selection off those tabs, then deletes.
-    /// Folders take their descendants with them. Unlike `close`, this does not remember a `.tabs` item for reopen.
+    /// Folders take their descendants with them. A split takes its members (pinned: tombstones, tabs: hard-delete).
+    /// Unlike `close`, this does not remember a `.tabs` item for reopen.
     func delete(_ itemID: UUID) {
         guard let item = library.item(itemID) else { return }
+        if item.kind == .site, let split = library.splitContainer(of: itemID) {
+            deleteSplitMember(item, split: split)
+            return
+        }
         let spaceID = item.spaceID
+        let subtree = Set([item.id] + library.descendantIDs(of: item.id, spaceID: spaceID))
         let removed = Set(containedSiteIDs(item))
         let order = navigableItems(in: spaceID)
         let selected = session.selectedItemBySpace[spaceID]
-        let replacement = nextSelection(afterRemoving: removed, selected: selected, order: order)
+        let anchor = navigableAnchor(for: selected)
+        let replacement = nextSelection(afterRemoving: removed, selected: anchor, order: order)
 
         for id in removed {
             session.interactionStates[id] = nil
             unloadTab(id)
         }
-        if sidebarFocusID == itemID || sidebarFocusID.map(removed.contains) == true {
+        if let focus = sidebarFocusID, focus == itemID || subtree.contains(focus) || removed.contains(focus) {
             setSidebarFocus(nil)
         }
+        session.focusedPaneBySplit = session.focusedPaneBySplit.filter { !subtree.contains($0.key) }
         library.deleteItem(itemID)
 
-        guard let selected, removed.contains(selected) else { return }
+        let selectionHit = selected.map { subtree.contains($0) || removed.contains($0) } ?? false
+        guard selectionHit else { return }
         if let replacement {
             select(replacement)
         } else {
@@ -266,37 +443,91 @@ final class BrowserModel {
 
     // MARK: Pinning / folders
 
-    /// Moves a `.tabs` item to the end of `.pinned`. The URL stays the page that's open.
+    /// Moves a `.tabs` site or split to the end of `.pinned`. The URL stays the page that's open.
+    /// Pinning one pane pulls that site out of its split.
     func pin(_ itemID: UUID) {
-        guard let item = library.item(itemID), item.section == .tabs, item.kind == .site else { return }
+        guard let item = library.item(itemID), item.section == .tabs else { return }
+        if item.isSplit {
+            for member in library.splitMembers(of: item.id) {
+                if let live = tabs[member.id]?.url, member.url != live {
+                    library.updateItem(member.id) { $0.url = live }
+                }
+            }
+            library.moveItem(item.id, to: .pinned, parentID: nil, at: .end)
+            return
+        }
+        guard item.kind == .site else { return }
+        let sourceSplit = library.splitContainer(of: itemID)?.id
+        let previous = sourceSplit.map { library.splitMembers(of: $0).map(\.id) } ?? []
+        let wasFocused = sourceSplit.flatMap { resolvedFocus(in: $0) } == itemID
+        let splitSelected = sourceSplit.map { session.selectedItemBySpace[item.spaceID] == $0 } ?? false
         let url = tabs[itemID]?.url ?? item.url
         library.moveItem(itemID, to: .pinned, parentID: nil, at: .end)
         if let url, library.item(itemID)?.url != url {
             library.updateItem(itemID) { $0.url = url }
         }
         if let tab = tabs[itemID] { extensions?.tabPropertiesChanged(tab) }
+        if let sourceSplit {
+            repairSplit(
+                splitID: sourceSplit,
+                detachedID: itemID,
+                previousMemberIDs: previous,
+                selectDetached: splitSelected && wasFocused
+            )
+        }
     }
 
-    /// Moves a pinned or favorite site to the top of `.tabs`.
+    /// Moves a pinned or favorite site, or a whole split, to the top of `.tabs`.
+    /// Unpinning one pane pulls that site out of its split.
     func unpin(_ itemID: UUID) {
-        guard let item = library.item(itemID), item.kind == .site, item.section != .tabs else { return }
+        guard let item = library.item(itemID), item.section != .tabs else { return }
+        if item.isSplit {
+            library.moveItem(itemID, to: .tabs, parentID: nil, at: .start)
+            return
+        }
+        guard item.kind == .site else { return }
+        let sourceSplit = library.splitContainer(of: itemID)?.id
+        let previous = sourceSplit.map { library.splitMembers(of: $0).map(\.id) } ?? []
+        let wasFocused = sourceSplit.flatMap { resolvedFocus(in: $0) } == itemID
+        let splitSelected = sourceSplit.map { session.selectedItemBySpace[item.spaceID] == $0 } ?? false
         library.moveItem(itemID, to: .tabs, parentID: nil, at: .start)
         if let tab = tabs[itemID] { extensions?.tabPropertiesChanged(tab) }
+        if let sourceSplit {
+            repairSplit(
+                splitID: sourceSplit,
+                detachedID: itemID,
+                previousMemberIDs: previous,
+                selectDetached: splitSelected && wasFocused
+            )
+        }
     }
 
     func addToFavorites(_ itemID: UUID) {
         guard let item = library.item(itemID), item.kind == .site, item.section != .favorites else { return }
+        let sourceSplit = library.splitContainer(of: itemID)?.id
+        let previous = sourceSplit.map { library.splitMembers(of: $0).map(\.id) } ?? []
+        let wasFocused = sourceSplit.flatMap { resolvedFocus(in: $0) } == itemID
+        let splitSelected = sourceSplit.map { session.selectedItemBySpace[item.spaceID] == $0 } ?? false
         // A tab's URL is wherever it has navigated; a pin already has a home URL and we keep that.
         let url = item.section == .tabs ? (tabs[itemID]?.url ?? item.url) : item.url
         library.moveItem(itemID, to: .favorites, parentID: nil, at: .end)
         if let url, library.item(itemID)?.url != url {
             library.updateItem(itemID) { $0.url = url }
         }
+        if let sourceSplit {
+            repairSplit(
+                splitID: sourceSplit,
+                detachedID: itemID,
+                previousMemberIDs: previous,
+                selectDetached: splitSelected && wasFocused
+            )
+        }
     }
 
-    /// Cmd+D. Pins the selected tab, or unpins a pinned/favorite site back to tabs.
+    /// Cmd+D. Pins the selected tab or split, or unpins a pinned/favorite site or split back to tabs.
     func togglePinSelected() {
-        guard let id = selectedItemID, let item = library.item(id), item.kind == .site else { return }
+        guard let id = selectedItemID, let item = library.item(id) else { return }
+        guard item.isSplit || item.kind == .site else { return }
         if item.section == .tabs {
             pin(id)
         } else {
@@ -338,7 +569,7 @@ final class BrowserModel {
     /// Focuses a folder without unloading the open page. A site goes through `select`.
     func focusSidebarItem(_ id: UUID) {
         guard let item = library.item(id) else { return }
-        if item.kind == .site {
+        if item.kind == .site || item.isSplit {
             select(id)
             return
         }
@@ -367,12 +598,17 @@ final class BrowserModel {
         guard library.canDrop(id, toSpace: spaceID, section: section, parentID: parentID) else { return }
 
         let origin = root.spaceID
-        let movingIDs = [id] + (root.isFolder ? library.descendantIDs(of: id, spaceID: origin) : [])
+        let follows = root.isFolder || root.isSplit
+        let movingIDs = [id] + (follows ? library.descendantIDs(of: id, spaceID: origin) : [])
         let movedSites = Set(movingIDs.filter { library.item($0)?.kind == .site })
         let spaceChanges = origin != spaceID
         let order = navigableItems(in: origin)
         let selected = session.selectedItemBySpace[origin]
-        let pinsOpenPage = root.kind == .site && root.section == .tabs && section != .tabs
+        let sourceSplit = library.splitContainer(of: id)?.id
+        let previousMembers = sourceSplit.map { library.splitMembers(of: $0).map(\.id) } ?? []
+        let wasFocused = sourceSplit.map { resolvedFocus(in: $0) == id } ?? false
+        let splitWasSelected = sourceSplit.map { session.selectedItemBySpace[origin] == $0 } ?? false
+        let pinsOpenPage = (root.kind == .site || root.isSplit) && root.section == .tabs && section != .tabs
 
         if spaceChanges || pinsOpenPage {
             for siteID in movedSites {
@@ -390,8 +626,9 @@ final class BrowserModel {
                 session.interactionStates[siteID] = nil
                 unloadTab(siteID)
             }
-            if let selected, movedSites.contains(selected) {
-                let replacement = nextSelection(afterRemoving: movedSites, selected: selected, order: order)
+            if let selected, movingIDs.contains(selected) {
+                let anchor = navigableAnchor(for: selected) ?? selected
+                let replacement = nextSelection(afterRemoving: movedSites, selected: anchor, order: order)
                 if origin == selectedSpaceID {
                     if let replacement {
                         select(replacement)
@@ -406,6 +643,15 @@ final class BrowserModel {
                     session.selectedItemBySpace[origin] = replacement
                 }
             }
+        }
+
+        if let sourceSplit, library.splitContainer(of: id)?.id != sourceSplit {
+            repairSplit(
+                splitID: sourceSplit,
+                detachedID: id,
+                previousMemberIDs: previousMembers,
+                selectDetached: splitWasSelected && wasFocused
+            )
         }
 
         if let focus = sidebarFocusID, library.item(focus)?.spaceID != selectedSpaceID {
@@ -451,6 +697,13 @@ final class BrowserModel {
 
     func toggleSidebar() { session.isSidebarVisible.toggle() }
     func showCommandBar(_ mode: CommandBarMode) { commandBarMode = mode }
+
+    /// Opens the bar and replaces its query, including when it was already in `mode`.
+    func presentCommandBar(_ mode: CommandBarMode) {
+        commandBarGeneration += 1
+        commandBarMode = mode
+    }
+
     func hideCommandBar() { commandBarMode = nil }
 
     /// Copies the selected tab's real URL. No-op when there is nothing to copy.
@@ -493,6 +746,13 @@ final class BrowserModel {
             if let state = tab.interactionState {
                 session.interactionStates[id] = state
             }
+        }
+        let focus = session.focusedPaneBySplit.filter { splitID, paneID in
+            guard library.item(splitID)?.isSplit == true else { return false }
+            return library.splitMembers(of: splitID).contains { $0.id == paneID }
+        }
+        if focus != session.focusedPaneBySplit {
+            session.focusedPaneBySplit = focus
         }
         library.flush()
         session.flush()
@@ -547,12 +807,12 @@ final class BrowserModel {
         }
         connectExtension(tab, spaceID: spaceID)
         tab.onNavigationChange = { [weak self] tab in
-            guard tab.id == self?.selectedItemID else { return }
+            guard tab.id == self?.selectedTab?.id else { return }
             self?.refreshNavigationState()
         }
     }
 
-    private func refreshNavigationState() {
+    func refreshNavigationState() {
         let tab = selectedTab
         let back = tab?.canGoBack == true
         let forward = tab?.canGoForward == true
@@ -604,8 +864,18 @@ final class BrowserModel {
         items.append(contentsOf: library.children(of: nil, section: .favorites, in: spaceID).filter { $0.kind == .site })
         var visited: Set<UUID> = []
         items.append(contentsOf: pinnedSites(in: spaceID, parentID: nil, visited: &visited))
-        items.append(contentsOf: library.children(of: nil, section: .tabs, in: spaceID).filter { $0.kind == .site })
+        items.append(contentsOf: tabPanes(in: spaceID))
         return items
+    }
+
+    /// Root tabs, with each split replaced by its panes. The container is not a stop.
+    private func tabPanes(in spaceID: UUID) -> [SidebarItem] {
+        library.children(of: nil, section: .tabs, in: spaceID).flatMap { child -> [SidebarItem] in
+            if child.isSplit {
+                return library.splitMembers(of: child.id)
+            }
+            return child.kind == .site ? [child] : []
+        }
     }
 
     private func pinnedSites(in spaceID: UUID, parentID: UUID?, visited: inout Set<UUID>) -> [SidebarItem] {
@@ -615,6 +885,8 @@ final class BrowserModel {
             switch child.kind {
             case .site:
                 result.append(child)
+            case .split:
+                result.append(contentsOf: library.splitMembers(of: child.id))
             case .folder where child.isExpanded:
                 result.append(contentsOf: pinnedSites(in: spaceID, parentID: child.id, visited: &visited))
             case .folder:
@@ -672,7 +944,8 @@ final class BrowserModel {
     private func moveSelection(by delta: Int) {
         let items = navigableItems
         guard !items.isEmpty else { return }
-        let current = selectedItemID.flatMap { id in items.firstIndex { $0.id == id } }
+        let currentID = navigableAnchor(for: selectedItemID) ?? selectedItemID
+        let current = items.firstIndex { $0.id == currentID }
         let next: Int
         if let current {
             next = (current + delta + items.count) % items.count

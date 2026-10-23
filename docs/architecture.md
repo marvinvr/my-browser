@@ -38,7 +38,7 @@ myBrowserTests/   Swift Testing unit tests (model, SortKey, store, URL parsing)
 Two kinds of state:
 
 1. **Library** (`LibraryStore`, `library.json`): profiles, spaces, sidebar items. This is the part that will sync via CloudKit in Phase 2 (except the `tabs` section, see below).
-2. **Session** (`SessionStore`, `session.json`): local-only window state: selected space, selected item per space, per-tab WebKit `interactionState` (back/forward history), recently closed tabs. Never synced.
+2. **Session** (`SessionStore`, `session.json`): local-only window state: selected space, selected item per space, focused pane per split, per-tab WebKit `interactionState` (back/forward history), recently closed tabs. Never synced.
 
 ### Profile
 `Profile { id: UUID, name, modifiedAt, deletedAt? }`. The profile's `id` is the identifier passed to `WKWebsiteDataStore(forIdentifier:)`, so cookies, local storage, caches etc. are isolated per profile and persist across launches. By default every new Space gets its own new Profile (1:1); the model allows several Spaces to share a Profile later (Arc does this).
@@ -54,20 +54,22 @@ SidebarItem {
   id: UUID
   spaceID: UUID
   section: .favorites | .pinned | .tabs
-  kind: .site | .folder
-  parentID: UUID?        // folder id; only within .pinned (nested folders). nil = section root
+  kind: .site | .folder | .split
+  parentID: UUID?        // folder id within .pinned, or the split that owns this site. nil = section root
   title: String          // user title (folders, renamed pins) or last page title
   url: URL?              // .site: the pinned "home" URL; for .tabs items the current URL
   sortKey: String        // fractional index, ordering among siblings
   isExpanded: Bool       // folders
+  splitFraction: Double? // this pane's share of its split. nil = equal with its siblings. omitted by older files
+  splitAxis: SplitAxis?  // .split only: .horizontal | .vertical. nil = horizontal. omitted by older files
   createdAt, modifiedAt: Date
   deletedAt: Date?       // tombstone
 }
 ```
 
-- **favorites**: pinned sites shown as the favicon grid at the top of the sidebar. Sites only, no folders, flat.
-- **pinned**: pinned sites and (nested) folders below the grid.
-- **tabs**: today's unpinned tabs. Sites only, flat. Every open unpinned tab *is* a `.tabs` item, which is how tabs survive relaunch.
+- **favorites**: pinned sites shown as the favicon grid at the top of the sidebar. Sites only, no folders, no splits, flat.
+- **pinned**: pinned sites, (nested) folders, and splits below the grid. A split may sit inside a pinned folder.
+- **tabs**: today's unpinned tabs. Root rows are sites and splits. Every open unpinned tab *is* a `.tabs` item (a split's members included), which is how tabs survive relaunch.
 
 A pinned/favorite site keeps its `url` as the home URL even when its live tab navigates elsewhere (Arc behaviour). Closing a pinned tab unloads its web view, the item stays.
 
@@ -76,11 +78,55 @@ A pinned/favorite site keeps its `url` as the home URL even when its live tab na
 
 `BrowserModel.tabs: [UUID: BrowserTab]` holds the live tabs. An item without a `BrowserTab` is "not loaded". Selecting it creates one.
 
+### Split view
+
+A split is one sidebar row that shows two to four pages side by side (or stacked) in the content area. Phase 1 is the model and the browser API. The content view still hosts the focused pane only. The layout that places the panes next to each other is later work and reads `BrowserModel.displayedContent`.
+
+**Membership.** `kind: .split` is a container. Its panes are ordinary `.site` items with `parentID` set to the split's id, ordered by `sortKey` (left to right, or top to bottom when the axis is vertical). Members keep their own ids, history, and sync records. A split lives in `.pinned` or `.tabs`, never `.favorites`. Members share the split's section and `spaceID`. A pinned split may sit inside a folder (`split.parentID` is the folder id). There are no nested splits and no folders inside a split. `LibraryStore.move` / `moveItem` refuse a parent that is a split; `createSplit` and `addToSplit` are the only ways in.
+
+**Width and axis.** `splitFraction` on a member is that pane's share. `nil`, or any non-finite or non-positive value, means "equal". If any member's share is missing, every pane is equal (`SidebarItem.displayFractions`). `setFractions` writes one positive number per member, scaled so they sum to 1, or `[]` to clear them. Adding, removing, or separating a member clears every share. Swapping panes swaps sort keys only, so a wide pane stays wide. `splitAxis` is `.horizontal` (side by side) or `.vertical` (stacked). `nil` means horizontal. `createSplit` stores `nil` for horizontal so older-shaped rows stay small; `setSplitAxis` stores the value it is given, including `.horizontal`. Both fields are optional and omitted when nil, so a `library.json` from before split view still decodes (`schemaVersion` stays 1).
+
+**Invariants.** A live split has 2...4 live site members (`SidebarItem.minimumSplitMembers` / `maximumSplitMembers`). Dropping to one dissolves it: that site takes the split's `spaceID`, section, `parentID`, and `sortKey`, and its fraction is cleared. Dropping to zero removes the empty split. A pinned split is tombstoned (synced delete). A `.tabs` split is hard-deleted like other `.tabs` items. Deleting the split itself deletes its members the same way a folder deletes its subtree (pinned: tombstone the subtree; tabs: hard-delete it). `separate` releases one pane and places it immediately after the split; dissolve then releases the survivor into the split's slot. `applyRemote` does not dissolve a split that arrived with only some of its members. Unpinning a synced item into `.tabs` still does not emit a CloudKit delete; splits follow that existing rule.
+
+**Selection and focus.** The sidebar selection is the split id (`selectedItemBySpace`). The focused pane is `SessionStore.focusedPaneBySplit`, local only, so it is not a synced field. `selectedTab` (toolbar, URL, back/forward, shortcuts, extensions) is that focused member. Selecting a member directly (command bar, Ctrl-Tab, Cmd+1…9) selects its split and focuses that member. `displayedContent(for:)` answers what the content area shows for an item or the current selection: one pane for a site, or the ordered panes, fractions, axis, and focused id for a split or any of its members. It creates unloaded `BrowserTab`s and does not load web views. The first time a split is shown, including a relaunch that already had it selected, every pane loads. A later focus change loads the focused pane and leaves an unloaded sibling unloaded. Selecting the split again after leaving it loads panes that are not already loaded, including a pinned pane that was closed. Closing the window and relaunching restores the split and its members; members stay lazy until the split is shown.
+
+**What walks which list.** The sidebar draws one row per split. That row is the same height as a site row and shows every pane: favicon, title, a hairline between panes, titles truncated to equal widths, and the focused pane's title in a slightly heavier weight. Selection and hover use the same chip as other rows. Clicking a pane selects the split and focuses that pane. The row's drag moves the whole group. The sidebar X and Cmd+W close the focused pane, not the whole group. Delete on a pinned split removes the group. A site row's menu can open a split with the selected tab, with a recent tab, or with a new empty tab, and can add the site to the selected split while it has fewer than four panes. A split row's menu can separate or close each pane, swap two panes, or separate all. Keyboard order, Cmd+1…9, and the extension tab list replace each split with its member sites and do not also list the container, so Cmd+1…9 counts panes. The command bar searches `kind == .site`, so members appear once and the split does not. Typing "split", "separate", "swap", or "focus next" also offers the matching split command when the selection can run it. The importer does not create splits.
+
+Call these through `BrowserModel` so selection and focus stay consistent. The store methods are the same operations without the window state.
+
+`LibraryStore`:
+
+- `splitMembers(of:) -> [SidebarItem]`
+- `splitContainer(of:) -> SidebarItem?`
+- `createSplit(tabIDs:axis:) -> SidebarItem?`
+- `addToSplit(tabID:splitID:at:) -> SidebarItem?`
+- `separate(tabID:) -> SidebarItem?`
+- `movePane(tabID:to:)`
+- `swapPanes(splitID:_:_:)`
+- `setFractions(splitID:_:)`
+- `setSplitAxis(splitID:axis:)`
+- `reconcileSplit(_:)`
+- `clearSplitFractions(_:)`
+
+`BrowserModel` (the content area and later UI):
+
+- `createSplit(tabIDs:axis:) -> SidebarItem?` — selects the new split. Focus is the previously selected member when it joined, otherwise the first pane.
+- `addToSplit(tabID:splitID:at:) -> SidebarItem?` — if that tab was selected, the split becomes selected and that pane is focused. If the split was already selected, the new pane loads.
+- `separate(tabID:) -> SidebarItem?` and `removeFromSplit(tabID:)` — the pane becomes the next item after the split. A focused pane that was pulled out becomes the selection. A dissolved split leaves the survivor selected when the split was selected.
+- `movePane(tabID:to:)` — `to` is the index in the final order.
+- `swapPanes(splitID:_:_:)`
+- `setFractions(splitID:_:)` — `[]` clears.
+- `setSplitAxis(splitID:_:)`
+- `focusPane(tabID:)` — selects the member's split and focuses that pane.
+- `displayedContent(for:) -> DisplayedContent?` — nil uses the selection. `DisplayedContent` is `itemID`, `isSplit`, `axis`, `panes: [DisplayedPane]`, `focusedID`. `DisplayedPane` is `id`, `fraction`, `tab`.
+- `navigableAnchor(for:)` — the focused pane when the selection is a split.
+- `resolvedFocus(in:)` — stored focus when that site is still a member, otherwise the first pane.
+
 ### Ordering keys
 `sortKey` is a fractional index string (`SortKey.between(a, b)`, base-62 digits, lexicographic compare). Inserting/moving only rewrites the moved record, which keeps CloudKit conflicts local to one record. Ties (two devices inserting at the same spot) are broken by `id`.
 
 ### Tombstones
-Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt`) instead of removing the record; everything reading the store filters tombstones. Deleting a folder tombstones its descendants. Tombstones are purged after 30 days (Phase 2: only once CloudKit has acknowledged the deletion). `.tabs` items are local-only and hard-deleted.
+Deleting a Profile/Space/favorites/pinned item sets `deletedAt` (and `modifiedAt`) instead of removing the record; everything reading the store filters tombstones. Deleting a folder tombstones its descendants. Deleting a pinned split tombstones its members. Tombstones are purged after 30 days (Phase 2: only once CloudKit has acknowledged the deletion). `.tabs` items, including a tabs split and its members, are local-only and hard-deleted.
 
 ### Sync readiness (Phase 2)
 - Every record has a stable UUID → `CKRecord.ID(recordName: uuid)`, record types `Profile`, `Space`, `SidebarItem`. Zone: one custom zone `Library`.
@@ -119,7 +165,7 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 ## WebKit management
 
 - `ProfileManager` caches one `WKWebsiteDataStore(forIdentifier: profile.id)` per profile and builds a `WKWebViewConfiguration` per tab from it (shared data store ⇒ shared cookies within a Space). The same configuration receives that profile's `WKWebExtensionController`.
-- `WebContentView` is an `NSViewRepresentable` around a plain container `NSView`; when the selected tab changes it removes the old `WKWebView` and adds the new one as a subview (pinned to edges). Web views are never recreated on selection changes, so page state is kept.
+- `WebContentView` is an `NSViewRepresentable` around a plain container `NSView`; when the selected tab changes it removes the old `WKWebView` and adds the new one as a subview (pinned to edges). Web views are never recreated on selection changes, so page state is kept. Phase 1 hosts the focused pane (`selectedTab`). A split's other panes stay loaded once the split has been shown; side-by-side layout reads `displayedContent`.
 - Space switching swaps the sidebar contents and selects that space's last selected item; live tabs of other spaces stay loaded (memory pressure handling / tab unloading is Phase 2+).
 - `target=_blank` / `window.open` / Cmd-click: `WKUIDelegate.createWebView` → new `.tabs` item in the same space (Phase 1 opens in a new tab and selects it; Cmd-click opens in background).
 - Back/forward: `allowsBackForwardNavigationGestures = true` (Safari-style two-finger swipe on the page). Decision: **page swipe = back/forward; swipes on the sidebar switch spaces**. `SpaceSwipeContainer` claims a horizontal trackpad swipe on the space column only (`SpaceSwipeTracker`); vertical list scrolling and the web view are left alone. Crossing the space-swipe commit line (30% of the column, or a flick that will commit) ticks the trackpad once. Crossing WebKit's history-swipe completion distance (`min(187.5pt, half the page)`) ticks once. Both go through `Haptics` and do not repeat while the finger stays past the line.
@@ -137,7 +183,7 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 ## Command bar
 
 - Cmd+T: new tab mode (empty field). Cmd+L: edit current URL (prefilled, selected); Enter navigates the current tab.
-- Results: "Open URL" when input looks like a URL, "Search <engine>" otherwise, plus matching open tabs / pinned sites in the current space (title or URL contains the query) → switch to them.
+- Results: "Open URL" when input looks like a URL, "Search <engine>" otherwise, plus matching open tabs / pinned sites in the current space (title or URL contains the query) → switch to them. A search-shaped query that names a split command ("split", "separate", "swap", "focus next", "focus previous") also lists that action when the selection can run it. "Open in Split View" leaves the bar open on the new pane.
 - `URLInput.resolve(_:)` decides URL vs search: explicit scheme, `localhost[:port]`, IPs, or `something.tld` without spaces ⇒ URL (https assumed); everything else ⇒ search.
 - Default search engine: **Google** (enum `SearchEngine`: google, duckDuckGo, kagi, bing, ecosia). The choice is Settings → General, stored in `UserDefaults` under `SearchEngine.defaultsKey`.
 
@@ -147,17 +193,21 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 |---|---|
 | Cmd+T | Command bar, new tab |
 | Cmd+L | Command bar, edit current URL |
-| Cmd+W | Close tab (pinned/favorite: unload; tabs: delete) |
+| Cmd+W | Close the selected tab, or the focused pane when a split is selected (pinned/favorite: unload; tabs: delete) |
 | Cmd+Shift+T | Reopen last closed tab |
-| Cmd+1…8 | Select n-th item in sidebar order (favorites, pinned (expanded), tabs); Cmd+9 = last |
-| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous item in sidebar order |
+| Cmd+1…8 | Select n-th pane in navigable order (favorites, pinned (expanded), tabs). A split counts as its panes, not as one row. Cmd+9 = last |
+| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous pane in that same order |
 | Cmd+Opt+→ / ← | Next / previous space |
 | Cmd+[ / Cmd+] | Back / forward |
 | Cmd+R | Reload (`KeyMonitor` only; Ctrl+R does nothing) |
 | Cmd+Shift+C | Copy link |
 | Cmd+S | Hide / show sidebar |
 | Cmd+Shift+I | Import bookmarks or an Arc sidebar |
-| Cmd+D | Pin / unpin current tab |
+| Cmd+D | Pin / unpin the current tab, or the whole split when a split is selected |
+| Ctrl+Cmd+S | Open in Split View. The selected site gains a new empty tab, which is focused and the command bar opens on it. A selected split with fewer than four panes gains that empty tab instead. ⌘⇧= is Zoom In on a US keyboard, so it is not used |
+| Cmd+Shift+- | Separate the focused pane. The split dissolves when one pane would remain |
+| Cmd+Shift+\ | Swap the two panes. No-op unless the split has exactly two |
+| Ctrl+Opt+→ / ← | Focus the next / previous pane, wrapping. No-op unless a split is selected |
 | Esc | Close command bar / stop loading |
 | Delete | Delete the focused folder. A non-empty folder asks first. Ignored while a field, the page, or the command bar is focused. |
 
@@ -165,10 +215,11 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 
 The sidebar is a `VStack`/`ForEach`, not a `List`. Rows use `.draggable` and one `DropDelegate` (`onDrop`) so a drop can cross sections and nest. `LibraryStore.moveItem` stays same-space. Cross-space and nested drops go through `LibraryStore.move(_:toSpace:section:parentID:position:)` in `LibraryStore+Move.swift`.
 
-- `move` takes a folder's live descendants with it in one batch: one `onChange`, one save. Descendants keep their parent links. Their `spaceID` and `section` change with the folder. `canDrop` rejects a folder dropped into itself or a descendant, and rejects folders in favorites or tabs (those sections are sites only, at the root).
+- `move` takes a folder's or a split's live descendants with it in one batch: one `onChange`, one save. Descendants keep their parent links. Their `spaceID` and `section` change with the folder or the split. `canDrop` rejects a folder dropped into itself or a descendant, and rejects folders in favorites or tabs (those sections are sites only, at the root). A split cannot land in favorites or inside a split. A tabs split stays at the root. A member dragged out of its split clears fractions and dissolves the split when one pane is left. Dropping onto a split does not parent the dropped item into it.
 - Dropping on a folder row inserts at the end of that folder. The folder expands after the pointer hovers there for about 0.6 s. Dropping between rows inserts before or after; the pointer's indentation picks the depth. An accent line (2 pt, rounded) marks the slot, inset to that depth. The dragged row fades. Its close button keeps its space and hides, so the title does not jump. Other rows reflow with `SidebarMotion.row`. Folder rows are plain buttons, like site rows: a tap gesture on the row would take the mouse-down and the folder would never start a drag. The expand click is ignored when a drag session is active or has just ended.
+- The top and bottom 8 pt of a row stay the reorder line. The middle of a site or split row, while a loose pinned or tabs site is dragged, is a split drop instead: an accent wash and a `rectangle.split.2x1` icon, no insertion line. Dropping on a site groups the two pages and the split takes the target's place. Dropping on a split with fewer than four panes appends the dragged site. A folder, a favorite, a dragged split, a full split, and a horizontal favorites tile keep the previous before/after hit test. The sidebar selects one row, so there is no multi-select path into a split.
 - Favorites accept sites only. Dragging between the tabs list and pinned pins or unpins. A link dragged from a page or another app (http/https only) becomes a new site at that slot. WebKit provides that link as an `NSURL`; the plain-text URL is the fallback. The insertion line clears when the drop is accepted. A link load finishes after that, and later updates from the same drop session do not bring the line back. A new tab in the current space is selected.
-- Dropping on a space icon moves the item and its subtree. Sites keep their section. Folders can only live in pinned, so they land there. The current space stays selected. A live tab that changes space is unloaded, because the destination profile has different cookies, and the page URL is stored on the item.
+- Dropping on a space icon moves the item and its subtree. Sites and splits keep their section. Folders can only live in pinned, so they land there. The current space stays selected. A live tab that changes space is unloaded, because the destination profile has different cookies, and the page URL is stored on the item.
 - A two-finger space swipe that is still tracking always settles: a new touch that begins outside the sidebar, the window resigning key, or the app resigning active. Under 30% of the column width it springs back to 0. Past that, or on a flick, it commits.
 - Drag haptics, also via `Haptics`: a new drop slot, a cross between Tabs and Pinned, a folder that opens after the hover delay, a Space icon becoming the drop target, and the drop itself. Each fires once per change. Hovering a folder without it opening is silent. Patterns and timing live in `Views/Haptics.swift`.
 
@@ -196,11 +247,11 @@ The flag is checked first. A false flag returns before the account token is read
 
 - **Profile:** `name`, `modifiedAt`, `deletedAt?`
 - **Space:** `name`, `symbol`, `emoji?`, `color` (raw value), `profileID`, `sortKey`, `modifiedAt`, `deletedAt?`
-- **SidebarItem:** `spaceID`, `section`, `kind`, `parentID?`, `title`, `url?` (absolute string), `sortKey`, `isExpanded` (0/1), `createdAt`, `modifiedAt`, `deletedAt?`
+- **SidebarItem:** `spaceID`, `section`, `kind`, `parentID?`, `title`, `url?` (absolute string), `sortKey`, `isExpanded` (0/1), `splitFraction?` (number, only when finite and greater than zero), `splitAxis?` (raw string, only when set), `createdAt`, `modifiedAt`, `deletedAt?`
 
-`.tabs` items are not mapped and are not uploaded. A fetched `.tabs` record is ignored. A remote deletion whose local row is a tab is ignored.
+`.tabs` items are not mapped and are not uploaded, including a `.tabs` split and its members. A fetched `.tabs` record is ignored. A remote deletion whose local row is a tab is ignored. A pinned split and its members sync as normal `SidebarItem` records. Dissolving a pinned split tombstones the split and updates the surviving member. Focus is session state and is not a record field.
 
-Synced rows are profiles, spaces, favorites, and pinned items (including folder trees). Tabs, `session.json`, favicons, and extensions stay on this Mac.
+Synced rows are profiles, spaces, favorites, and pinned items (including folder trees and pinned splits). Tabs, `session.json`, favicons, and extensions stay on this Mac.
 
 ### Local edits to the engine
 
@@ -272,3 +323,5 @@ Do not flip those switches before the container and the profile exist. A Release
 - 2026-10-23: web extensions use `WKWebExtensionController`, one controller per profile id. Packages are unpacked under `Application Support/myBrowser/Extensions`.
 - 2026-10-23: trackpad haptics use `NSHapticFeedbackManager` through `Haptics`. One pulse per state change: space-swipe detent, history-swipe threshold, drop slot, pin/unpin, folder auto-expand, space drop target, and the drop.
 - 2026-10-23: folder disclosure is a 0.2s no-bounce spring. Sidebar views read per-parent `SidebarSiblingList`s, so one toggle does not refresh the rest of the column.
+- 2026-10-23: a split is one sidebar row (`SidebarItem.kind = .split`) whose panes are ordinary `.site` children, 2...4, ordered by `sortKey`. It lives in pinned or tabs, and may sit in a pinned folder. No nested splits, no folders inside a split. Dropping to one member dissolves the split: that site takes the split's place, a pinned split is tombstoned, and a tabs split is hard-deleted. Deleting the split deletes its members. `splitFraction` nil means equal widths; `splitAxis` nil means horizontal. Both are omitted from older `library.json` files. Focused pane is session-only (`focusedPaneBySplit`). Keyboard, Cmd+1…9, and extensions walk panes; the sidebar draws one row. `displayedContent` does not load web views. The first show of a split loads every pane; a later focus change does not resurrect an unloaded sibling. Remote apply does not dissolve a partial split. Unpinning into `.tabs` still does not emit a CloudKit delete.
+- 2026-10-23: the split row shows each pane's favicon and title. The middle of a row drop groups two sites, or adds a site to a split. ⌃⌘S opens a split with a new empty tab. The sidebar selects one row.

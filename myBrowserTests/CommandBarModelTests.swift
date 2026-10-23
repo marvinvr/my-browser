@@ -145,6 +145,29 @@ struct CommandBarModelTests {
         #expect(browser.commandBarMode == nil)
     }
 
+    @Test func splitQueryOffersTheActionWhenATabCanSplit() {
+        let browser = makeBrowser()
+        let space = browser.selectedSpaceID
+        let page = browser.library.addItem(
+            spaceID: space,
+            section: .tabs,
+            title: "Notes",
+            url: URL(string: "https://example.com/notes")!
+        )
+        browser.select(page.id)
+        let bar = CommandBarModel(browser: browser, mode: .newTab, engine: .google)
+        bar.query = "split"
+        #expect(bar.rows.map(\.title).contains("Open in Split View"))
+        let index = bar.rows.firstIndex { $0.title == "Open in Split View" } ?? 0
+        bar.moveSelection(index)
+        bar.execute()
+        #expect(browser.commandBarMode == .editCurrent)
+        #expect(browser.library.item(browser.selectedItemID ?? UUID())?.isSplit == true)
+        let unrelated = CommandBarModel(browser: browser, mode: .newTab, engine: .google)
+        unrelated.query = "git"
+        #expect(unrelated.rows.map(\.title) == ["Search Google for 'git'"])
+    }
+
     @Test func quickSwitchEnterHidesTheBar() {
         let browser = makeBrowser()
         let space = browser.selectedSpaceID

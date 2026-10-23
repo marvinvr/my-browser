@@ -235,6 +235,17 @@ private struct SidebarDropChrome: View {
                     .fill(Color.accentColor.opacity(0.14))
                     .allowsHitTesting(false)
             }
+            if showsSplitHighlight {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.14))
+                    .overlay(alignment: .trailing) {
+                        Image(systemName: "rectangle.split.2x1")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.trailing, 8)
+                    }
+                    .allowsHitTesting(false)
+            }
             if showsSpaceHighlight {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(Color.accentColor.opacity(0.9), lineWidth: 1.5)
@@ -254,6 +265,11 @@ private struct SidebarDropChrome: View {
 
     private var showsFolderHighlight: Bool {
         guard case .intoFolder(let id) = interaction.proposal else { return false }
+        return context.row?.id == id
+    }
+
+    private var showsSplitHighlight: Bool {
+        guard case .intoSplit(let id) = interaction.proposal else { return false }
         return context.row?.id == id
     }
 

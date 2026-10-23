@@ -26,6 +26,8 @@ nonisolated enum RecordMapper {
         static let title = "title"
         static let url = "url"
         static let isExpanded = "isExpanded"
+        static let splitFraction = "splitFraction"
+        static let splitAxis = "splitAxis"
         static let createdAt = "createdAt"
     }
 
@@ -64,6 +66,12 @@ nonisolated enum RecordMapper {
         set(record, Field.url, item.url?.absoluteString)
         set(record, Field.sortKey, item.sortKey)
         set(record, Field.isExpanded, item.isExpanded ? 1 : 0)
+        if let fraction = item.splitFraction, fraction.isFinite, fraction > 0 {
+            set(record, Field.splitFraction, fraction)
+        }
+        if let axis = item.splitAxis {
+            set(record, Field.splitAxis, axis.rawValue)
+        }
         set(record, Field.createdAt, item.createdAt)
         set(record, Field.modifiedAt, item.modifiedAt)
         set(record, Field.deletedAt, item.deletedAt)
@@ -144,6 +152,8 @@ nonisolated enum RecordMapper {
             url: string(record, Field.url).flatMap(URL.init(string:)),
             sortKey: sortKey,
             isExpanded: bool(record, Field.isExpanded, default: true),
+            splitFraction: fraction(record, Field.splitFraction),
+            splitAxis: string(record, Field.splitAxis).flatMap(SidebarItem.SplitAxis.init(rawValue:)),
             createdAt: createdAt
         )
         item.modifiedAt = modifiedAt
@@ -185,6 +195,20 @@ nonisolated enum RecordMapper {
 
     private static func date(_ record: CKRecord, _ key: String) -> Date? {
         record[key] as? Date
+    }
+
+    private static func fraction(_ record: CKRecord, _ key: String) -> Double? {
+        let value: Double?
+        switch record[key] {
+        case let number as Double:
+            value = number
+        case let number as NSNumber:
+            value = number.doubleValue
+        default:
+            value = nil
+        }
+        guard let value, value.isFinite, value > 0 else { return nil }
+        return value
     }
 
     private static func bool(_ record: CKRecord, _ key: String, default defaultValue: Bool) -> Bool {
