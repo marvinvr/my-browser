@@ -2,10 +2,11 @@ import Foundation
 
 /// How a page URL is shown in the address field when it is not being edited.
 ///
-/// The host is the primary run, without a scheme or a leading `www.`. Up to three path
-/// segments follow, each separated by a padded slash. Queries, fragments, and tracking
-/// parameters are omitted. `http` pages that are not local are `.insecure`; `https` shows
-/// no security decoration.
+/// The host is the primary run, without a scheme or a leading `www.`. At most the last two
+/// word-like path segments follow, each separated by a padded slash. Short pieces, locales,
+/// versions, and ids are omitted. Queries and fragments are omitted. The stored `absolute`
+/// string is still the real URL. `http` pages that are not local are `.insecure`; `https`
+/// shows no security decoration.
 nonisolated struct URLDisplay: Equatable, Sendable {
     nonisolated enum Security: Equatable, Sendable {
         /// https, a local http host, file, or anything else that should stay quiet.
@@ -38,7 +39,7 @@ nonisolated struct URLDisplay: Equatable, Sendable {
 
     static let empty = URLDisplay(pieces: [], security: .none, absolute: "")
 
-    static let maxPathSegments = 3
+    static let maxPathSegments = 2
     static let maxHostLength = 36
     static let maxSegmentLength = 24
 
@@ -63,14 +64,9 @@ nonisolated struct URLDisplay: Equatable, Sendable {
         }
 
         var pieces = [Piece(kind: .host, text: host)]
-        let segments = pathSegments(of: url)
-        for segment in segments.prefix(maxPathSegments) {
+        for segment in visiblePathSegments(of: url) {
             pieces.append(Piece(kind: .separator, text: separator))
             pieces.append(Piece(kind: .path, text: truncateTail(segment, limit: maxSegmentLength)))
-        }
-        if segments.count > maxPathSegments {
-            pieces.append(Piece(kind: .separator, text: separator))
-            pieces.append(Piece(kind: .ellipsis, text: "…"))
         }
         return URLDisplay(pieces: pieces, security: security, absolute: absolute)
     }
@@ -128,6 +124,133 @@ nonisolated struct URLDisplay: Equatable, Sendable {
             let text = String(segment)
             return text.removingPercentEncoding ?? text
         }.filter { !$0.isEmpty }
+    }
+
+    /// Last segments that still read as words. `-` and `_` become spaces only when the
+    /// segment is a phrase (or a phrase with an id chopped off), not when it is the id itself.
+    private static func visiblePathSegments(of url: URL) -> [String] {
+        let visible = pathSegments(of: url).compactMap(meaningfulSegment)
+        return Array(visible.suffix(maxPathSegments))
+    }
+
+    private static let pageExtensions: Set<String> = ["html", "htm", "php", "asp", "aspx", "jsp", "shtml", "cgi"]
+
+    private static func meaningfulSegment(_ raw: String) -> String? {
+        let decoded = raw.removingPercentEncoding ?? raw
+        let text = stripPageExtension(decoded).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count >= 3 else { return nil }
+        if isLocale(text) || isVersion(text) || isUUID(text) || isBareIdentifier(text) { return nil }
+
+        let tokens = text.split(whereSeparator: { $0 == "-" || $0 == "_" }).map(String.init).filter { !$0.isEmpty }
+        let kept = tokens.filter { !isNoiseToken($0) }
+        guard kept.contains(where: { $0.filter(\.isLetter).count >= 3 }) else { return nil }
+        // A short lowercase stub plus an id (`acct_1A…`, `cus_Nf…`) is still an id.
+        // A title with an id chopped off (`My-Page-Title-<hex>`) keeps the words.
+        if tokens.contains(where: isOpaqueToken) {
+            let words = kept.filter { $0.contains(where: \.isLetter) }
+            let readable = words.count >= 2
+                || words.contains { $0.count >= 5 }
+                || words.contains { $0.contains(where: \.isUppercase) }
+            if !readable { return nil }
+        }
+
+        let phrase = text.contains("-") || text.contains("_") || kept.count != tokens.count
+        return phrase ? kept.joined(separator: " ") : text
+    }
+
+    private static func stripPageExtension(_ text: String) -> String {
+        guard let dot = text.lastIndex(of: ".") else { return text }
+        let ext = text[text.index(after: dot)...].lowercased()
+        guard pageExtensions.contains(ext) else { return text }
+        let stem = String(text[..<dot])
+        return stem.isEmpty ? "" : stem
+    }
+
+    /// `de-ch`, `en-US`, `zh-Hans`. A bare `en` is already shorter than 3.
+    /// Subtags are 2 letters, or one 4-letter script (`Hans`). `my-browser` does not match.
+    private static func isLocale(_ text: String) -> Bool {
+        let parts = text.split(whereSeparator: { $0 == "-" || $0 == "_" }).map(String.init)
+        guard (2...3).contains(parts.count) else { return false }
+        guard parts[0].count == 2, parts[0].allSatisfy({ $0.isLetter && $0.isLowercase }) else { return false }
+        return parts.dropFirst().allSatisfy(isLocaleSubtag)
+    }
+
+    private static func isLocaleSubtag(_ part: String) -> Bool {
+        if part.count == 2, part.allSatisfy(\.isLetter) { return true }
+        guard part.count == 4, let first = part.first, first.isUppercase else { return false }
+        return part.dropFirst().allSatisfy { $0.isLetter && $0.isLowercase }
+    }
+
+    /// `v2`, `v2.0`, `1.2.3`. Plain numbers are handled as numeric noise.
+    private static func isVersion(_ text: String) -> Bool {
+        let hasPrefix = text.first == "v" || text.first == "V"
+        let body = hasPrefix ? String(text.dropFirst()) : text
+        guard !body.isEmpty, hasPrefix || text.contains(".") else { return false }
+        let parts = body.split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...4).contains(parts.count) else { return false }
+        return parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
+    }
+
+    private static func isUUID(_ text: String) -> Bool {
+        let parts = text.split(separator: "-", omittingEmptySubsequences: false).map(String.init)
+        let lengths = [8, 4, 4, 4, 12]
+        guard parts.count == lengths.count else { return false }
+        return zip(parts, lengths).allSatisfy { part, length in
+            part.count == length && part.allSatisfy(isHexCharacter)
+        }
+    }
+
+    private static func isBareIdentifier(_ text: String) -> Bool {
+        if text.allSatisfy(\.isNumber) { return true }
+        if text.contains("-") || text.contains("_") || text.contains(".") { return false }
+        if isOpaqueToken(text) { return true }
+        let digits = text.filter(\.isNumber).count
+        return digits >= 3 && text.allSatisfy { $0.isLetter || $0.isNumber }
+    }
+
+    /// Hex that contains a digit, a full hash length of hex letters, or a long mixed
+    /// letter-and-digit run (base64-ish ids, ASINs, Stripe id bodies).
+    private static func isOpaqueToken(_ text: String) -> Bool {
+        if isMixedID(text) { return true }
+        return isHexID(text) && text.contains(where: \.isLetter)
+    }
+
+    private static func isNoiseToken(_ token: String) -> Bool {
+        if token.allSatisfy(\.isNumber) { return true }
+        if isVersion(token) || isLocale(token) || isUUID(token) { return true }
+        if isHexID(token) || isMixedID(token) { return true }
+        return token.filter(\.isNumber).count >= 3
+    }
+
+    private static func isHexID(_ text: String) -> Bool {
+        guard text.count >= 4, text.allSatisfy(isHexCharacter) else { return false }
+        if text.contains(where: \.isNumber) { return true }
+        return text.count == 32 || text.count == 40 || text.count == 64
+    }
+
+    private static func isMixedID(_ text: String) -> Bool {
+        guard text.count >= 8 else { return false }
+        guard text.allSatisfy({ $0.isLetter || $0.isNumber }) else { return false }
+        let digits = text.filter(\.isNumber).count
+        let letters = text.filter(\.isLetter).count
+        guard digits > 0, letters > 0 else { return false }
+        if digits >= 3 { return true }
+        let chars = Array(text)
+        for index in chars.indices {
+            guard chars[index].isNumber else { continue }
+            let before = chars[..<index].contains(where: \.isLetter)
+            let after = chars[chars.index(after: index)...].contains(where: \.isLetter)
+            if before && after { return true }
+        }
+        return false
+    }
+
+    private static func isHexCharacter(_ character: Character) -> Bool {
+        guard character.unicodeScalars.count == 1, let value = character.unicodeScalars.first?.value else { return false }
+        switch value {
+        case 48...57, 65...70, 97...102: return true
+        default: return false
+        }
     }
 
     private static func fileName(of url: URL) -> String {
