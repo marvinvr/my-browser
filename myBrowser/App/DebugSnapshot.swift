@@ -2,7 +2,7 @@
 import AppKit
 import WebKit
 
-/// DEBUG-only window capture. Screen recording is denied on this machine, so the app draws itself.
+/// DEBUG-only window capture. Draws the window in-process. Prefer `screencapture` when the terminal can record the screen; glass effects do not appear in this bitmap.
 ///
 /// `ch.marvinvr.mybrowser.debug.snapshot` — userInfo["path"] is an absolute PNG path.
 enum DebugSnapshot {

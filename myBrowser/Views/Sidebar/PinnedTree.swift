@@ -98,47 +98,54 @@ private struct FolderRow: View {
         let isEditing = interaction.editingID == item.id
         let leading = SidebarDropGeometry.rowLeading + CGFloat(depth) * SidebarDropGeometry.indent
 
-        HStack(spacing: 6) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.tertiary)
-                .rotationEffect(.degrees(item.isExpanded ? 90 : 0))
-                .frame(width: 12, height: 12)
-                .animation(SidebarMotion.disclosure, value: item.isExpanded)
-            Image(systemName: "folder")
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .frame(width: 16)
-            if isEditing {
-                SidebarInlineField(itemID: item.id, title: item.title)
-            } else {
-                Text(title)
+        // A plain button, same as a site row. `onTapGesture` takes the mouse-down and the
+        // row never starts a drag session, so a folder could not be moved.
+        Button {
+            guard !interaction.shouldIgnoreRowClick() else { return }
+            model.focusSidebarItem(item.id)
+            NSApp.keyWindow?.makeFirstResponder(nil)
+            model.toggleExpanded(item.id)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(item.isExpanded ? 90 : 0))
+                    .frame(width: 12, height: 12)
+                    .animation(SidebarMotion.disclosure, value: item.isExpanded)
+                Image(systemName: "folder")
                     .font(.system(size: 13))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                if isEditing {
+                    SidebarInlineField(itemID: item.id, title: item.title)
+                } else {
+                    Text(title)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            .padding(.leading, leading)
+            .padding(.trailing, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .padding(.leading, leading)
-        .padding(.trailing, 8)
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture(count: 2).onEnded {
+            interaction.editingID = item.id
+        })
         .frame(height: SidebarMetrics.rowHeight)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
         .background {
             SidebarSelectionBackground(isSelected: isSelected, isHovering: hovering, isLoaded: false)
         }
         .onContinuousHover { phase in
+            if interaction.draggingID == item.id { return }
             hovering = if case .active = phase { true } else { false }
         }
-        .onTapGesture(count: 2) {
-            interaction.editingID = item.id
-        }
-        .onTapGesture(count: 1) {
-            model.focusSidebarItem(item.id)
-            NSApp.keyWindow?.makeFirstResponder(nil)
-            model.toggleExpanded(item.id)
-        }
+        .animation(SidebarMotion.row, value: hovering)
         .sidebarDragRow(item: item, depth: depth)
         .modifier(SidebarItemMenu(item: item, onRename: onRename, onNewFolderInside: onNewFolder))
         .accessibilityLabel(title)

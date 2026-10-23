@@ -217,8 +217,21 @@ nonisolated enum SidebarDropGeometry {
     }
 
     static func webURL(from text: String) -> URL? {
-        guard case .url(let url) = URLInput.resolve(text) else { return nil }
-        return webURL(from: url)
+        let lines = text.split(whereSeparator: \.isNewline).map(String.init)
+        for candidate in lines.isEmpty ? [text] : lines {
+            guard case .url(let url) = URLInput.resolve(candidate) else { continue }
+            if let web = webURL(from: url) { return web }
+        }
+        return nil
+    }
+
+    /// A page link may arrive as a transferable URL, an `NSURL` from WebKit, or plain text.
+    /// The first http(s) value wins. A file URL falls through to the text.
+    static func externalWebURL(transferable: URL?, object: URL?, text: String?) -> URL? {
+        if let url = transferable.flatMap(webURL(from:)) { return url }
+        if let url = object.flatMap(webURL(from:)) { return url }
+        if let text { return webURL(from: text) }
+        return nil
     }
 }
 
@@ -420,22 +433,58 @@ final class SidebarInteraction {
     @ObservationIgnored private var expandTask: Task<Void, Never>?
     @ObservationIgnored private var expandID: UUID?
     @ObservationIgnored private var dragHaptics = SidebarDragHaptics()
+    /// Mouse-up after a drag would also activate the row button (toggle a folder, select a site).
+    @ObservationIgnored private var ignoreClicksUntil: Date?
+    /// A drop session can keep sending updates after `performDrop`, which leaves the insertion line up.
+    /// External link loads return before the pasteboard is read, so the line has to settle immediately.
+    @ObservationIgnored private var dropGeneration = 0
+    @ObservationIgnored private var settledGeneration = 0
+
+    func shouldIgnoreRowClick() -> Bool {
+        guard let until = ignoreClicksUntil else { return false }
+        if until < Date() {
+            ignoreClicksUntil = nil
+            return false
+        }
+        return true
+    }
 
     func noteDrag(phase: DragSession.Phase, ids: [UUID]) {
         switch phase {
-        case .initial, .active:
+        case .initial:
             draggingID = ids.first ?? SidebarDragBridge.armedID
+            ignoreClicksUntil = Date().addingTimeInterval(1.5)
+            beginHoverSession()
+        case .active:
+            draggingID = ids.first ?? SidebarDragBridge.armedID
+            ignoreClicksUntil = Date().addingTimeInterval(1.5)
         case .ended, .dataTransferCompleted:
             draggingID = nil
             SidebarDragBridge.armedID = nil
-            proposal = nil
-            hoverToken = nil
-            cancelExpand()
-            dragHaptics.reset()
+            ignoreClicksUntil = Date().addingTimeInterval(0.4)
+            settleDrop()
         @unknown default:
             draggingID = ids.first ?? SidebarDragBridge.armedID
+            ignoreClicksUntil = Date().addingTimeInterval(1.5)
         }
     }
+
+    func beginHoverSession() {
+        if dropGeneration == settledGeneration {
+            dropGeneration += 1
+        }
+    }
+
+    /// Hides the insertion line. Later updates from the same drop session stay hidden.
+    func settleDrop() {
+        settledGeneration = dropGeneration
+        proposal = nil
+        hoverToken = nil
+        cancelExpand()
+        dragHaptics.reset()
+    }
+
+    private var dropIsSettled: Bool { dropGeneration == settledGeneration }
 
     func noteHover(
         context: SidebarDropContext,
@@ -444,6 +493,14 @@ final class SidebarInteraction {
         size: CGSize,
         draggedID: UUID?
     ) {
+        if dropIsSettled {
+            if proposal != nil || hoverToken != nil {
+                proposal = nil
+                hoverToken = nil
+                cancelExpand()
+            }
+            return
+        }
         switch phase {
         case .exiting, .ended:
             if hoverToken == context.token {

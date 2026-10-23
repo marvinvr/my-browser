@@ -7,7 +7,7 @@ import Foundation
 /// `childrenIds`. A tab is `data.tab` (`savedURL`, `savedTitle`). A folder is `data.list`.
 /// An `itemContainer` is `pinned`, `unpinned`, `topApps`, or `spaceItems` (a space's
 /// sidebar, whose pinned/unpinned role is the matching entry in `newContainerIDs`).
-/// `topApps` are favorites for one Arc profile, stored once and placed on the first
+/// `topApps` are favorites for one Arc profile, stored once and copied onto every
 /// imported space of that profile. Spaces that share an Arc profile share one plan profile.
 nonisolated enum ArcSidebarParser {
     struct Read: Sendable {
@@ -35,7 +35,6 @@ nonisolated enum ArcSidebarParser {
             let spaceObjects = JSONTree.pairedObjects(container["spaces"])
             guard !items.isEmpty || !spaceObjects.isEmpty else { continue }
             let favorites = favoriteNodes(in: container, items: items, profileNames: profileNames)
-            var favoritesGiven: Set<String> = []
 
             for space in spaceObjects {
                 let spaceID = JSONTree.string(space["id"]) ?? ""
@@ -51,11 +50,8 @@ nonisolated enum ArcSidebarParser {
                 let unpinned = flatten(under: roles.unpinned, items: items)
                 unpinnedSiteCount += ImportNode.siteCount(in: unpinned)
 
-                var spaceFavorites: [ImportNode] = []
-                if favoritesGiven.insert(identity.key).inserted {
-                    spaceFavorites = favorites[identity.key] ?? []
-                    if !spaceFavorites.isEmpty { placedFavorites = true }
-                }
+                let spaceFavorites = favorites[identity.key] ?? []
+                if !spaceFavorites.isEmpty { placedFavorites = true }
 
                 let icon = iconParts(space["customInfo"])
                 let rawName = JSONTree.string(space["title"])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -74,7 +70,7 @@ nonisolated enum ArcSidebarParser {
 
         var notes: [String] = []
         if placedFavorites {
-            notes.append("Arc favorites were added to the first space of each profile.")
+            notes.append("Arc favorites were added to every space of each profile.")
         }
         let plan = ImportPlan(profiles: profiles, spaces: spaces, notes: notes)
         return Read(plan: plan, unpinnedSiteCount: unpinnedSiteCount)

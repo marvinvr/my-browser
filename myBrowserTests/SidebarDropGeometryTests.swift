@@ -143,4 +143,13 @@ struct SidebarDropGeometryTests {
         #expect(beside.indicatorToken == sibling.id)
         #expect(beside.lineEdge == .top)
     }
+
+    @Test func externalLinkUsesTheHTTPSURLWhenThePasteboardURLIsAFile() {
+        let page = URL(string: "https://example.com/from-page")!
+        let file = URL(fileURLWithPath: "/tmp/page.html")
+        #expect(SidebarDropGeometry.externalWebURL(transferable: nil, object: page, text: "Drop me") == page)
+        #expect(SidebarDropGeometry.externalWebURL(transferable: file, object: nil, text: "https://example.com/from-page") == page)
+        #expect(SidebarDropGeometry.externalWebURL(transferable: nil, object: nil, text: "Drop me\nhttps://example.com/from-page") == page)
+        #expect(SidebarDropGeometry.externalWebURL(transferable: nil, object: file, text: "not a url") == nil)
+    }
 }

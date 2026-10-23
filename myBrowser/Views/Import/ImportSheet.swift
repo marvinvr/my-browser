@@ -141,7 +141,7 @@ struct ImportSheet: View {
         switch source.kind {
         case .arcSidebar:
             Toggle("Include unpinned tabs", isOn: $session.includeUnpinned)
-            Text("Pinned folders keep their order. Favorites go into the first space of each profile. Cookies are not imported.")
+            Text("Pinned folders keep their order. Favorites go into every space of each profile. Cookies are not imported.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .chromium:

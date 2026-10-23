@@ -58,7 +58,9 @@ struct SidebarRow: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.trailing, 2)
-                .transition(.opacity)
+                .opacity(interaction.draggingID == nil ? 1 : 0)
+                .allowsHitTesting(interaction.draggingID == nil)
+                .accessibilityHidden(interaction.draggingID != nil)
                 .accessibilityLabel("Close \(title)")
             }
         }
@@ -71,6 +73,7 @@ struct SidebarRow: View {
             )
         }
         .onContinuousHover { phase in
+            if interaction.draggingID == item.id { return }
             if case .active = phase {
                 hovering = true
             } else {

@@ -101,6 +101,7 @@ final class SidebarRowDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
+        interaction?.beginHoverSession()
         update(info, active: true)
     }
 
@@ -125,33 +126,57 @@ final class SidebarRowDropDelegate: DropDelegate {
         let location = info.location
         if let id = draggedID {
             interaction?.performItem(id, context: context, location: location, size: size)
+            interaction?.settleDrop()
             return true
         }
-        if let provider = info.itemProviders(for: [.url]).first {
-            _ = provider.loadTransferable(type: URL.self) { result in
-                let url = try? result.get()
-                Task { @MainActor in
-                    guard let url else { return }
-                    SidebarInteractionHook.shared?.performExternal(url, context: context, location: location, size: size)
-                }
+        let providers = info.itemProviders(for: [.url, .plainText, .text])
+        guard let provider = providers.first(where: {
+            $0.hasItemConformingToTypeIdentifier(UTType.url.identifier)
+        }) ?? providers.first else {
+            return false
+        }
+        loadExternal(provider, context: context, location: location, size: size)
+        interaction?.settleDrop()
+        return true
+    }
+
+    /// WebKit's link drag is an `NSURL` (`public.url`). `loadTransferable(URL.self)` often
+    /// fails on that payload and used to swallow the drop, so there was no plain-text fallback.
+    /// The two loads start together. Their callbacks are `@Sendable` and cannot capture the provider.
+    private func loadExternal(
+        _ provider: NSItemProvider,
+        context: SidebarDropContext,
+        location: CGPoint,
+        size: CGSize
+    ) {
+        let gate = ExternalDropGate()
+        _ = provider.loadObject(ofClass: NSURL.self) { object, _ in
+            let url = object as? URL
+            guard let pair = gate.receive(url: url, text: nil, part: .url) else { return }
+            Task { @MainActor in
+                Self.applyExternal(pair, context: context, location: location, size: size)
             }
-            return true
         }
-        if let provider = info.itemProviders(for: [.plainText, .text]).first {
-            _ = provider.loadTransferable(type: String.self) { result in
-                let text = try? result.get()
-                Task { @MainActor in
-                    guard let text else { return }
-                    if let id = SidebarItemTransfer.id(from: text) {
-                        SidebarInteractionHook.shared?.performItem(id, context: context, location: location, size: size)
-                    } else {
-                        SidebarInteractionHook.shared?.performText(text, context: context, location: location, size: size)
-                    }
-                }
+        _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+            let text = object as? String
+            guard let pair = gate.receive(url: nil, text: text, part: .text) else { return }
+            Task { @MainActor in
+                Self.applyExternal(pair, context: context, location: location, size: size)
             }
-            return true
         }
-        return false
+    }
+
+    private static func applyExternal(
+        _ pair: (url: URL?, text: String?),
+        context: SidebarDropContext,
+        location: CGPoint,
+        size: CGSize
+    ) {
+        if let resolved = SidebarDropGeometry.externalWebURL(transferable: nil, object: pair.url, text: pair.text) {
+            SidebarInteractionHook.shared?.performExternal(resolved, context: context, location: location, size: size)
+        } else if let text = pair.text, let sidebarID = SidebarItemTransfer.id(from: text) {
+            SidebarInteractionHook.shared?.performItem(sidebarID, context: context, location: location, size: size)
+        }
     }
 
     private func update(_ info: DropInfo, active: Bool) {
@@ -162,6 +187,34 @@ final class SidebarRowDropDelegate: DropDelegate {
             size: box.size,
             draggedID: draggedID
         )
+    }
+}
+
+/// Joins the URL and plain-text halves of one external drop. Touched only from the provider callbacks.
+private nonisolated final class ExternalDropGate: @unchecked Sendable {
+    enum Part { case url, text }
+
+    private let lock = NSLock()
+    private var url: URL?
+    private var text: String?
+    private var urlDone = false
+    private var textDone = false
+    private var delivered = false
+
+    func receive(url: URL?, text: String?, part: Part) -> (url: URL?, text: String?)? {
+        lock.lock()
+        defer { lock.unlock() }
+        switch part {
+        case .url:
+            self.url = url
+            urlDone = true
+        case .text:
+            self.text = text
+            textDone = true
+        }
+        guard urlDone, textDone, !delivered else { return nil }
+        delivered = true
+        return (self.url, self.text)
     }
 }
 

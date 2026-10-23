@@ -49,7 +49,7 @@ struct ImporterTests {
         #expect(plan.spaces.map(\.name) == ["Personal", "Studio", "Notes"])
         #expect(plan.profiles.map(\.key) == ["default", "custom:Profile 1"])
         #expect(plan.profiles.map(\.name) == ["Default", "Profile 1"])
-        #expect(plan.notes == ["Arc favorites were added to the first space of each profile."])
+        #expect(plan.notes == ["Arc favorites were added to every space of each profile."])
 
         let personal = plan.spaces[0]
         #expect(personal.emoji == "🏠")
@@ -77,7 +77,7 @@ struct ImporterTests {
         #expect(notes.emoji == "📚")
         #expect(notes.symbol == "book.fill")
         #expect(notes.color == .yellow)
-        #expect(notes.favorites.isEmpty)
+        #expect(outline(notes.favorites) == outline(studio.favorites))
         #expect(outline(notes.pinned) == ["Note https://example.com/note"])
         #expect(notes.tabs.isEmpty)
     }
@@ -130,7 +130,7 @@ struct ImporterTests {
         #expect(batches.count == 1)
         #expect(result.spacesCreated == 3)
         #expect(result.profilesCreated == 2)
-        #expect(result.summary == "Imported 3 spaces, 3 favorites, 7 pinned items, 3 tabs")
+        #expect(result.summary == "Imported 3 spaces, 4 favorites, 7 pinned items, 3 tabs")
         #expect(store.orderedSpaces.map(\.id).first == existing.id)
         #expect(store.orderedSpaces.dropFirst().map(\.id) == result.spaceIDs)
 
@@ -141,7 +141,11 @@ struct ImporterTests {
         #expect(studio.profileID == notes.profileID)
         #expect(studio.profileID != personal.profileID)
         #expect(store.profile(studio.profileID)?.name == "Profile 1")
-        #expect(store.children(of: nil, section: .favorites, in: notes.id).isEmpty)
+        let noteFavorites = store.children(of: nil, section: .favorites, in: notes.id)
+        let studioFavorites = store.children(of: nil, section: .favorites, in: studio.id)
+        #expect(noteFavorites.map(\.title) == ["Board"])
+        #expect(studioFavorites.map(\.title) == ["Board"])
+        #expect(noteFavorites.map(\.id) != studioFavorites.map(\.id))
         #expect(store.children(of: nil, section: .favorites, in: personal.id).map(\.title) == ["Mail", "Calendar"])
 
         let pinned = store.children(of: nil, section: .pinned, in: personal.id)
