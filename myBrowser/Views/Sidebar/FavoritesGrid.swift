@@ -89,14 +89,21 @@ struct FavoritesGrid: View {
 
     private func tile(_ item: SidebarItem) -> some View {
         let tab = model.tabs[item.id]
+        let away = model.isPinnedAway(item.id)
         let title = SidebarTitle.text(for: item, tab: tab)
         let isSelected = model.selectedItemID == item.id
-        let icon = tab?.favicon ?? item.url.flatMap { model.favicons.cachedFavicon(for: $0) }
+        let icon: NSImage?
+        if away, let saved = item.url {
+            icon = model.favicons.cachedFavicon(for: saved)
+        } else {
+            icon = tab?.favicon ?? item.url.flatMap { model.favicons.cachedFavicon(for: $0) }
+        }
         return FavoriteTile(
             item: item,
             title: title,
             favicon: icon,
             isSelected: isSelected,
+            isAway: away,
             onRename: { onRename(item) },
             onNewFolder: onNewFolder
         )
@@ -108,17 +115,35 @@ private struct FavoriteTile: View {
     var title: String
     var favicon: NSImage?
     var isSelected: Bool
+    var isAway: Bool
     var onRename: () -> Void
     var onNewFolder: () -> Void
 
     @State private var hovering = false
+    @State private var returnHome: Task<Void, Never>?
 
     @Environment(BrowserModel.self) private var model
     @Environment(SidebarInteraction.self) private var interaction
 
     var body: some View {
         Button {
-            model.select(item.id)
+            if interaction.editingID == item.id { return }
+            if (NSApp.currentEvent?.clickCount ?? 1) > 1 {
+                returnHome?.cancel()
+                interaction.editingID = item.id
+                return
+            }
+            if isSelected, isAway {
+                // Wait out a double-click, which renames instead of loading the home URL.
+                returnHome?.cancel()
+                returnHome = Task {
+                    try? await Task.sleep(for: .milliseconds(350))
+                    guard !Task.isCancelled else { return }
+                    model.returnToPinnedURL(item.id)
+                }
+            } else {
+                model.select(item.id)
+            }
         } label: {
             Group {
                 if interaction.editingID == item.id {
@@ -126,6 +151,13 @@ private struct FavoriteTile: View {
                         .padding(.horizontal, 4)
                 } else {
                     FaviconView(image: favicon, url: item.url, title: title, size: 18)
+                        .overlay(alignment: .topTrailing) {
+                            if isAway {
+                                AwayDot()
+                                    .frame(width: 5, height: 5)
+                                    .offset(x: 3, y: -3)
+                            }
+                        }
                 }
             }
                 .frame(maxWidth: .infinity)
@@ -142,9 +174,10 @@ private struct FavoriteTile: View {
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
         .simultaneousGesture(TapGesture(count: 2).onEnded {
+            returnHome?.cancel()
             interaction.editingID = item.id
         })
-        .help(title)
+        .help(isAway && title != item.title ? "\(item.title) / \(title)" : title)
         .onContinuousHover { phase in
             if case .active = phase {
                 hovering = true
@@ -154,7 +187,26 @@ private struct FavoriteTile: View {
         }
         .sidebarDragRow(item: item, depth: 0, axis: .horizontal)
         .modifier(SidebarItemMenu(item: item, onRename: onRename, onNewFolderInside: onNewFolder))
-        .accessibilityLabel(title)
+        .accessibilityLabel(isAway ? "\(item.title), \(title)" : title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Small neutral mark on a favorite whose live page is not the saved URL.
+private struct AwayDot: NSViewRepresentable {
+    func makeNSView(context: Context) -> AwayDotView { AwayDotView() }
+
+    func updateNSView(_ view: AwayDotView, context: Context) {
+        view.needsDisplay = true
+    }
+}
+
+private final class AwayDotView: NSView {
+    override var allowsVibrancy: Bool { false }
+    override var intrinsicContentSize: NSSize { NSSize(width: 5, height: 5) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.secondaryLabelColor.setFill()
+        NSBezierPath(ovalIn: bounds).fill()
     }
 }

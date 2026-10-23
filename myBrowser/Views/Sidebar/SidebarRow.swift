@@ -21,7 +21,7 @@ struct SidebarRow: View {
             if item.isSplit {
                 splitSegments(leading: leading, isSelected: isSelected)
             } else {
-                siteButton(title: siteTitle, isEditing: isEditing, leading: leading)
+                siteControls(isEditing: isEditing, leading: leading)
             }
 
             if hovering, !isEditing {
@@ -72,30 +72,61 @@ struct SidebarRow: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private func siteButton(title: String, isEditing: Bool, leading: CGFloat) -> some View {
+    /// A pinned site puts the icon on its own button so a click returns home while the title stays on the live page.
+    private func siteControls(isEditing: Bool, leading: CGFloat) -> some View {
         let tab = model.tabs[item.id]
-        let icon = tab?.favicon ?? (item.url ?? tab?.url).flatMap { model.favicons.cachedFavicon(for: $0) }
-        return Button {
-            model.select(item.id)
-        } label: {
-            HStack(spacing: 8) {
-                FaviconView(image: icon, url: item.url ?? tab?.url, title: title, size: 16)
-                if isEditing {
-                    SidebarInlineField(itemID: item.id, title: item.title)
-                } else {
-                    FlatLabel(text: title)
+        let away = model.isPinnedAway(item.id)
+        let title = SidebarTitle.text(for: item, tab: tab)
+        let icon = rowIcon(for: item, tab: tab, away: away)
+        let iconURL = item.section == .tabs ? (item.url ?? tab?.url) : item.url
+        return HStack(spacing: 0) {
+            if item.section == .pinned {
+                Button {
+                    if away {
+                        model.returnToPinnedURL(item.id)
+                    } else {
+                        model.select(item.id)
+                    }
+                } label: {
+                    FaviconView(image: icon, url: iconURL, title: title, size: 16)
+                        .padding(.leading, leading)
+                        .padding(.trailing, away && !isEditing ? 0 : 8)
+                        .frame(height: SidebarMetrics.rowHeight)
+                        .contentShape(Rectangle())
                 }
-                Spacer(minLength: 0)
+                .buttonStyle(.plain)
+                .accessibilityHidden(true)
             }
-            .padding(.leading, leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+
+            Button {
+                model.select(item.id)
+            } label: {
+                HStack(spacing: item.section == .pinned ? 0 : 8) {
+                    if item.section != .pinned {
+                        FaviconView(image: icon, url: iconURL, title: title, size: 16)
+                    }
+                    if away, !isEditing {
+                        FlatLabel(text: "  /  ", prominence: .quiet, hugs: true)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .accessibilityHidden(true)
+                    }
+                    if isEditing {
+                        SidebarInlineField(itemID: item.id, title: item.title)
+                    } else {
+                        FlatLabel(text: title)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, item.section == .pinned ? 0 : leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                guard item.section != .tabs else { return }
+                interaction.editingID = item.id
+            })
         }
-        .buttonStyle(.plain)
-        .simultaneousGesture(TapGesture(count: 2).onEnded {
-            guard item.section != .tabs else { return }
-            interaction.editingID = item.id
-        })
     }
 
     private func splitSegments(leading: CGFloat, isSelected: Bool) -> some View {
@@ -119,24 +150,55 @@ struct SidebarRow: View {
 
     private func splitSegment(_ member: SidebarItem, focused: Bool) -> some View {
         let tab = model.tabs[member.id]
+        let away = model.isPinnedAway(member.id)
         let title = SidebarTitle.text(for: member, tab: tab)
-        let icon = tab?.favicon ?? (member.url ?? tab?.url).flatMap { model.favicons.cachedFavicon(for: $0) }
-        return Button {
-            guard !interaction.shouldIgnoreRowClick() else { return }
-            model.select(member.id)
-        } label: {
-            HStack(spacing: 5) {
-                FaviconView(image: icon, url: member.url ?? tab?.url, title: title, size: 16)
-                FlatLabel(text: title, prominence: focused ? .strong : .quiet)
-                Spacer(minLength: 0)
+        let icon = rowIcon(for: member, tab: tab, away: away)
+        let iconURL = member.section == .tabs ? (member.url ?? tab?.url) : member.url
+        return HStack(spacing: 0) {
+            Button {
+                guard !interaction.shouldIgnoreRowClick() else { return }
+                if away {
+                    model.returnToPinnedURL(member.id)
+                } else {
+                    model.select(member.id)
+                }
+            } label: {
+                FaviconView(image: icon, url: iconURL, title: title, size: 16)
+                    .frame(height: SidebarMetrics.rowHeight)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityHidden(true)
+
+            Button {
+                guard !interaction.shouldIgnoreRowClick() else { return }
+                model.select(member.id)
+            } label: {
+                HStack(spacing: 0) {
+                    if away {
+                        FlatLabel(text: "  /  ", prominence: .quiet, hugs: true)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .accessibilityHidden(true)
+                    }
+                    FlatLabel(text: title, prominence: focused ? .strong : .quiet)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            .accessibilityLabel(title)
+            .accessibilityAddTraits(focused ? .isSelected : [])
         }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel(title)
-        .accessibilityAddTraits(focused ? .isSelected : [])
+    }
+
+    /// Away pins keep the saved site's icon. The slash is what says the page has moved.
+    private func rowIcon(for item: SidebarItem, tab: BrowserTab?, away: Bool) -> NSImage? {
+        if away, let saved = item.url, let cached = model.favicons.cachedFavicon(for: saved) {
+            return cached
+        }
+        return tab?.favicon ?? (item.url ?? tab?.url).flatMap { model.favicons.cachedFavicon(for: $0) }
     }
 
     private var siteTitle: String {
@@ -168,12 +230,13 @@ private struct FlatLabel: NSViewRepresentable {
         case regular
         /// The focused pane. Slightly heavier than its siblings.
         case strong
-        /// An unfocused pane in a split row.
+        /// An unfocused pane in a split row, and the away slash.
         case quiet
     }
 
     var text: String
     var prominence: Prominence = .regular
+    var hugs: Bool = false
 
     func makeNSView(context: Context) -> FlatLabelField {
         let field = FlatLabelField(frame: .zero)
@@ -186,7 +249,6 @@ private struct FlatLabel: NSViewRepresentable {
         field.stringValue = text
         field.wantsLayer = true
         field.layerContentsRedrawPolicy = .onSetNeedsDisplay
-        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.setContentHuggingPriority(.defaultHigh, for: .vertical)
         apply(to: field)
         return field
@@ -209,6 +271,9 @@ private struct FlatLabel: NSViewRepresentable {
             field.font = .systemFont(ofSize: 13)
             field.textColor = .secondaryLabelColor
         }
+        let priority: NSLayoutConstraint.Priority = hugs ? .required : .defaultLow
+        field.setContentCompressionResistancePriority(priority, for: .horizontal)
+        field.setContentHuggingPriority(hugs ? .required : .defaultLow, for: .horizontal)
     }
 }
 

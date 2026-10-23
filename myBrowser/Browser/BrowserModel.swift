@@ -279,9 +279,9 @@ final class BrowserModel {
         let wasSelected = session.selectedItemBySpace[spaceID] == itemID
         let order = navigableItems(in: spaceID)
         let index = order.firstIndex { $0.id == itemID }
-        let state = capturedState(for: itemID)
 
-        if item.section == .tabs {
+        if PinnedPage.recordsLiveURL(in: item.section) {
+            let state = capturedState(for: itemID)
             var snapshot = item
             if let tab = tabs[itemID] {
                 if let liveURL = tab.url { snapshot.url = liveURL }
@@ -293,8 +293,9 @@ final class BrowserModel {
             }
             session.interactionStates[itemID] = nil
             library.deleteItem(itemID)
-        } else if let state {
-            session.interactionStates[itemID] = state
+        } else {
+            // Closing a pin unloads it and forgets the away page. The next open loads `item.url`.
+            session.interactionStates[itemID] = nil
         }
         unloadTab(itemID)
         if sidebarFocusID == itemID { setSidebarFocus(nil) }
@@ -333,8 +334,9 @@ final class BrowserModel {
             }
             session.interactionStates[item.id] = nil
             library.deleteItem(item.id)
-        } else if let state {
-            session.interactionStates[item.id] = state
+        } else {
+            // Closing a pinned pane unloads it and forgets the away page. The next open loads `item.url`.
+            session.interactionStates[item.id] = nil
         }
         unloadTab(item.id)
         if sidebarFocusID == item.id { setSidebarFocus(split.id) }
@@ -553,6 +555,53 @@ final class BrowserModel {
         }
     }
 
+    /// Loaded pin or favorite whose page is not the saved URL.
+    func isPinnedAway(_ itemID: UUID) -> Bool {
+        guard let item = library.item(itemID) else { return false }
+        return SidebarTitle.isAway(item, tab: tabs[itemID])
+    }
+
+    /// Loads the saved URL in the pin. A new load, not a walk back through history.
+    func returnToPinnedURL(_ itemID: UUID) {
+        guard let item = library.item(itemID), item.kind == .site, !PinnedPage.recordsLiveURL(in: item.section) else { return }
+        let tab = tabs[itemID]
+        let before = PinnedPage.State(
+            savedURL: item.url,
+            savedTitle: item.title,
+            currentURL: tab?.url,
+            currentTitle: tab?.title ?? "",
+            loaded: tab?.isLoaded == true,
+            hasInteractionState: session.interactionStates[itemID] != nil
+        )
+        let after = PinnedPage.returnHome(before)
+        select(itemID)
+        guard after.currentURL != before.currentURL, let url = after.currentURL else { return }
+        session.interactionStates[itemID] = nil
+        tabs[itemID]?.load(url)
+    }
+
+    /// Saves the page that is open as the pin's URL and title. No-op unless that page is away.
+    /// One `updateItem`, so sync sees a single record change (`modifiedAt` included).
+    /// The favicon is the host cache the live tab already filled; the item has no icon field.
+    func replacePinnedURLWithCurrent(_ itemID: UUID) {
+        guard let item = library.item(itemID), item.kind == .site, !PinnedPage.recordsLiveURL(in: item.section) else { return }
+        guard let tab = tabs[itemID], tab.isLoaded else { return }
+        let before = PinnedPage.State(
+            savedURL: item.url,
+            savedTitle: item.title,
+            currentURL: tab.url,
+            currentTitle: tab.title,
+            loaded: true,
+            hasInteractionState: session.interactionStates[itemID] != nil
+        )
+        let after = PinnedPage.replaceWithCurrent(before)
+        guard after.savedURL != before.savedURL || after.savedTitle != before.savedTitle else { return }
+        library.updateItem(itemID) {
+            $0.url = after.savedURL
+            $0.title = after.savedTitle
+        }
+    }
+
     /// Cmd+D. Pins the selected tab or split, or unpins a pinned/favorite site or split back to tabs.
     func togglePinSelected() {
         guard let id = selectedItemID, let item = library.item(id) else { return }
@@ -642,7 +691,8 @@ final class BrowserModel {
         if spaceChanges || pinsOpenPage {
             for siteID in movedSites {
                 guard let site = library.item(siteID) else { continue }
-                let adoptsLiveURL = spaceChanges || site.section == .tabs
+                // A pin's home URL survives a space change. Only an unpinned tab stores the live page.
+                let adoptsLiveURL = PinnedPage.recordsLiveURL(in: site.section)
                 guard adoptsLiveURL, let live = tabs[siteID]?.url, site.url != live else { continue }
                 library.updateItem(siteID) { $0.url = live }
             }
@@ -870,9 +920,9 @@ final class BrowserModel {
         NavigationCommands.apply(self)
     }
 
-    /// Tabs mirror the live URL and title. Pinned and favorite items keep the title and URL the user saved.
+    /// Tabs mirror the live URL and title. Pinned and favorite items keep the URL and title the user saved.
     private func mirror(_ tab: BrowserTab) {
-        guard let item = library.item(tab.id), item.section == .tabs else { return }
+        guard let item = library.item(tab.id), PinnedPage.recordsLiveURL(in: item.section) else { return }
         let title = tab.title.isEmpty ? item.title : tab.title
         let url = tab.url ?? item.url
         guard title != item.title || url != item.url else { return }

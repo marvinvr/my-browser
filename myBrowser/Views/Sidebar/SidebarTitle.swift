@@ -2,15 +2,32 @@ import AppKit
 import Foundation
 
 enum SidebarTitle {
-    /// Tab title when the tab is loaded, otherwise the item title, otherwise the host.
+    /// Pinned and favorite rows keep the saved name until the live page leaves that URL.
+    /// Then the row shows the current page title. Unpinned tabs keep the live title.
     static func text(for item: SidebarItem, tab: BrowserTab?) -> String {
+        if item.kind == .site, item.section != .tabs {
+            if isAway(item, tab: tab) {
+                return PinnedPage.liveTitle(current: tab?.title ?? "", url: tab?.url, fallback: item.title)
+            }
+            return storedTitle(item, url: item.url)
+        }
         let liveTitle = tab?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if tab?.isLoaded == true, !liveTitle.isEmpty {
             return liveTitle
         }
+        return storedTitle(item, url: tab?.url ?? item.url)
+    }
+
+    /// Loaded pin whose current page is not the saved URL (fragment and trailing slash ignored).
+    static func isAway(_ item: SidebarItem, tab: BrowserTab?) -> Bool {
+        guard item.kind == .site, item.section != .tabs, tab?.isLoaded == true else { return false }
+        return PinnedPage.isAway(current: tab?.url, saved: item.url)
+    }
+
+    private static func storedTitle(_ item: SidebarItem, url: URL?) -> String {
         let stored = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
         if !stored.isEmpty { return stored }
-        if let host = host(of: tab?.url ?? item.url) { return host }
+        if let host = host(of: url) { return host }
         return "New Tab"
     }
 

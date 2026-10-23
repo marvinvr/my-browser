@@ -34,6 +34,11 @@ struct SidebarItemMenu: ViewModifier {
                 joinCommands
                 Button("Unpin") { model.unpin(item.id) }
                 Button("Rename") { onRename() }
+                if model.isPinnedAway(item.id) {
+                    Button("Replace Pinned URL with Current") {
+                        model.replacePinnedURLWithCurrent(item.id)
+                    }
+                }
                 Button("New Folder") { onNewFolderInside() }
                 moveMenu
                 if let url = link {
@@ -64,6 +69,11 @@ struct SidebarItemMenu: ViewModifier {
             ForEach(members) { member in
                 Menu(memberTitle(member)) {
                     Button("Separate") { model.separate(tabID: member.id) }
+                    if model.isPinnedAway(member.id) {
+                        Button("Replace Pinned URL with Current") {
+                            model.replacePinnedURLWithCurrent(member.id)
+                        }
+                    }
                     Button("Close") { model.close(member.id) }
                 }
             }

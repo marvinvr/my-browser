@@ -294,4 +294,135 @@ struct BrowserModelTests {
         #expect(library.item(folder.id)?.section == .pinned)
         #expect(library.item(child.id)?.section == .pinned)
     }
+
+    @Test func navigatingAPinDoesNotChangeItsSavedURL() throws {
+        let (model, library, _) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let saved = URL(string: "https://pin.example/home")!
+        let pin = library.addItem(spaceID: spaceID, section: .pinned, title: "Notes", url: saved, at: .end)
+        let favorite = library.addItem(
+            spaceID: spaceID, section: .favorites, title: "Fav", url: URL(string: "https://fav.example/"), at: .end
+        )
+        model.select(pin.id)
+        let away = URL(string: "https://pin.example/home/other")!
+        model.tabs[pin.id]?.load(away)
+        model.tabs[pin.id]?.showDisplayedLocation(url: away, title: "Current Page Title")
+
+        let shown = try #require(library.item(pin.id))
+        #expect(model.isPinnedAway(pin.id))
+        #expect(SidebarTitle.text(for: shown, tab: model.tabs[pin.id]) == "Current Page Title")
+        #expect(library.item(pin.id)?.url == saved)
+        #expect(library.item(pin.id)?.title == "Notes")
+
+        model.tabs[pin.id]?.load(URL(string: "https://pin.example/home/#section")!)
+        #expect(model.isPinnedAway(pin.id) == false)
+        #expect(library.item(pin.id)?.url == saved)
+
+        model.select(favorite.id)
+        model.tabs[favorite.id]?.load(URL(string: "https://fav.example/away")!)
+        #expect(model.isPinnedAway(favorite.id))
+        #expect(library.item(favorite.id)?.url == URL(string: "https://fav.example/"))
+        #expect(library.item(favorite.id)?.title == "Fav")
+    }
+
+    @Test func closingAPinResetsItToTheSavedURL() throws {
+        let (model, library, session) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let saved = URL(string: "https://pin.example/home")!
+        let keeper = site(library, spaceID: spaceID, title: "Keeper", section: .tabs)
+        let pin = library.addItem(spaceID: spaceID, section: .pinned, title: "Notes", url: saved, at: .end)
+        model.select(pin.id)
+        session.interactionStates[pin.id] = Data([9, 9, 9])
+        model.tabs[pin.id]?.load(URL(string: "https://pin.example/away")!)
+
+        model.close(pin.id)
+
+        #expect(library.item(pin.id)?.url == saved)
+        #expect(library.item(pin.id)?.title == "Notes")
+        #expect(session.interactionStates[pin.id] == nil)
+        #expect(model.tabs[pin.id] == nil)
+        #expect(session.closedTabs.isEmpty)
+        #expect(model.selectedItemID == keeper.id)
+
+        model.select(pin.id)
+        #expect(model.tabs[pin.id]?.isLoaded == true)
+        #expect(model.tabs[pin.id]?.url == saved)
+        #expect(model.isPinnedAway(pin.id) == false)
+    }
+
+    @Test func replacePinnedURLWritesTheLivePage() throws {
+        let (model, library, _) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let saved = URL(string: "https://pin.example/home")!
+        let pin = library.addItem(spaceID: spaceID, section: .pinned, title: "Notes", url: saved, at: .end)
+        model.select(pin.id)
+        model.replacePinnedURLWithCurrent(pin.id)
+        #expect(library.item(pin.id)?.url == saved)
+        #expect(library.item(pin.id)?.title == "Notes")
+
+        let away = URL(string: "https://elsewhere.example/page")!
+        model.tabs[pin.id]?.showDisplayedLocation(url: away, title: "Current Page Title")
+        model.replacePinnedURLWithCurrent(pin.id)
+
+        #expect(library.item(pin.id)?.url == away)
+        #expect(library.item(pin.id)?.title == "Current Page Title")
+        #expect(model.isPinnedAway(pin.id) == false)
+    }
+
+    @Test func returnToPinnedURLLoadsTheSavedURL() throws {
+        let (model, library, session) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let saved = URL(string: "https://pin.example/home")!
+        let pin = library.addItem(spaceID: spaceID, section: .pinned, title: "Notes", url: saved, at: .end)
+        model.select(pin.id)
+        let away = URL(string: "https://pin.example/away")!
+        model.tabs[pin.id]?.load(away)
+        session.interactionStates[pin.id] = Data([4])
+
+        model.returnToPinnedURL(pin.id)
+
+        #expect(model.tabs[pin.id]?.url == saved)
+        #expect(library.item(pin.id)?.url == saved)
+        #expect(session.interactionStates[pin.id] == nil)
+        #expect(model.isPinnedAway(pin.id) == false)
+    }
+
+    @Test func movingAPinAcrossSpacesKeepsTheHomeURL() throws {
+        let (model, library, _) = makeModel()
+        let origin = try #require(model.selectedSpace?.id)
+        let work = model.createSpace(name: "Work", symbol: "briefcase.fill", color: .orange)
+        model.selectSpace(origin)
+        let saved = URL(string: "https://pin.example/home")!
+        let pin = library.addItem(spaceID: origin, section: .pinned, title: "Notes", url: saved, at: .end)
+        model.select(pin.id)
+        model.tabs[pin.id]?.load(URL(string: "https://pin.example/away")!)
+
+        model.moveItem(pin.id, toSpace: work.id, section: .pinned, parentID: nil, position: .end)
+
+        #expect(library.item(pin.id)?.url == saved)
+        #expect(library.item(pin.id)?.title == "Notes")
+        #expect(library.item(pin.id)?.spaceID == work.id)
+        #expect(model.tabs[pin.id] == nil)
+    }
+
+    @Test func pinningStillCapturesTheLiveURL() throws {
+        let (model, library, _) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let moving = library.addItem(
+            spaceID: spaceID,
+            section: .tabs,
+            title: "Move",
+            url: URL(string: "https://move.example/start"),
+            at: .end
+        )
+        model.select(moving.id)
+        let live = URL(string: "https://move.example/now")!
+        model.tabs[moving.id]?.load(live)
+        model.tabs[moving.id]?.showDisplayedLocation(url: live, title: "Now")
+
+        model.pin(moving.id)
+
+        #expect(library.item(moving.id)?.section == .pinned)
+        #expect(library.item(moving.id)?.url == live)
+    }
 }
