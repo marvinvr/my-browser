@@ -1,7 +1,36 @@
 import AppKit
 import SwiftUI
 
-/// Favorites for one space, four rounded tiles per row.
+/// How many favorites sit on each row. Rows are balanced for the width instead of filled left to right.
+nonisolated enum FavoriteGridLayout {
+    static let spacing: CGFloat = 6
+    static let tileHeight: CGFloat = 36
+    /// Smallest tile. The sidebar's minimum width still fits `columnCap` of these.
+    static let minimumTileWidth: CGFloat = 32
+    /// The previous grid was four across. Wider sidebars grow the tiles; they do not add a column.
+    static let columnCap = 4
+
+    /// How many tiles fit in `width`, never more than `columnCap`.
+    static func maxPerRow(for width: CGFloat) -> Int {
+        guard width.isFinite, width > 0 else { return 1 }
+        let slot = minimumTileWidth + spacing
+        let fitted = Int((width + spacing) / slot)
+        return min(columnCap, max(1, fitted))
+    }
+
+    /// `ceil(itemCount / maxPerRow)` rows. Earlier rows take the remainder, so lengths differ by at most one.
+    /// 6 with a max of 4 is 3+3, 5 is 3+2, 7 is 4+3, 9 is 3+3+3.
+    static func rowCounts(itemCount: Int, maxPerRow: Int) -> [Int] {
+        guard itemCount > 0 else { return [] }
+        let limit = max(1, maxPerRow)
+        let rows = (itemCount + limit - 1) / limit
+        let base = itemCount / rows
+        let extra = itemCount % rows
+        return (0..<rows).map { $0 < extra ? base + 1 : base }
+    }
+}
+
+/// Favorites for one space. Each row's tiles share that row's width so the edges line up.
 struct FavoritesGrid: View {
     var spaceID: UUID
     var onRename: (SidebarItem) -> Void
@@ -9,8 +38,8 @@ struct FavoritesGrid: View {
 
     @Environment(BrowserModel.self) private var model
     @State private var emptyToken = UUID()
-
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 4)
+    /// Matches a default sidebar before the first measurement, which is already four columns.
+    @State private var width: CGFloat = SidebarMetrics.defaultWidth - 12
 
     var body: some View {
         let items = model.library.siblings(of: nil, section: .favorites, in: spaceID).items
@@ -19,15 +48,43 @@ struct FavoritesGrid: View {
                 .frame(height: 12)
                 .sidebarDropTarget(.tail(spaceID: spaceID, section: .favorites, token: emptyToken))
         } else {
-            LazyVGrid(columns: columns, spacing: 6) {
-                ForEach(items) { item in
-                    tile(item)
+            balancedGrid(items)
+                .padding(.top, 4)
+                .padding(.bottom, 2)
+                .animation(SidebarMotion.row, value: items.map(\.id))
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onAppear { width = proxy.size.width }
+                            .onChange(of: proxy.size.width) { _, newWidth in
+                                width = newWidth
+                            }
+                    }
+                }
+        }
+    }
+
+    private func balancedGrid(_ items: [SidebarItem]) -> some View {
+        let counts = FavoriteGridLayout.rowCounts(
+            itemCount: items.count,
+            maxPerRow: FavoriteGridLayout.maxPerRow(for: width)
+        )
+        return VStack(spacing: FavoriteGridLayout.spacing) {
+            ForEach(Array(counts.enumerated()), id: \.offset) { row, _ in
+                HStack(spacing: FavoriteGridLayout.spacing) {
+                    ForEach(rowItems(items, row: row, counts: counts)) { item in
+                        tile(item)
+                    }
                 }
             }
-            .padding(.top, 4)
-            .padding(.bottom, 2)
-            .animation(SidebarMotion.row, value: items.map(\.id))
         }
+    }
+
+    private func rowItems(_ items: [SidebarItem], row: Int, counts: [Int]) -> [SidebarItem] {
+        let start = counts.prefix(row).reduce(0, +)
+        let end = min(items.count, start + counts[row])
+        guard start < end else { return [] }
+        return Array(items[start..<end])
     }
 
     private func tile(_ item: SidebarItem) -> some View {
@@ -76,7 +133,7 @@ private struct FavoriteTile: View {
                 }
             }
                 .frame(maxWidth: .infinity)
-                .frame(height: 36)
+                .frame(height: FavoriteGridLayout.tileHeight)
                 .background {
                     SidebarSelectionBackground(
                         isSelected: isSelected,
@@ -89,6 +146,7 @@ private struct FavoriteTile: View {
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
         .simultaneousGesture(TapGesture(count: 2).onEnded {
             interaction.editingID = item.id
         })

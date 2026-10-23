@@ -65,7 +65,7 @@ SidebarItem {
 }
 ```
 
-- **favorites**: pinned sites shown as the favicon grid at the top of the sidebar. Sites only, no folders, flat.
+- **favorites**: pinned sites shown as the favicon grid at the top of the sidebar. Sites only, no folders, flat. Rows are balanced for the sidebar width (at most four per row); tiles in a row share that row's width.
 - **pinned**: pinned sites and (nested) folders below the grid.
 - **tabs**: today's unpinned tabs. Sites only, flat. Every open unpinned tab *is* a `.tabs` item, which is how tabs survive relaunch.
 
@@ -275,3 +275,4 @@ Do not flip those switches before the container and the profile exist. A Release
 - 2026-10-23: web extensions use `WKWebExtensionController`, one controller per profile id. Packages are unpacked under `Application Support/myBrowser/Extensions`.
 - 2026-10-23: trackpad haptics use `NSHapticFeedbackManager` through `Haptics`. One pulse per state change: space-swipe detent, history-swipe threshold, drop slot, pin/unpin, folder auto-expand, space drop target, and the drop.
 - 2026-10-23: folder disclosure is a 0.2s no-bounce spring. Sidebar views read per-parent `SidebarSiblingList`s, so one toggle does not refresh the rest of the column.
+- 2026-10-23: the favorites grid balances rows (`ceil(n / maxPerRow)`, remainder on the earlier rows) so six icons are 3+3. Tiles in a row share its width. At most four per row, same as before.
