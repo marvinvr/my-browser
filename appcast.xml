@@ -7,6 +7,16 @@
     <description>Updates of myBrowser</description>
     <language>en</language>
     <item>
+      <title>Version 0.3.0</title>
+      <pubDate>Fri, 23 Oct 2026 05:41:06 +0000</pubDate>
+      <sparkle:version>4</sparkle:version>
+      <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://github.com/marvinvr/my-browser/releases/tag/v0.3.0</sparkle:fullReleaseNotesLink>
+      <description><![CDATA[<ul><li>Add native Picture in Picture for web video</li><li>Spin the reload arrow while a page loads</li><li>Ignore other debug apps&#x27; navigation notes</li><li>Leave folder disclosure on its own spring</li><li>Put Arc favorites on every space and fix sidebar drags</li><li>Soften the top address bar to plain text</li><li>Animate folder disclosure without rebuilding the sidebar</li><li>Add trackpad haptics for swipes and sidebar drops</li><li>Describe the v0.2.0 changes</li><li>Release v0.2.0</li><li>Round-trip space emoji and keep import sheets readable</li><li>Add web extension support</li><li>Add Chrome and Arc importers</li><li>Keep invalid remote sort keys from crashing</li><li>Add sidebar drag and drop</li></ul>]]></description>
+      <enclosure url="https://github.com/marvinvr/my-browser/releases/download/v0.3.0/myBrowser-0.3.0-4.dmg" length="4195234" type="application/octet-stream" sparkle:edSignature="tr2sxZMzwTZFmEfs7V/jVP+Ia2UvvA8lD75AEBnFB2o9LwBZ8EG9LoZCYZlYqkM1ySFc7dWmNhQtu3G0aXtdAQ=="/>
+    </item>
+    <item>
       <title>Version 0.2.0</title>
       <pubDate>Fri, 23 Oct 2026 00:18:14 +0000</pubDate>
       <sparkle:version>3</sparkle:version>

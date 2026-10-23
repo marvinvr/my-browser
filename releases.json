@@ -1,6 +1,34 @@
 {
   "releases": [
     {
+      "version": "0.3.0",
+      "build": "4",
+      "commit": "fef01cb29e572218842fda02bdc0fc216f39c10e",
+      "date": "2026-10-23T05:41:06Z",
+      "url": "https://github.com/marvinvr/my-browser/releases/download/v0.3.0/myBrowser-0.3.0-4.dmg",
+      "length": 4195234,
+      "edSignature": "tr2sxZMzwTZFmEfs7V/jVP+Ia2UvvA8lD75AEBnFB2o9LwBZ8EG9LoZCYZlYqkM1ySFc7dWmNhQtu3G0aXtdAQ==",
+      "minimumSystemVersion": "26.0",
+      "notes": [
+        "Add native Picture in Picture for web video",
+        "Spin the reload arrow while a page loads",
+        "Ignore other debug apps' navigation notes",
+        "Leave folder disclosure on its own spring",
+        "Put Arc favorites on every space and fix sidebar drags",
+        "Soften the top address bar to plain text",
+        "Animate folder disclosure without rebuilding the sidebar",
+        "Add trackpad haptics for swipes and sidebar drops",
+        "Describe the v0.2.0 changes",
+        "Release v0.2.0",
+        "Round-trip space emoji and keep import sheets readable",
+        "Add web extension support",
+        "Add Chrome and Arc importers",
+        "Keep invalid remote sort keys from crashing",
+        "Add sidebar drag and drop"
+      ],
+      "page": "https://github.com/marvinvr/my-browser/releases/tag/v0.3.0"
+    },
+    {
       "version": "0.2.0",
       "build": "3",
       "commit": "568950290ee13b0049c41e40249a2633dfce41b1",
