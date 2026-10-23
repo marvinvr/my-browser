@@ -145,7 +145,6 @@ private struct FolderRow: View {
             if interaction.draggingID == item.id { return }
             hovering = if case .active = phase { true } else { false }
         }
-        .animation(SidebarMotion.row, value: hovering)
         .sidebarDragRow(item: item, depth: depth)
         .modifier(SidebarItemMenu(item: item, onRename: onRename, onNewFolderInside: onNewFolder))
         .accessibilityLabel(title)
