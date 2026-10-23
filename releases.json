@@ -1,6 +1,34 @@
 {
   "releases": [
     {
+      "version": "0.6.2",
+      "build": "12",
+      "commit": "3c22e7f1512f55b463c42df09ed4bef73756ac3b",
+      "date": "2026-10-23T17:26:31Z",
+      "url": "https://github.com/marvinvr/my-browser/releases/download/v0.6.2/myBrowser-0.6.2-12.dmg",
+      "length": 5882146,
+      "edSignature": "D5/m+oV9TZOjX1u/n0h1b0iwKjU71M0runCSRM9pUchkPGEBQh6jZQUSWpgOO8uvBXztiiJXNoyuq5R6n0PZDQ==",
+      "minimumSystemVersion": "26.0",
+      "notes": [
+        "Start the 1Password extension core on Release",
+        "Release v0.6.1",
+        "Pause inline when the Picture in Picture panel is closed",
+        "Put split pane controls on each pane toolbar",
+        "Round only full-bleed favicons",
+        "Cross-fade the page when switching Spaces",
+        "Make the sidebar hover shape the click target",
+        "Release v0.6.0",
+        "Shorten the space-switch spring and carry the finger's speed",
+        "Keep low-contrast favicons readable",
+        "Drop an untouched Personal placeholder when iCloud already has spaces",
+        "Show sync as up to date when CloudKit is caught up",
+        "Clear a removed space emoji and cover split sync fields",
+        "Enable iCloud sync in Release builds",
+        "Preview half-card split drops without moving pins"
+      ],
+      "page": "https://github.com/marvinvr/my-browser/releases/tag/v0.6.2"
+    },
+    {
       "version": "0.6.1",
       "build": "11",
       "commit": "850c657890d5933c26aedecd386855ac6bea454b",
