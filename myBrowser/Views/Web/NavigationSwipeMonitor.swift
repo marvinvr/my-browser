@@ -6,9 +6,6 @@ import WebKit
 /// navigation distance. WebKit consumes the gesture inside `trackSwipeEvent`, so the samples
 /// come from a timer on the event-tracking run loop, which keeps firing while that loop runs.
 struct NavigationSwipeMonitor: NSViewRepresentable {
-    var canGoBack: Bool
-    var canGoForward: Bool
-
     func makeNSView(context: Context) -> NavigationSwipeMonitorView {
         let view = NavigationSwipeMonitorView()
         view.wantsLayer = true
@@ -16,16 +13,10 @@ struct NavigationSwipeMonitor: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: NavigationSwipeMonitorView, context: Context) {
-        view.canGoBack = canGoBack
-        view.canGoForward = canGoForward
-    }
+    func updateNSView(_ view: NavigationSwipeMonitorView, context: Context) {}
 }
 
 final class NavigationSwipeMonitorView: NSView {
-    var canGoBack = false
-    var canGoForward = false
-
     private let monitors = NavigationSwipeMonitorBox()
     private let bridge = NavigationSwipeBridge()
     private var detent = NavigationSwipeDetent()
@@ -71,8 +62,7 @@ final class NavigationSwipeMonitorView: NSView {
     func ingest(precise: Bool, deltaX: CGFloat, deltaY: CGFloat, windowNumber: Int, location: CGPoint) {
         guard precise else { return }
         guard abs(deltaX) + abs(deltaY) > 0.4 else { return }
-        guard let web = webView(), web.window?.windowNumber == windowNumber else { return }
-        guard web.bounds.contains(web.convert(location, from: nil)) else { return }
+        guard let web = webView(at: location, windowNumber: windowNumber) else { return }
         let horizontal = abs(deltaX) >= abs(deltaY)
         guard horizontal || monitors.isTiming else { return }
         arm()
@@ -101,8 +91,8 @@ final class NavigationSwipeMonitorView: NSView {
                 progress: reading.progress,
                 direction: reading.direction,
                 width: web.bounds.width,
-                canGoBack: canGoBack,
-                canGoForward: canGoForward
+                canGoBack: web.canGoBack,
+                canGoForward: web.canGoForward
             )
             if crossed, NSApp.isActive {
                 Haptics.play(.navigationThreshold)
@@ -124,15 +114,24 @@ final class NavigationSwipeMonitorView: NSView {
 
     private func webView() -> WKWebView? {
         if let cachedWebView, cachedWebView.window != nil { return cachedWebView }
-        guard let content = window?.contentView else { return nil }
-        cachedWebView = Self.findWebView(in: content)
-        return cachedWebView
+        return nil
     }
 
-    private static func findWebView(in view: NSView) -> WKWebView? {
-        if let web = view as? WKWebView { return web }
-        for subview in view.subviews {
-            if let web = findWebView(in: subview) { return web }
+    /// The page under the pointer. A split has several web views; the swipe belongs to the one being touched.
+    private func webView(at location: CGPoint, windowNumber: Int) -> WKWebView? {
+        guard window?.windowNumber == windowNumber, let content = window?.contentView else { return nil }
+        let local = content.convert(location, from: nil)
+        guard let web = Self.webView(in: content, containing: local) else { return nil }
+        cachedWebView = web
+        return web
+    }
+
+    private static func webView(in view: NSView, containing point: NSPoint) -> WKWebView? {
+        for subview in view.subviews.reversed() {
+            let local = view.convert(point, to: subview)
+            guard subview.bounds.contains(local) else { continue }
+            if let web = subview as? WKWebView { return web }
+            if let web = webView(in: subview, containing: local) { return web }
         }
         return nil
     }

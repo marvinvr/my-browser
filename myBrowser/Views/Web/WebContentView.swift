@@ -1,25 +1,27 @@
 import AppKit
 import SwiftUI
 
-/// Hosts the selected tab's web view. The web view is created once and moved between selections; it is never rebuilt just to show it again.
+/// Hosts the selected site, or every pane of the selected split.
+/// Web views are created once and moved between panes. A resize does not rebuild them.
 struct WebContentView: View {
     @Environment(BrowserModel.self) private var model
 
     var body: some View {
-        ZStack {
-            HostedWebView(tabID: model.selectedTab?.id, model: model)
-            if model.selectedTab == nil {
+        let content = model.displayedContent
+        return ZStack {
+            if let content {
+                SplitCanvas(content: content)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity)
+            } else {
                 emptyState
                     .transition(.opacity)
             }
         }
-        .animation(.spring(duration: 0.35, bounce: 0.2), value: model.selectedTab == nil)
+        .animation(.spring(duration: 0.35, bounce: 0.2), value: content == nil)
         .background {
-            NavigationSwipeMonitor(
-                canGoBack: model.selectedTab?.canGoBack ?? false,
-                canGoForward: model.selectedTab?.canGoForward ?? false
-            )
-            .allowsHitTesting(false)
+            NavigationSwipeMonitor()
+                .allowsHitTesting(false)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -35,60 +37,5 @@ struct WebContentView: View {
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
-    }
-}
-
-private struct HostedWebView: NSViewRepresentable {
-    var tabID: UUID?
-    var model: BrowserModel
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.clear.cgColor
-        return view
-    }
-
-    func updateNSView(_ container: NSView, context: Context) {
-        guard let tabID, let tab = model.tabs[tabID] else {
-            clear(container, context: context)
-            return
-        }
-        tab.loadIfNeeded(using: model.profiles)
-        guard let webView = tab.webView else {
-            clear(container, context: context)
-            return
-        }
-        if context.coordinator.installedID == tabID, webView.superview === container {
-            tab.restoreHistoryWhenWindowed()
-            return
-        }
-        for subview in container.subviews where subview !== webView {
-            subview.removeFromSuperview()
-        }
-        if webView.superview !== container {
-            webView.removeFromSuperview()
-            webView.translatesAutoresizingMaskIntoConstraints = false
-            container.addSubview(webView)
-            NSLayoutConstraint.activate([
-                webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                webView.topAnchor.constraint(equalTo: container.topAnchor),
-                webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            ])
-        }
-        context.coordinator.installedID = tabID
-        tab.restoreHistoryWhenWindowed()
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    private func clear(_ container: NSView, context: Context) {
-        context.coordinator.installedID = nil
-        container.subviews.forEach { $0.removeFromSuperview() }
-    }
-
-    final class Coordinator {
-        var installedID: UUID?
     }
 }
