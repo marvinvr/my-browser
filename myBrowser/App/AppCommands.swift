@@ -71,6 +71,18 @@ struct AppCommands: Commands {
             Button("Pin/Unpin Tab") { model.togglePinSelected() }
                 .keyboardShortcut("d")
             Divider()
+            // ⌘⇧= is Zoom In on a US keyboard, so the split command is ⌃⌘S.
+            Button("Open in Split View") { model.openInSplitView() }
+                .keyboardShortcut("s", modifiers: [.command, .control])
+            Button("Separate Pane") { model.separateFocusedPane() }
+                .keyboardShortcut("-", modifiers: [.command, .shift])
+            Button("Swap Panes") { model.swapFocusedPanes() }
+                .keyboardShortcut("\\", modifiers: [.command, .shift])
+            Button("Focus Next Pane") { model.focusAdjacentPane(offset: 1) }
+                .keyboardShortcut(.rightArrow, modifiers: [.control, .option])
+            Button("Focus Previous Pane") { model.focusAdjacentPane(offset: -1) }
+                .keyboardShortcut(.leftArrow, modifiers: [.control, .option])
+            Divider()
             Button("Next Space") { model.selectNextSpace() }
                 .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
             Button("Previous Space") { model.selectPreviousSpace() }

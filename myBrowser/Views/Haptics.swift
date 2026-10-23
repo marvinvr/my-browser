@@ -149,6 +149,7 @@ struct SidebarDragHaptics: Equatable {
     private enum Token: Equatable {
         case slot(space: UUID, section: SidebarItem.Section, parent: UUID?, position: SidebarDropPosition)
         case space(UUID)
+        case split(UUID)
     }
 
     private var gate = HapticGate<Token>()
@@ -165,6 +166,8 @@ struct SidebarDragHaptics: Equatable {
         case .space:
             self.section = nil
             return .spaceTarget
+        case .split:
+            return .dropSlot
         }
     }
 
@@ -180,6 +183,8 @@ struct SidebarDragHaptics: Equatable {
             .slot(space: insertion.spaceID, section: insertion.section, parent: insertion.parentID, position: insertion.position)
         case .ontoSpace(let id):
             .space(id)
+        case .intoSplit(let id):
+            .split(id)
         case .intoFolder, nil:
             nil
         }

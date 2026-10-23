@@ -26,8 +26,13 @@ enum DebugSnapshot {
             relays.append(observe(name) { note in
                 let path = note.userInfo?["path"] as? String
                 let window = note.userInfo?["window"] as? String
+                let windows = note.userInfo?["windows"] as? String
                 Task { @MainActor in
-                    await DebugSnapshot.capture(to: path, preferring: window)
+                    if windows == "all" {
+                        DebugSnapshot.captureOwnedWindows(to: path)
+                    } else {
+                        await DebugSnapshot.capture(to: path, preferring: window)
+                    }
                 }
             })
         }
@@ -190,6 +195,75 @@ enum DebugSnapshot {
         if let number = value as? NSNumber { return number.intValue }
         if let text = value as? String { return Int(text) }
         return nil
+    }
+
+    /// Every on-screen window of this process, including a context menu.
+    /// `screencapture` cannot read these windows from outside the app.
+    @MainActor
+    static func captureOwnedWindows(to path: String?) {
+        guard let path, path.hasPrefix("/") else { return }
+        typealias Create = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let symbol = dlsym(dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_LAZY), "CGWindowListCreateImage") else {
+            return
+        }
+        let create = unsafeBitCast(symbol, to: Create.self)
+        guard let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return
+        }
+        let pid = Int(ProcessInfo.processInfo.processIdentifier)
+        struct Shot {
+            var image: CGImage
+            var bounds: CGRect
+        }
+        var shots: [Shot] = []
+        for item in info {
+            guard (item[kCGWindowOwnerPID as String] as? Int) == pid else { continue }
+            guard let number = item[kCGWindowNumber as String] as? Int, number > 0 else { continue }
+            guard let raw = item[kCGWindowBounds as String] as? [String: Any] else { continue }
+            let bounds = CGRect(
+                x: (raw["X"] as? NSNumber)?.doubleValue ?? 0,
+                y: (raw["Y"] as? NSNumber)?.doubleValue ?? 0,
+                width: (raw["Width"] as? NSNumber)?.doubleValue ?? 0,
+                height: (raw["Height"] as? NSNumber)?.doubleValue ?? 0
+            )
+            guard bounds.width > 8, bounds.height > 8 else { continue }
+            let includingWindow: UInt32 = 1 << 3
+            let options: UInt32 = (1 << 0) | (1 << 3)
+            guard let image = create(.null, includingWindow, UInt32(number), options)?.takeRetainedValue() else { continue }
+            guard image.width > 8, image.height > 8 else { continue }
+            shots.append(Shot(image: image, bounds: bounds))
+        }
+        guard let first = shots.first else { return }
+        var union = first.bounds
+        for shot in shots.dropFirst() { union = union.union(shot.bounds) }
+        guard union.width > 1, union.height > 1 else { return }
+        let scale = CGFloat(first.image.width) / max(first.bounds.width, 1)
+        let pixelsWide = max(1, Int((union.width * scale).rounded(.up)))
+        let pixelsHigh = max(1, Int((union.height * scale).rounded(.up)))
+        guard let context = CGContext(
+            data: nil,
+            width: pixelsWide,
+            height: pixelsHigh,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return }
+        context.setFillColor(CGColor(gray: 0, alpha: 0))
+        context.fill(CGRect(x: 0, y: 0, width: pixelsWide, height: pixelsHigh))
+        // The window list is front to back. Draw the back window first so a menu stays on top.
+        for shot in shots.reversed() {
+            let dest = CGRect(
+                x: (shot.bounds.minX - union.minX) * scale,
+                y: (union.maxY - shot.bounds.maxY) * scale,
+                width: shot.bounds.width * scale,
+                height: shot.bounds.height * scale
+            )
+            context.draw(shot.image, in: dest)
+        }
+        guard let composed = context.makeImage(),
+              let data = NSBitmapImageRep(cgImage: composed).representation(using: .png, properties: [:]) else { return }
+        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
     }
 
     /// Own-window composite. Returns nil when the window server refuses the capture.

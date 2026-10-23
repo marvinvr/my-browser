@@ -98,6 +98,8 @@ struct HapticsTests {
         #expect(drag.note(.insert(first)) == .pinChange)
         #expect(drag.note(.ontoSpace(icon)) == .spaceTarget)
         #expect(drag.note(.ontoSpace(icon)) == nil)
+        #expect(drag.note(.intoSplit(folder)) == .dropSlot)
+        #expect(drag.note(.intoSplit(folder)) == nil)
         #expect(drag.note(nil) == nil)
         drag.reset()
         #expect(drag.note(.ontoSpace(icon)) == .spaceTarget)

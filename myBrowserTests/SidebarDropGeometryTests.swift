@@ -152,4 +152,75 @@ struct SidebarDropGeometryTests {
         #expect(SidebarDropGeometry.externalWebURL(transferable: nil, object: nil, text: "Drop me\nhttps://example.com/from-page") == page)
         #expect(SidebarDropGeometry.externalWebURL(transferable: nil, object: file, text: "not a url") == nil)
     }
+
+    @Test func rowEdgesStayReorderAndTheMiddleSplits() {
+        #expect(SidebarDropGeometry.zone(y: 2, height: 30, treatsMiddleAsInto: false, treatsMiddleAsSplit: true) == .before)
+        #expect(SidebarDropGeometry.zone(y: 28, height: 30, treatsMiddleAsInto: false, treatsMiddleAsSplit: true) == .after)
+        #expect(SidebarDropGeometry.zone(y: 15, height: 30, treatsMiddleAsInto: false, treatsMiddleAsSplit: true) == .split)
+        #expect(SidebarDropGeometry.zone(y: 15, height: 30, treatsMiddleAsInto: true, treatsMiddleAsSplit: true) == .into)
+        #expect(SidebarDropGeometry.zone(y: 14, height: 30, treatsMiddleAsInto: false, treatsMiddleAsSplit: false) == .before)
+        #expect(SidebarDropGeometry.zone(y: 15, height: 30, treatsMiddleAsInto: false, treatsMiddleAsSplit: false) == .after)
+    }
+
+    @Test func droppingOnTheMiddleOfATabProposesASplit() {
+        let store = LibraryStore(directory: nil)
+        let space = store.createSpace(name: "Personal")
+        let target = store.addItem(spaceID: space.id, section: .tabs, title: "Target", url: URL(string: "https://target.example"))
+        let dragged = store.addItem(spaceID: space.id, section: .tabs, title: "Dragged", url: URL(string: "https://dragged.example"))
+        let context = SidebarDropContext.row(target, depth: 0)
+        let size = CGSize(width: 220, height: 30)
+
+        let middle = SidebarDropResolver.proposal(
+            context: context,
+            location: CGPoint(x: 40, y: 15),
+            size: size,
+            draggingID: dragged.id,
+            library: store
+        )
+        let edge = SidebarDropResolver.proposal(
+            context: context,
+            location: CGPoint(x: 40, y: 2),
+            size: size,
+            draggingID: dragged.id,
+            library: store
+        )
+        #expect(middle == .intoSplit(target.id))
+        guard case .insert(let insertion) = edge else {
+            Issue.record("expected an insertion")
+            return
+        }
+        #expect(insertion.position == .before(target.id) || insertion.lineEdge == .top)
+    }
+
+    @Test func aFullSplitAndAFolderDoNotTakeASplitDrop() throws {
+        let store = LibraryStore(directory: nil)
+        let space = store.createSpace(name: "Personal")
+        let panes = (0..<4).map { index in
+            store.addItem(spaceID: space.id, section: .tabs, title: "Pane \(index)", url: URL(string: "https://pane\(index).example"))
+        }
+        let split = try #require(store.createSplit(tabIDs: panes.map(\.id)))
+        let dragged = store.addItem(spaceID: space.id, section: .tabs, title: "Extra", url: URL(string: "https://extra.example"))
+        let folder = store.addItem(spaceID: space.id, section: .pinned, kind: .folder, title: "Folder")
+        let size = CGSize(width: 220, height: 30)
+
+        let ontoSplit = SidebarDropResolver.proposal(
+            context: SidebarDropContext.row(split, depth: 0),
+            location: CGPoint(x: 40, y: 15),
+            size: size,
+            draggingID: dragged.id,
+            library: store
+        )
+        let ontoFolder = SidebarDropResolver.proposal(
+            context: SidebarDropContext.row(folder, depth: 0),
+            location: CGPoint(x: 40, y: 15),
+            size: size,
+            draggingID: dragged.id,
+            library: store
+        )
+        guard case .insert = ontoSplit else {
+            Issue.record("a full split should keep reordering")
+            return
+        }
+        #expect(ontoFolder == .intoFolder(folder.id))
+    }
 }

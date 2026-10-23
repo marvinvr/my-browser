@@ -5,17 +5,64 @@ import Observation
 /// The view owns one instance per presentation; actions go through `BrowserModel`.
 @Observable
 final class CommandBarModel {
+    /// Split commands offered when the query names them. The bar has no separate action catalog.
+    enum Action: String, CaseIterable, Identifiable {
+        case openInSplit
+        case separatePane
+        case separateAll
+        case swapPanes
+        case focusNext
+        case focusPrevious
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .openInSplit: "Open in Split View"
+            case .separatePane: "Separate Pane"
+            case .separateAll: "Separate All"
+            case .swapPanes: "Swap Panes"
+            case .focusNext: "Focus Next Pane"
+            case .focusPrevious: "Focus Previous Pane"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .openInSplit: "rectangle.split.2x1"
+            case .separatePane: "rectangle.split.2x1"
+            case .separateAll: "square.split.2x1"
+            case .swapPanes: "arrow.left.arrow.right"
+            case .focusNext: "arrow.right"
+            case .focusPrevious: "arrow.left"
+            }
+        }
+
+        fileprivate var keywords: [String] {
+            switch self {
+            case .openInSplit: ["split", "open in split", "split view"]
+            case .separatePane: ["separate", "separate pane"]
+            case .separateAll: ["separate all", "dissolve"]
+            case .swapPanes: ["swap", "swap panes"]
+            case .focusNext: ["focus next", "next pane"]
+            case .focusPrevious: ["focus previous", "previous pane"]
+            }
+        }
+    }
+
     enum Row: Identifiable, Equatable {
         case open(title: String, url: URL)
         case search(title: String, url: URL)
         /// A favorite, pin or tab in the current space.
         case tab(SidebarItem)
+        case action(Action)
 
         var id: String {
             switch self {
             case .open: "open"
             case .search: "search"
             case .tab(let item): "tab-\(item.id.uuidString)"
+            case .action(let action): "action-\(action.rawValue)"
             }
         }
 
@@ -23,6 +70,7 @@ final class CommandBarModel {
             switch self {
             case .open(let title, _), .search(let title, _): title
             case .tab(let item): item.title
+            case .action(let action): action.title
             }
         }
 
@@ -30,6 +78,7 @@ final class CommandBarModel {
             switch self {
             case .open(_, let url), .search(_, let url): url
             case .tab(let item): item.url
+            case .action: nil
             }
         }
     }
@@ -81,6 +130,10 @@ final class CommandBarModel {
             }
         case .tab(let item):
             browser.select(item.id)
+        case .action(let action):
+            let keepOpen = action == .openInSplit && browser.openInSplitView()
+            if !keepOpen { browser.hideCommandBar() }
+            return
         }
         browser.hideCommandBar()
     }
@@ -140,6 +193,11 @@ final class CommandBarModel {
                 let url = engine.searchURL(for: text)
                 next.append(.search(title: "Search \(engine.displayName) for '\(text)'", url: url))
             }
+            if case .search = next.first {
+                let actions = Self.matchingActions(query: trimmed, browser: browser)
+                let actionRoom = max(0, Self.maxVisibleRows - next.count)
+                next.append(contentsOf: actions.prefix(actionRoom).map { .action($0) })
+            }
             let matches = Self.rankedMatches(query: trimmed, items: candidateSites())
             let room = max(0, Self.maxVisibleRows - next.count)
             next.append(contentsOf: matches.prefix(room).map { .tab($0) })
@@ -161,6 +219,20 @@ final class CommandBarModel {
         candidateSites()
             .filter { $0.section == .tabs }
             .sorted { ($0.sortKey, $0.id.uuidString) < ($1.sortKey, $1.id.uuidString) }
+    }
+
+    /// Actions whose keywords contain the query, and that the current selection can run.
+    static func matchingActions(query: String, browser: BrowserModel) -> [Action] {
+        let folded = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard folded.count >= 3 else { return [] }
+        return Action.allCases.filter { action in
+            guard action.keywords.contains(where: { $0.hasPrefix(folded) || $0.contains(folded) }) else { return false }
+            switch action {
+            case .openInSplit: return browser.canOpenInSplitView
+            case .separatePane, .separateAll, .focusNext, .focusPrevious: return browser.canSeparatePane
+            case .swapPanes: return browser.canSwapPanes
+            }
+        }
     }
 
     private static func sectionIndex(_ section: SidebarItem.Section) -> Int {

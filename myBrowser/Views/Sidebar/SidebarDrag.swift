@@ -127,12 +127,16 @@ nonisolated enum SidebarDropProposal: Equatable {
     case insert(SidebarInsertion)
     case intoFolder(UUID)
     case ontoSpace(UUID)
+    /// Drop the dragged site onto this row to create a split, or to join one.
+    case intoSplit(UUID)
 }
 
 nonisolated enum SidebarDropZone: Equatable, Sendable {
     case before
     case after
     case into
+    /// Middle of a site or split row. Dropping groups the dragged site with the row.
+    case split
 }
 
 /// Pure hit testing for the insertion line. Rows are the visible outline, top to bottom.
@@ -140,12 +144,13 @@ nonisolated enum SidebarDropGeometry {
     static let indent: CGFloat = 14
     static let rowLeading: CGFloat = 6
 
-    static func zone(y: CGFloat, height: CGFloat, treatsMiddleAsInto: Bool) -> SidebarDropZone {
+    static func zone(y: CGFloat, height: CGFloat, treatsMiddleAsInto: Bool, treatsMiddleAsSplit: Bool = false) -> SidebarDropZone {
         let span = height > 1 ? height : 30
         let band = min(8, span * 0.3)
         if y < band { return .before }
         if y > span - band { return .after }
         if treatsMiddleAsInto { return .into }
+        if treatsMiddleAsSplit { return .split }
         return y < span / 2 ? .before : .after
     }
 
@@ -333,9 +338,13 @@ enum SidebarDropResolver {
         let rows = visibleRows(section: context.section, spaceID: context.spaceID, library: library)
         let ancestor: (UUID) -> SidebarDropRow? = { id in rows.first { $0.id == id } }
         let intoOK = row.isFolder && context.section == .pinned && canEnter(row.id, draggingID: draggingID, library: library)
-        let zone = zone(for: context.axis, location: location, size: size, into: intoOK)
+        let splitOK = !intoOK && canJoinSplit(row: row, draggingID: draggingID, section: context.section, library: library)
+        let zone = zone(for: context.axis, location: location, size: size, into: intoOK, split: splitOK)
         if zone == .into {
             return .intoFolder(row.id)
+        }
+        if zone == .split {
+            return .intoSplit(row.id)
         }
 
         guard let index = rows.firstIndex(where: { $0.id == row.id }) else { return nil }
@@ -385,14 +394,39 @@ enum SidebarDropResolver {
         return library.canDrop(draggingID, toSpace: spaceID, section: .pinned, parentID: folderID)
     }
 
-    private static func zone(for axis: SidebarDropAxis, location: CGPoint, size: CGSize, into: Bool) -> SidebarDropZone {
+    private static func zone(for axis: SidebarDropAxis, location: CGPoint, size: CGSize, into: Bool, split: Bool) -> SidebarDropZone {
         switch axis {
         case .horizontal:
             let width = size.width > 1 ? size.width : 1
             return location.x < width / 2 ? .before : .after
         case .vertical:
-            return SidebarDropGeometry.zone(y: location.y, height: size.height, treatsMiddleAsInto: into)
+            return SidebarDropGeometry.zone(
+                y: location.y,
+                height: size.height,
+                treatsMiddleAsInto: into,
+                treatsMiddleAsSplit: split
+            )
         }
+    }
+
+    /// A loose pinned or tabs site can join the hovered site, or a split that still has room.
+    /// Favorites, folders, and a dragged split stay on the reorder path.
+    private static func canJoinSplit(
+        row: SidebarDropRow,
+        draggingID: UUID?,
+        section: SidebarItem.Section,
+        library: LibraryStore
+    ) -> Bool {
+        guard section == .pinned || section == .tabs else { return false }
+        guard let draggingID, draggingID != row.id, let dragged = library.item(draggingID) else { return false }
+        guard dragged.kind == .site, dragged.section != .favorites, library.splitContainer(of: draggingID) == nil else { return false }
+        guard let target = library.item(row.id), target.spaceID == dragged.spaceID else { return false }
+        if target.isSplit {
+            let members = library.splitMembers(of: target.id)
+            return members.count < SidebarItem.maximumSplitMembers && !members.contains { $0.id == draggingID }
+        }
+        guard target.kind == .site, target.section != .favorites, library.splitContainer(of: target.id) == nil else { return false }
+        return target.section == .pinned || target.section == .tabs
     }
 
     static func visibleRows(section: SidebarItem.Section, spaceID: UUID, library: LibraryStore) -> [SidebarDropRow] {
@@ -617,11 +651,23 @@ final class SidebarInteraction {
             guard let draggingID, let item = model.library.item(draggingID) else { return }
             let section = model.library.sectionForSpaceDrop(item)
             model.moveItem(draggingID, toSpace: spaceID, section: section, parentID: nil, position: .end)
+        case .intoSplit(let targetID):
+            guard joinSplit(draggingID: draggingID, targetID: targetID) else { return }
         }
         Haptics.play(.drop)
         self.proposal = nil
         hoverToken = nil
         cancelExpand()
+    }
+
+    /// The hovered row stays the anchor: a site becomes a split there, a split gains the dragged pane.
+    private func joinSplit(draggingID: UUID?, targetID: UUID) -> Bool {
+        guard let model, let draggingID, let target = model.library.item(targetID) else { return false }
+        if target.isSplit {
+            let index = model.library.splitMembers(of: targetID).count
+            return model.addToSplit(tabID: draggingID, splitID: targetID, at: index) != nil
+        }
+        return model.createSplit(tabIDs: [targetID, draggingID]) != nil
     }
 
     private static func libraryPosition(_ position: SidebarDropPosition) -> LibraryStore.Position {

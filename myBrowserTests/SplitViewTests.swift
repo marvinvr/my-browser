@@ -452,6 +452,60 @@ struct SplitViewTests {
         #expect(model.selectedItemID == keeper.id)
         #expect(session.closedTabs.isEmpty)
     }
+
+    @Test func openInSplitViewFocusesABlankPane() throws {
+        let (model, library, _) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let page = site(library, spaceID: spaceID, title: "Page")
+        model.select(page.id)
+        #expect(model.openInSplitView())
+        let splitID = try #require(model.selectedItemID)
+        let members = library.splitMembers(of: splitID)
+        #expect(members.map(\.id).first == page.id)
+        #expect(members.count == 2)
+        #expect(members[1].title == "New Tab")
+        #expect(members[1].url == nil)
+        #expect(model.resolvedFocus(in: splitID) == members[1].id)
+        #expect(model.commandBarMode == .editCurrent)
+        #expect(model.selectedTab?.id == members[1].id)
+    }
+
+    @Test func separateAllKeepsPaneOrder() throws {
+        let (model, library, _) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let first = site(library, spaceID: spaceID, title: "First")
+        let second = site(library, spaceID: spaceID, title: "Second")
+        let third = site(library, spaceID: spaceID, title: "Third")
+        let split = try #require(model.createSplit(tabIDs: [first.id, second.id, third.id]))
+        model.separateAllPanes()
+        #expect(library.item(split.id)?.isSplit != true)
+        let roots = library.children(of: nil, section: .tabs, in: spaceID)
+        #expect(roots.map(\.id) == [first.id, second.id, third.id])
+        #expect(roots.allSatisfy { $0.kind == .site && $0.parentID == nil })
+    }
+
+    @Test func focusAndSwapMoveAmongPanes() throws {
+        let (model, library, _) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let first = site(library, spaceID: spaceID, title: "First")
+        let second = site(library, spaceID: spaceID, title: "Second")
+        let third = site(library, spaceID: spaceID, title: "Third")
+        model.select(first.id)
+        let split = try #require(model.createSplit(tabIDs: [first.id, second.id, third.id]))
+        #expect(model.resolvedFocus(in: split.id) == first.id)
+        model.focusAdjacentPane(offset: 1)
+        #expect(model.resolvedFocus(in: split.id) == second.id)
+        model.focusAdjacentPane(offset: -1)
+        #expect(model.resolvedFocus(in: split.id) == first.id)
+        model.focusAdjacentPane(offset: -1)
+        #expect(model.resolvedFocus(in: split.id) == third.id)
+        #expect(model.canSwapPanes == false)
+        model.separate(tabID: third.id)
+        #expect(library.splitMembers(of: split.id).count == 2)
+        model.select(split.id)
+        model.swapFocusedPanes()
+        #expect(library.splitMembers(of: split.id).map(\.id) == [second.id, first.id])
+    }
 }
 
 private func makeTempDirectory() throws -> URL {

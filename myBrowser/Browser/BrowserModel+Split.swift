@@ -162,6 +162,156 @@ extension BrowserModel {
         select(tabID)
     }
 
+    /// The selection can become a split, or a selected split still has room for a pane.
+    var canOpenInSplitView: Bool {
+        guard let id = selectedItemID, let item = library.item(id) else { return false }
+        if item.isSplit {
+            return library.splitMembers(of: id).count < SidebarItem.maximumSplitMembers
+        }
+        return canStartSplit(from: id)
+    }
+
+    /// The selection is a split with at least two panes.
+    var canSeparatePane: Bool {
+        guard let id = selectedItemID, library.item(id)?.isSplit == true else { return false }
+        return library.splitMembers(of: id).count >= SidebarItem.minimumSplitMembers
+    }
+
+    /// The selection is a split of exactly two panes.
+    var canSwapPanes: Bool {
+        guard let id = selectedItemID else { return false }
+        return library.splitMembers(of: id).count == 2
+    }
+
+    /// A loose pinned or tabs site. Favorites and panes that are already in a split cannot start another.
+    func canStartSplit(from itemID: UUID) -> Bool {
+        guard let item = library.item(itemID), item.kind == .site else { return false }
+        guard item.section == .pinned || item.section == .tabs else { return false }
+        return library.splitContainer(of: itemID) == nil
+    }
+
+    /// The selected site, when it can share a new split with `itemID`.
+    func selectedSplitPartner(for itemID: UUID) -> SidebarItem? {
+        guard canStartSplit(from: itemID), let item = library.item(itemID) else { return nil }
+        guard let selected = selectedItemID, selected != itemID, let partner = library.item(selected) else { return nil }
+        guard canStartSplit(from: partner.id), partner.spaceID == item.spaceID else { return nil }
+        return partner
+    }
+
+    /// The selected split, when `itemID` can be added and the split has fewer than four panes.
+    func selectedSplitToJoin(for itemID: UUID) -> SidebarItem? {
+        guard canStartSplit(from: itemID), let item = library.item(itemID) else { return nil }
+        guard let selected = selectedItemID, let split = library.item(selected), split.isSplit else { return nil }
+        guard split.spaceID == item.spaceID else { return nil }
+        guard library.splitMembers(of: split.id).count < SidebarItem.maximumSplitMembers else { return nil }
+        return split
+    }
+
+    /// Other root tabs in the same space, in sidebar order. The selected partner is left out.
+    func recentSplitPartners(for itemID: UUID, limit: Int = 8) -> [SidebarItem] {
+        guard canStartSplit(from: itemID), let item = library.item(itemID), limit > 0 else { return [] }
+        let partnerID = selectedSplitPartner(for: itemID)?.id
+        return library.children(of: nil, section: .tabs, in: item.spaceID).filter { candidate in
+            candidate.kind == .site
+                && candidate.id != itemID
+                && candidate.id != partnerID
+                && library.splitContainer(of: candidate.id) == nil
+        }
+        .prefix(limit)
+        .map { $0 }
+    }
+
+    /// Groups the selected site with a new empty tab, or adds one to the selected split.
+    ///
+    /// The new pane is focused and the command bar opens on it. Returns false when the
+    /// selection cannot grow a split (a favorite, a folder, or a split that already has four panes).
+    @discardableResult
+    func openInSplitView() -> Bool {
+        guard let id = selectedItemID else { return false }
+        return openInSplitView(anchoredOn: id)
+    }
+
+    /// Same as `openInSplitView()`, using `itemID` as the anchor instead of the selection.
+    @discardableResult
+    func openInSplitView(anchoredOn itemID: UUID) -> Bool {
+        guard let item = library.item(itemID) else { return false }
+        if item.isSplit {
+            return addBlankPane(to: item.id)
+        }
+        if item.kind == .site, let split = library.splitContainer(of: itemID) {
+            return addBlankPane(to: split.id)
+        }
+        guard canStartSplit(from: itemID) else { return false }
+        guard let blank = makeBlankTab(in: item.spaceID) else { return false }
+        guard createSplit(tabIDs: [item.id, blank.id]) != nil else {
+            library.deleteItem(blank.id)
+            return false
+        }
+        focusPane(tabID: blank.id)
+        presentCommandBar(.editCurrent)
+        return true
+    }
+
+    /// Pulls the focused pane out of the selected split.
+    func separateFocusedPane() {
+        guard let id = selectedItemID, library.item(id)?.isSplit == true, let focus = resolvedFocus(in: id) else { return }
+        separate(tabID: focus)
+    }
+
+    /// Releases every pane. The first pane keeps the split's place; the others follow it in order.
+    func separateAllPanes(of splitID: UUID? = nil) {
+        let id = splitID ?? selectedItemID
+        guard let id, library.item(id)?.isSplit == true else { return }
+        let members = library.splitMembers(of: id)
+        for member in members.dropFirst().reversed() {
+            separate(tabID: member.id)
+        }
+    }
+
+    /// Exchanges the two panes of the selected split. No-op unless there are exactly two.
+    func swapFocusedPanes() {
+        guard let id = selectedItemID, library.splitMembers(of: id).count == 2 else { return }
+        swapPanes(splitID: id, 0, 1)
+    }
+
+    /// Moves focus to the next pane, wrapping. `offset` -1 goes to the previous pane.
+    func focusAdjacentPane(offset: Int) {
+        guard offset != 0, let id = selectedItemID, library.item(id)?.isSplit == true else { return }
+        let members = library.splitMembers(of: id)
+        guard members.count > 1, let focus = resolvedFocus(in: id),
+              let index = members.firstIndex(where: { $0.id == focus }) else { return }
+        let count = members.count
+        let next = (index + ((offset % count) + count) % count) % count
+        guard next != index else { return }
+        focusPane(tabID: members[next].id)
+    }
+
+    private func addBlankPane(to splitID: UUID) -> Bool {
+        guard let split = library.item(splitID), split.isSplit else { return false }
+        let members = library.splitMembers(of: splitID)
+        guard members.count < SidebarItem.maximumSplitMembers else { return false }
+        guard let blank = makeBlankTab(in: split.spaceID) else { return false }
+        guard addToSplit(tabID: blank.id, splitID: splitID, at: members.count) != nil else {
+            library.deleteItem(blank.id)
+            return false
+        }
+        focusPane(tabID: blank.id)
+        presentCommandBar(.editCurrent)
+        return true
+    }
+
+    private func makeBlankTab(in spaceID: UUID) -> SidebarItem? {
+        guard library.space(spaceID) != nil else { return nil }
+        return library.addItem(
+            spaceID: spaceID,
+            section: .tabs,
+            kind: .site,
+            title: "New Tab",
+            url: nil,
+            at: .start
+        )
+    }
+
     /// Pane id to highlight when `itemID` is the selection. Members and ordinary sites return themselves.
     func navigableAnchor(for itemID: UUID?) -> UUID? {
         guard let itemID, let item = library.item(itemID) else { return itemID }

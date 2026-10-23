@@ -60,6 +60,10 @@ private struct CommandBarPresenter: View {
             bar = CommandBarModel(browser: browser, mode: mode, engine: bar.engine)
             applyDebugQuery()
         }
+        .onChange(of: browser.commandBarGeneration) { _, _ in
+            guard let mode = browser.commandBarMode else { return }
+            bar = CommandBarModel(browser: browser, mode: mode, engine: bar.engine)
+        }
     }
 
     private func applyDebugQuery() {
@@ -135,6 +139,11 @@ private struct CommandBarPanel: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .layoutPriority(1)
+                } else if case .action = row {
+                    Text("Action")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .layoutPriority(1)
                 }
             }
             .padding(.horizontal, 10)
@@ -162,6 +171,11 @@ private struct CommandBarPanel: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 16, height: 16)
+        case .action(let action):
+            Image(systemName: action.symbol)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 16)
         case .tab(let item):
             let image = browser.tabs[item.id]?.favicon ?? item.url.flatMap { browser.favicons.cachedFavicon(for: $0) }
             if let image {
@@ -185,6 +199,8 @@ private struct CommandBarPanel: View {
             title
         case .tab(let item):
             item.title.isEmpty ? (item.url?.absoluteString ?? "Tab") : item.title
+        case .action(let action):
+            action.title
         }
     }
 

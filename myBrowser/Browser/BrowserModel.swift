@@ -39,6 +39,8 @@ final class BrowserModel {
     private(set) var lastSpaceSwitchDirection: SpaceSwitchDirection = .next
     /// `nil` = command bar hidden.
     var commandBarMode: CommandBarMode?
+    /// Bumped when the bar should open fresh, even if `commandBarMode` did not change.
+    private(set) var commandBarGeneration = 0
     /// File → Import… presents the import sheet from the main window.
     var isPresentingImport = false
 
@@ -695,6 +697,13 @@ final class BrowserModel {
 
     func toggleSidebar() { session.isSidebarVisible.toggle() }
     func showCommandBar(_ mode: CommandBarMode) { commandBarMode = mode }
+
+    /// Opens the bar and replaces its query, including when it was already in `mode`.
+    func presentCommandBar(_ mode: CommandBarMode) {
+        commandBarGeneration += 1
+        commandBarMode = mode
+    }
+
     func hideCommandBar() { commandBarMode = nil }
 
     /// Copies the selected tab's real URL. No-op when there is nothing to copy.
