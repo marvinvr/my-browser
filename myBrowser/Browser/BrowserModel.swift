@@ -366,6 +366,8 @@ final class BrowserModel {
     }
 
     /// Close one pane. A tabs pane is removed and remembered for reopen. A pinned pane unloads and stays.
+    /// A pinned pane with no saved URL is deleted only when the live tab has no URL either. A page
+    /// loaded into that blank pane is stored as its home URL, then the pane unloads like any other pin.
     /// Removing a tabs pane dissolves the split when one member would be left.
     /// `archivingAt` also records a tabs pane in Archived Tabs.
     private func closeSplitMember(_ item: SidebarItem, split: SidebarItem, archivingAt: Date? = nil) {
@@ -398,12 +400,22 @@ final class BrowserModel {
             session.lastActiveAt[item.id] = nil
             session.interactionStates[item.id] = nil
             library.deleteItem(item.id)
-        } else if item.url == nil {
-            // A blank pane opened into a pin has no home URL. Unloading it would leave "New Tab" in the row.
+        } else if item.url == nil, tabs[item.id]?.url == nil {
+            // A blank pane opened into a pin has no home URL and has not loaded a page.
+            // Unloading it would leave "New Tab" in the row.
             session.interactionStates[item.id] = nil
             library.deleteItem(item.id)
         } else {
+            if item.url == nil, let tab = tabs[item.id], let liveURL = tab.url {
+                // Opened blank, then the user loaded a page. That page becomes the pin's home.
+                let title = PinnedPage.replacementTitle(saved: item.title, current: tab.title, url: liveURL)
+                library.updateItem(item.id) {
+                    $0.url = liveURL
+                    $0.title = title
+                }
+            }
             // Closing a pinned pane unloads it and forgets the away page. The next open loads `item.url`.
+            // Pins are not added to recently closed, same as closing a loose pin.
             session.interactionStates[item.id] = nil
         }
         unloadTab(item.id)

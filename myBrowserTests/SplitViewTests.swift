@@ -439,6 +439,43 @@ struct SplitViewTests {
         #expect(model.selectedItemID == pin.id)
     }
 
+    @Test func closingALoadedBlankPinnedPaneKeepsThePageAsItsHomeURL() throws {
+        let (model, library, session) = makeModel()
+        let spaceID = try #require(model.selectedSpace?.id)
+        let pin = site(library, spaceID: spaceID, title: "Pin", section: .pinned)
+        model.select(pin.id)
+        #expect(model.openInSplitView())
+        let splitID = try #require(model.selectedItemID)
+        let blank = try #require(library.splitMembers(of: splitID).last)
+        #expect(blank.url == nil)
+        #expect(blank.title == "New Tab")
+        let page = URL(string: "https://loaded.example/article")!
+        model.tabs[blank.id]?.showDisplayedLocation(url: page, title: "Loaded Article")
+        #expect(library.item(blank.id)?.url == nil)
+        session.interactionStates[blank.id] = Data([1, 2, 3])
+
+        model.close(blank.id)
+
+        let kept = try #require(library.item(blank.id))
+        #expect(kept.url == page)
+        #expect(kept.title == "Loaded Article")
+        #expect(kept.section == .pinned)
+        #expect(kept.parentID == splitID)
+        #expect(library.items[blank.id]?.deletedAt == nil)
+        #expect(library.item(splitID)?.isSplit == true)
+        #expect(library.splitMembers(of: splitID).map(\.id) == [pin.id, blank.id])
+        #expect(model.tabs[blank.id] == nil)
+        #expect(session.interactionStates[blank.id] == nil)
+        #expect(session.closedTabs.isEmpty)
+        #expect(model.selectedItemID == splitID)
+        #expect(model.resolvedFocus(in: splitID) == pin.id)
+
+        model.focusPane(tabID: blank.id)
+        #expect(model.tabs[blank.id]?.url == page)
+        #expect(model.tabs[blank.id]?.title == "Loaded Article")
+        #expect(session.closedTabs.isEmpty)
+    }
+
     @Test func remotePartialSplitStaysAndAMemberLossReconciles() throws {
         let (model, library, _) = makeModel()
         let spaceID = try #require(model.selectedSpace?.id)
