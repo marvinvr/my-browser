@@ -149,7 +149,6 @@ final class SplitPaneContainer: NSView {
     /// Non-flipped, so WebKit can dock the inspector along the bottom of the page.
     private let pageHost = InspectorDockHost()
     private let dim = SplitPassView()
-    private let ring = SplitFocusRing()
     private let placeholder = NSTextField(labelWithString: "")
     private var pillHost: PillHostingView?
     private var split = false
@@ -166,7 +165,6 @@ final class SplitPaneContainer: NSView {
         pageHost.translatesAutoresizingMaskIntoConstraints = true
         addSubview(pageHost)
         dim.translatesAutoresizingMaskIntoConstraints = false
-        ring.translatesAutoresizingMaskIntoConstraints = false
         placeholder.translatesAutoresizingMaskIntoConstraints = false
         placeholder.alignment = .center
         placeholder.textColor = .secondaryLabelColor
@@ -175,7 +173,6 @@ final class SplitPaneContainer: NSView {
         placeholder.maximumNumberOfLines = 2
         addSubview(placeholder)
         addSubview(dim)
-        addSubview(ring)
         NSLayoutConstraint.activate([
             placeholder.centerXAnchor.constraint(equalTo: centerXAnchor),
             placeholder.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -185,10 +182,6 @@ final class SplitPaneContainer: NSView {
             dim.trailingAnchor.constraint(equalTo: trailingAnchor),
             dim.topAnchor.constraint(equalTo: topAnchor),
             dim.bottomAnchor.constraint(equalTo: bottomAnchor),
-            ring.leadingAnchor.constraint(equalTo: leadingAnchor),
-            ring.trailingAnchor.constraint(equalTo: trailingAnchor),
-            ring.topAnchor.constraint(equalTo: topAnchor),
-            ring.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
     }
 
@@ -282,11 +275,9 @@ final class SplitPaneContainer: NSView {
         let radius: CGFloat = split ? SplitMetrics.cornerRadius : 0
         layer?.cornerRadius = radius
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        ring.radius = max(2, radius - 1)
-        ring.active = split && focused
-        ring.needsDisplay = true
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let dimmed: CGFloat = split && !focused ? (dark ? 0.16 : 0.05) : 0
+        // Focus stays in the sidebar segment and the toolbar URL. A 3% veil on the
+        // other panes is the only mark here, and it uses no accent color.
+        let dimmed: CGFloat = split && !focused ? 0.03 : 0
         let updates = {
             self.dim.alphaValue = dimmed
         }
@@ -302,7 +293,7 @@ final class SplitPaneContainer: NSView {
     }
 }
 
-/// Draws nothing that can be clicked. Sits above the page so the dim and the ring stay visible.
+/// Draws nothing that can be clicked. Sits above the page so the unfocused dim stays visible.
 private final class SplitPassView: NSView {
     override var isFlipped: Bool { true }
 
@@ -315,24 +306,6 @@ private final class SplitPassView: NSView {
     required init?(coder: NSCoder) { nil }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
-
-private final class SplitFocusRing: NSView {
-    var active = false
-    var radius: CGFloat = 7
-
-    override var isFlipped: Bool { true }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard active else { return }
-        let rect = bounds.insetBy(dx: 1.25, dy: 1.25)
-        let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
-        NSColor.controlAccentColor.withAlphaComponent(0.92).setStroke()
-        path.lineWidth = 1.5
-        path.stroke()
-    }
 }
 
 private final class PillHostingView: NSHostingView<PanePill> {

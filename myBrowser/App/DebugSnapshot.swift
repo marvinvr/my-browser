@@ -625,12 +625,16 @@ enum DebugSnapshot {
                 let coversPage = sibling.bounds.width > webView.bounds.width * 0.85
                     && sibling.bounds.height > webView.bounds.height * 0.85
                 if coversPage { continue }
-                guard let rep = sibling.bitmapImageRepForCachingDisplay(in: sibling.bounds) else { continue }
-                sibling.cacheDisplay(in: sibling.bounds, to: rep)
-                let image = NSImage(size: sibling.bounds.size)
-                image.addRepresentation(rep)
-                let chromeFrame = sibling.convert(sibling.bounds, to: content)
-                pageChrome.append((image, imageRect(for: chromeFrame, in: content)))
+                appendChrome(sibling, to: &pageChrome, content: content)
+            }
+            // The unfocused veil sits on the pane, above the page host, so it is not a
+            // sibling of the web view. The page image would hide it. Paint a translucent
+            // cover afterwards. An opaque cover is skipped so it cannot blank the page.
+            if let pane = parent.superview, let hostIndex = pane.subviews.firstIndex(of: parent) {
+                for sibling in pane.subviews.dropFirst(hostIndex + 1) {
+                    guard !sibling.isHidden, sibling.alphaValue > 0.01, sibling.alphaValue < 0.5 else { continue }
+                    appendChrome(sibling, to: &pageChrome, content: content)
+                }
             }
         }
         let sheetImage = attachedSheetImage(on: window, content: content)
@@ -719,6 +723,19 @@ enum DebugSnapshot {
 
         guard let data = output.representation(using: .png, properties: [:]) else { return }
         try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    private static func appendChrome(
+        _ sibling: NSView,
+        to pageChrome: inout [(NSImage, NSRect)],
+        content: NSView
+    ) {
+        guard let rep = sibling.bitmapImageRepForCachingDisplay(in: sibling.bounds) else { return }
+        sibling.cacheDisplay(in: sibling.bounds, to: rep)
+        let image = NSImage(size: sibling.bounds.size)
+        image.addRepresentation(rep)
+        let chromeFrame = sibling.convert(sibling.bounds, to: content)
+        pageChrome.append((image, imageRect(for: chromeFrame, in: content)))
     }
 
     /// The extension action popover. Its page is not the selected tab.
