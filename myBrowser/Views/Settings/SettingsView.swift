@@ -1,7 +1,7 @@
 import AuthenticationServices
 import SwiftUI
 
-/// Settings scene (⌘,). General holds the search engine, tab archive, and iCloud Sync; Appearance holds the address bar and Dock icon; Extensions holds installed web extensions.
+/// Settings scene (⌘,). General holds the search engine, tab archive, and iCloud Sync; Appearance holds the address bar and Dock icon; Websites holds notification decisions; Extensions holds installed web extensions.
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -9,6 +9,8 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             AppearanceSettingsView()
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
+            WebsiteSettingsView()
+                .tabItem { Label("Websites", systemImage: "bell") }
             ExtensionsSettingsView()
                 .tabItem { Label("Extensions", systemImage: "puzzlepiece.extension") }
         }

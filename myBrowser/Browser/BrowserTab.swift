@@ -68,6 +68,8 @@ final class BrowserTab: NSObject, Identifiable {
     @ObservationIgnored weak var downloads: DownloadManager?
     @ObservationIgnored private var webDelegate: TabWebDelegate?
     @ObservationIgnored var pictureInPictureRelay: PictureInPictureRelay?
+    @ObservationIgnored weak var notificationCenter: WebNotificationCenter?
+    @ObservationIgnored var notificationRelay: WebNotificationRelay?
     /// Latest frame info per document. WebKit hands out a new `WKFrameInfo` on every message.
     @ObservationIgnored var pictureInPictureFrames: [String: PictureInPictureFrame] = [:]
     /// Set while we close PiP ourselves, so the system panel's return path is not also a tab switch.
@@ -167,6 +169,7 @@ final class BrowserTab: NSObject, Identifiable {
         self.webView = webView
         isLoaded = true
         installPictureInPictureScript(on: webView)
+        installWebNotificationScript()
     }
 
     /// Shows a previously cached icon immediately, before the page finishes loading.
@@ -194,6 +197,7 @@ final class BrowserTab: NSObject, Identifiable {
         observations.forEach { $0.invalidate() }
         observations.removeAll()
         tearDownPictureInPicture()
+        tearDownWebNotifications()
         let webView = self.webView
         let keepDownloading = webView.map { downloads?.isDownloading(in: $0) == true } ?? false
         if keepDownloading, let webView {

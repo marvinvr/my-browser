@@ -21,6 +21,7 @@ final class BrowserModel {
     @ObservationIgnored let profiles = ProfileManager()
     @ObservationIgnored let favicons: FaviconStore
     let downloads: DownloadManager
+    let notifications: WebNotificationCenter
     /// Web extensions for this window. Nil in tests and previews.
     @ObservationIgnored weak var extensions: ExtensionManager?
 
@@ -52,6 +53,7 @@ final class BrowserModel {
         self.session = session
         favicons = FaviconStore(directory: library.directory)
         downloads = DownloadManager(directory: library.directory)
+        notifications = WebNotificationCenter(directory: library.directory)
         self.extensions = extensions
         let fallback = library.ensureDefaultSpace().id
         let resolved = session.selectedSpaceID.flatMap { library.space($0)?.id } ?? fallback
@@ -66,6 +68,7 @@ final class BrowserModel {
         profiles.extensionController = { [weak extensions] profileID in
             extensions?.controller(for: profileID)
         }
+        notifications.model = self
         if let itemID = session.selectedItemBySpace[resolved] {
             select(itemID)
         }
@@ -1028,6 +1031,8 @@ final class BrowserModel {
     private func wire(_ tab: BrowserTab, spaceID: UUID) {
         tab.faviconStore = favicons
         tab.downloads = downloads
+        tab.notificationCenter = notifications
+        tab.installWebNotificationScript()
         tab.useCachedFavicon()
         tab.onOpenInNewTab = { [weak self] url, inBackground in
             self?.openInNewTab(url, spaceID: spaceID, inBackground: inBackground)

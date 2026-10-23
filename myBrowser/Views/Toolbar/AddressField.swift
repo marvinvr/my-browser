@@ -42,6 +42,7 @@ struct AddressField: View {
         let inline = presentation == .inline
         HStack(spacing: 4) {
             CopyLinkButton(chrome: style, quiet: inline)
+            siteInfoButton(style, quiet: inline)
             Button {
                 model.showCommandBar(.editCurrent)
             } label: {
@@ -64,6 +65,16 @@ struct AddressField: View {
         .overlay { fieldStroke(style) }
         .onHover { hovering = $0 }
         .animation(inline ? .easeOut(duration: 0.15) : nil, value: showsInlineField)
+        .popover(isPresented: notificationPromptPresented, arrowEdge: .top) {
+            if let prompt = model.notifications.prompt {
+                NotificationPermissionBubble(host: prompt.host) {
+                    model.notifications.choose(allow: true)
+                } onDeny: {
+                    model.notifications.choose(allow: false)
+                }
+                .presentationBackground(Color(nsColor: .windowBackgroundColor))
+            }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Address")
         .accessibilityValue(display.isEmpty ? "Search or enter URL" : display.absolute)
@@ -92,6 +103,70 @@ struct AddressField: View {
     /// Barely there. Light and dark stay neutral; the page tint never fills this shape.
     private var inlineFill: Double { colorScheme == .dark ? 0.08 : 0.05 }
     private var inlineStroke: Double { colorScheme == .dark ? 0.12 : 0.07 }
+
+    private var notificationOrigin: String? {
+        guard let pageURL else { return nil }
+        return NotificationOrigin.key(for: pageURL)
+    }
+
+    /// Outside a click does not answer the page. Allow and Don't Allow do.
+    private var notificationPromptPresented: Binding<Bool> {
+        Binding(
+            get: {
+                guard let prompt = model.notifications.prompt else { return false }
+                if let tabID = prompt.tabID, tabID != model.selectedTab?.id { return false }
+                return true
+            },
+            set: { _ in }
+        )
+    }
+
+    @ViewBuilder
+    private func siteInfoButton(_ style: ToolbarChrome, quiet: Bool) -> some View {
+        if let origin = notificationOrigin, let profileID = model.selectedTab?.profileID ?? model.selectedSpace?.profileID {
+            let choice = model.notifications.siteChoice(profileID: profileID, origin: origin)
+            Menu {
+                Text(NotificationOrigin.displayHost(origin))
+                if pageURL?.scheme?.lowercased() == "http" {
+                    Text("Not Secure")
+                }
+                Picker("Notifications", selection: siteChoice(profileID: profileID, origin: origin)) {
+                    ForEach(NotificationSiteChoice.allCases, id: \.self) { choice in
+                        Text(choice.label).tag(choice)
+                    }
+                }
+            } label: {
+                Image(systemName: siteSymbol(choice: choice, secure: pageURL?.scheme?.lowercased() == "https"))
+                    .font(.system(size: SidebarMetrics.addressSymbol, weight: .semibold))
+                    .symbolRenderingMode(.monochrome)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .buttonStyle(.plain)
+            .foregroundStyle(quiet ? AnyShapeStyle(.secondary) : AnyShapeStyle(style.fieldSymbol))
+            .help("Site Settings")
+            .accessibilityLabel("Site Settings")
+            .accessibilityIdentifier("site-info")
+        }
+    }
+
+    private func siteSymbol(choice: NotificationSiteChoice, secure: Bool) -> String {
+        switch choice {
+        case .allow: "bell"
+        case .block: "bell.slash"
+        case .ask: secure ? "lock" : "lock.slash"
+        }
+    }
+
+    private func siteChoice(profileID: UUID, origin: String) -> Binding<NotificationSiteChoice> {
+        Binding(
+            get: { model.notifications.siteChoice(profileID: profileID, origin: origin) },
+            set: { model.notifications.setSiteChoice(profileID: profileID, origin: origin, choice: $0) }
+        )
+    }
 
     private func insecureBadge(_ style: ToolbarChrome) -> some View {
         HStack(spacing: 3) {

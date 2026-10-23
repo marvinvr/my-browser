@@ -43,6 +43,7 @@ final class TabWebDelegate: NSObject, WKUIDelegate, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         tab?.httpsFirstDidCommit()
+        tab?.syncWebNotificationPermission()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppIconApplier.apply()
         updater.start()
+        model.notifications.start()
         model.startArchiveMonitoring()
         passkeys.requestAccessIfEntitled()
         #if DEBUG
@@ -89,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         installDebugExtensionsIfRequested()
+        model.notifications.applyDebugFixtures()
         // On the main thread, not a later MainActor task: distributed-notification observers
         // only fire on the thread that registered them.
         DebugSnapshot.install(model: model)
