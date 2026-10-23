@@ -143,11 +143,24 @@ struct ContentToolbar: View {
     }
 
     private func progressTrack(_ chrome: ToolbarChrome) -> some View {
-        let loading = model.selectedTab?.isLoading == true
-        let progress = model.selectedTab?.estimatedProgress ?? 0
-        return ZStack(alignment: .bottomLeading) {
+        ToolbarProgressTrack(
+            loading: model.selectedTab?.isLoading == true,
+            progress: model.selectedTab?.estimatedProgress ?? 0,
+            symbol: chrome.symbol
+        )
+    }
+}
+
+/// Hairline under a toolbar. The load fills it while that tab is loading.
+struct ToolbarProgressTrack: View {
+    var loading: Bool
+    var progress: Double
+    var symbol: Color
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
             Rectangle()
-                .fill(chrome.symbol.opacity(0.22))
+                .fill(symbol.opacity(0.22))
                 .frame(height: 1)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             GeometryReader { proxy in
@@ -167,7 +180,7 @@ struct ContentToolbar: View {
 }
 
 /// Shown while the selected tab has a playing video that allows Picture in Picture.
-private struct PictureInPictureButton: View {
+struct PictureInPictureButton: View {
     var symbol: Color
 
     @Environment(BrowserModel.self) private var model

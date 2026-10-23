@@ -39,13 +39,13 @@ struct SidebarView: View {
         }
     }
 
+    /// A split draws an address field on every pane, so the sidebar keeps the traffic-light row.
     @ViewBuilder
     private var topChrome: some View {
-        switch addressBarPosition {
-        case .top:
-            SidebarHeader(traffic: traffic)
-        case .sidebar:
+        if addressBarPosition == .sidebar, model.displayedContent?.isSplit != true {
             ContentToolbar(traffic: traffic, sidebarVisible: true, style: .sidebar)
+        } else {
+            SidebarHeader(traffic: traffic)
         }
     }
 

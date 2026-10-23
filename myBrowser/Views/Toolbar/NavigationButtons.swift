@@ -6,36 +6,49 @@ import SwiftUI
 /// start the spin. When loading ends the symbol effect settles upright. Clicking during a load stops it.
 struct NavigationButtons: View {
     var chrome: ToolbarChrome? = nil
+    /// Set on a split pane. Nil follows the selected tab, which is the shared toolbar.
+    var tabID: UUID? = nil
 
     @Environment(BrowserModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
 
+    private var tab: BrowserTab? {
+        if let tabID { return model.tabs[tabID] }
+        return model.selectedTab
+    }
+
     private var resolved: ToolbarChrome {
-        chrome ?? ToolbarChrome.resolve(tint: model.selectedTab?.themeColor, colorScheme: colorScheme)
+        chrome ?? ToolbarChrome.resolve(tint: tab?.themeColor, colorScheme: colorScheme)
     }
 
     var body: some View {
         HStack(spacing: 0) {
             ToolbarIconButton(
                 systemName: "chevron.left",
-                enabled: model.selectedTab?.canGoBack == true,
+                enabled: tab?.canGoBack == true,
                 help: "Back",
                 symbol: resolved.symbol
             ) {
-                model.selectedTab?.goBack()
+                focusIfNeeded()
+                tab?.goBack()
             }
             ToolbarIconButton(
                 systemName: "chevron.right",
-                enabled: model.selectedTab?.canGoForward == true,
+                enabled: tab?.canGoForward == true,
                 help: "Forward",
                 symbol: resolved.symbol
             ) {
-                model.selectedTab?.goForward()
+                focusIfNeeded()
+                tab?.goForward()
             }
-            ReloadButton(symbol: resolved.symbol)
+            ReloadButton(symbol: resolved.symbol, tabID: tabID)
         }
         .padding(.horizontal, 2)
         .frame(width: SidebarMetrics.toolbarControl * 3 + 4, height: SidebarMetrics.toolbarControl)
+    }
+
+    private func focusIfNeeded() {
+        if let tabID { model.focusPane(tabID: tabID) }
     }
 }
 
@@ -75,14 +88,20 @@ struct ToolbarIconButton: View {
 /// About one turn every 0.65s. Clearing `spinning` settles upright at that rate.
 private struct ReloadButton: View {
     var symbol: Color
+    var tabID: UUID? = nil
 
     @Environment(BrowserModel.self) private var model
     @State private var hovering = false
     @State private var spinning = false
     @State private var pending: Task<Void, Never>?
 
-    private var loading: Bool { model.selectedTab?.isLoading == true }
-    private var tabID: UUID? { model.selectedTab?.id }
+    private var tab: BrowserTab? {
+        if let tabID { return model.tabs[tabID] }
+        return model.selectedTab
+    }
+
+    private var loading: Bool { tab?.isLoading == true }
+    private var identity: UUID? { tab?.id }
 
     var body: some View {
         Button(action: activate) {
@@ -96,14 +115,14 @@ private struct ReloadButton: View {
                 )
                 .frame(width: SidebarMetrics.toolbarControl, height: SidebarMetrics.toolbarControl)
                 .background {
-                    Circle().fill(symbol.opacity(hovering && model.selectedTab != nil ? 0.16 : 0))
+                    Circle().fill(symbol.opacity(hovering && tab != nil ? 0.16 : 0))
                 }
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(symbol)
-        .opacity(model.selectedTab == nil ? 0.38 : 1)
-        .disabled(model.selectedTab == nil)
+        .opacity(tab == nil ? 0.38 : 1)
+        .disabled(tab == nil)
         .help(loading ? "Stop" : "Reload")
         .accessibilityLabel(loading ? "Stop" : "Reload")
         .onHover { hovering = $0 }
@@ -112,16 +131,17 @@ private struct ReloadButton: View {
         .onChange(of: loading) { _, now in
             adopt(loading: now, immediate: false)
         }
-        .onChange(of: tabID) { _, _ in
-            adopt(loading: model.selectedTab?.isLoading == true, immediate: true)
+        .onChange(of: identity) { _, _ in
+            adopt(loading: tab?.isLoading == true, immediate: true)
         }
     }
 
     private func activate() {
+        if let tabID { model.focusPane(tabID: tabID) }
         if loading {
-            model.selectedTab?.stopLoading()
+            tab?.stopLoading()
         } else {
-            model.selectedTab?.reload()
+            tab?.reload()
         }
     }
 
@@ -137,7 +157,7 @@ private struct ReloadButton: View {
                 pending = Task {
                     try? await Task.sleep(for: .milliseconds(150))
                     guard !Task.isCancelled else { return }
-                    guard model.selectedTab?.isLoading == true else { return }
+                    guard tab?.isLoading == true else { return }
                     spinning = true
                 }
             }

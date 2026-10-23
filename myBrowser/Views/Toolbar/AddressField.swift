@@ -13,26 +13,41 @@ struct AddressField: View {
 
     var chrome: ToolbarChrome? = nil
     var presentation: Presentation = .pill
+    /// Set on a split pane. Nil follows the selected tab, which is the shared toolbar.
+    var tabID: UUID? = nil
 
     @Environment(BrowserModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
     @FocusState private var focused: Bool
     @State private var hovering = false
 
+    private var boundTab: BrowserTab? {
+        if let tabID { return model.tabs[tabID] }
+        return model.selectedTab
+    }
+
     private var resolved: ToolbarChrome {
-        chrome ?? ToolbarChrome.resolve(tint: model.selectedTab?.themeColor, colorScheme: colorScheme)
+        chrome ?? ToolbarChrome.resolve(tint: boundTab?.themeColor, colorScheme: colorScheme)
     }
 
     /// The top toolbar has no field at rest. Hover, focus, and Cmd+L draw a quiet one.
+    /// A pane field lights up for Cmd+L only while that pane is the selected one.
     private var showsInlineField: Bool {
-        hovering || focused || model.commandBarMode == .editCurrent
+        hovering || focused || editingThisField
+    }
+
+    private var editingThisField: Bool {
+        guard model.commandBarMode == .editCurrent else { return false }
+        if let tabID { return model.selectedTab?.id == tabID }
+        return true
     }
 
     /// `BrowserTab.url` is the observable value. `WKWebView.url` is not, so reading it
     /// alone leaves this text stuck after a navigation that does not retint the bar.
     private var pageURL: URL? {
-        if let live = model.selectedTab?.url, BrowserTab.isPageURL(live) { return live }
-        if let live = model.selectedTab?.webView?.url, BrowserTab.isPageURL(live) { return live }
+        if let live = boundTab?.url, BrowserTab.isPageURL(live) { return live }
+        if let live = boundTab?.webView?.url, BrowserTab.isPageURL(live) { return live }
+        if let tabID { return model.library.item(tabID)?.url }
         return model.selectedItemID.flatMap { model.library.item($0)?.url }
     }
 
@@ -41,10 +56,15 @@ struct AddressField: View {
         let style = resolved
         let inline = presentation == .inline
         HStack(spacing: 4) {
-            CopyLinkButton(chrome: style, quiet: inline)
+            CopyLinkButton(chrome: style, quiet: inline, tabID: tabID)
             siteInfoButton(style, quiet: inline)
             Button {
-                model.showCommandBar(.editCurrent)
+                if let tabID {
+                    model.focusPane(tabID: tabID)
+                    model.presentCommandBar(.editCurrent)
+                } else {
+                    model.showCommandBar(.editCurrent)
+                }
             } label: {
                 HStack(spacing: 6) {
                     if display.security == .insecure {
@@ -114,7 +134,8 @@ struct AddressField: View {
         Binding(
             get: {
                 guard let prompt = model.notifications.prompt else { return false }
-                if let tabID = prompt.tabID, tabID != model.selectedTab?.id { return false }
+                let owner = tabID ?? model.selectedTab?.id
+                if let promptTab = prompt.tabID, promptTab != owner { return false }
                 return true
             },
             set: { _ in }
@@ -123,7 +144,7 @@ struct AddressField: View {
 
     @ViewBuilder
     private func siteInfoButton(_ style: ToolbarChrome, quiet: Bool) -> some View {
-        if let origin = notificationOrigin, let profileID = model.selectedTab?.profileID ?? model.selectedSpace?.profileID {
+        if let origin = notificationOrigin, let profileID = boundTab?.profileID ?? model.selectedSpace?.profileID {
             let choice = model.notifications.siteChoice(profileID: profileID, origin: origin)
             Menu {
                 Text(NotificationOrigin.displayHost(origin))

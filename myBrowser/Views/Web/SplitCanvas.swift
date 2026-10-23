@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 /// One AppKit view owns the frames so a divider drag never rebuilds the web views.
 struct SplitCanvas: NSViewRepresentable {
     var content: DisplayedContent
+    var trafficClearance: CGFloat
+    var extensions: ExtensionManager
 
     @Environment(BrowserModel.self) private var model
 
@@ -15,17 +17,19 @@ struct SplitCanvas: NSViewRepresentable {
 
     func makeNSView(context: Context) -> SplitCanvasView {
         let view = SplitCanvasView()
-        view.attach(model: model, content: content)
+        view.attach(model: model, extensions: extensions, content: content, trafficClearance: trafficClearance)
         return view
     }
 
     func updateNSView(_ view: SplitCanvasView, context: Context) {
-        view.attach(model: model, content: content)
+        view.attach(model: model, extensions: extensions, content: content, trafficClearance: trafficClearance)
     }
 }
 
 final class SplitCanvasView: NSView {
     private var model: BrowserModel?
+    private var extensions: ExtensionManager?
+    private var trafficClearance: CGFloat = SidebarMetrics.minimumTrafficClearance
     private var content: DisplayedContent?
     private var liveShares: [Double]?
     private var dragOrigin: [Double]?
@@ -61,8 +65,15 @@ final class SplitCanvasView: NSView {
 
     required init?(coder: NSCoder) { nil }
 
-    func attach(model: BrowserModel, content: DisplayedContent) {
+    func attach(
+        model: BrowserModel,
+        extensions: ExtensionManager,
+        content: DisplayedContent,
+        trafficClearance: CGFloat
+    ) {
         self.model = model
+        self.extensions = extensions
+        self.trafficClearance = trafficClearance
         self.content = content
         syncPanes()
         needsLayout = true
@@ -133,11 +144,18 @@ final class SplitCanvasView: NSView {
             installWebView(pane, in: container)
             configure(pill, pane: pane, index: index, content: content)
             let hovered = content.isSplit && (hoveredID == pane.id || snapshotHover(pane.id, content: content))
+            let controlsIndex = content.axis == .vertical ? 0 : content.panes.count - 1
             container.apply(
+                browser: model,
+                extensions: extensions,
+                tabID: pane.id,
                 split: content.isSplit,
                 focused: content.isSplit && pane.id == content.focusedID,
                 hovered: hovered,
-                title: pane.tab.title
+                title: pane.tab.title,
+                isLeading: index == 0,
+                showsWindowControls: content.isSplit && index == controlsIndex,
+                trafficClearance: trafficClearance
             )
         }
         let dividerCount = content.isSplit && content.panes.count > 1 ? content.panes.count - 1 : 0
@@ -255,12 +273,7 @@ final class SplitCanvasView: NSView {
         for pane in content.panes {
             let show = pane.id == id || snapshotHover(pane.id, content: content)
             pills[pane.id]?.visible = show
-            containers[pane.id]?.apply(
-                split: true,
-                focused: pane.id == content.focusedID,
-                hovered: show,
-                title: pane.tab.title
-            )
+            containers[pane.id]?.setPaneHovered(show)
         }
     }
 

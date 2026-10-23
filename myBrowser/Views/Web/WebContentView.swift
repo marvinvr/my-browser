@@ -8,6 +8,8 @@ import WebKit
 /// sibling, so the canvas comes down while the page is open and an in-flight download is parked.
 struct WebContentView: View {
     @Environment(BrowserModel.self) private var model
+    @Environment(ExtensionManager.self) private var extensions
+    @Environment(\.trafficClearance) private var trafficClearance
 
     var body: some View {
         let content = model.displayedContent
@@ -21,7 +23,11 @@ struct WebContentView: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             if let content, !downloadsOpen {
-                SplitCanvas(content: content)
+                SplitCanvas(
+                    content: content,
+                    trafficClearance: trafficClearance,
+                    extensions: extensions
+                )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(.opacity)
             } else if content == nil {

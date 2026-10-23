@@ -103,6 +103,18 @@ struct TrafficLightAnchor: Equatable {
     )
 }
 
+private struct TrafficClearanceKey: EnvironmentKey {
+    static let defaultValue: CGFloat = SidebarMetrics.minimumTrafficClearance
+}
+
+extension EnvironmentValues {
+    /// How wide the leading toolbar inset must be to clear the traffic lights.
+    var trafficClearance: CGFloat {
+        get { self[TrafficClearanceKey.self] }
+        set { self[TrafficClearanceKey.self] = newValue }
+    }
+}
+
 enum SidebarMotion {
     /// Hover, selection, and reorder. A little slower than a disclosure.
     static let row = Animation.spring(response: 0.32, dampingFraction: 0.86)

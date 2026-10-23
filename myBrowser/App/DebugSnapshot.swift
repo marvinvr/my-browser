@@ -627,15 +627,6 @@ enum DebugSnapshot {
                 if coversPage { continue }
                 appendChrome(sibling, to: &pageChrome, content: content)
             }
-            // The unfocused veil sits on the pane, above the page host, so it is not a
-            // sibling of the web view. The page image would hide it. Paint a translucent
-            // cover afterwards. An opaque cover is skipped so it cannot blank the page.
-            if let pane = parent.superview, let hostIndex = pane.subviews.firstIndex(of: parent) {
-                for sibling in pane.subviews.dropFirst(hostIndex + 1) {
-                    guard !sibling.isHidden, sibling.alphaValue > 0.01, sibling.alphaValue < 0.5 else { continue }
-                    appendChrome(sibling, to: &pageChrome, content: content)
-                }
-            }
         }
         let sheetImage = attachedSheetImage(on: window, content: content)
         let commandFill = commandBarFill(for: window)

@@ -7,23 +7,31 @@ struct CopyLinkButton: View {
     var chrome: ToolbarChrome? = nil
     /// Top toolbar: secondary symbol, same weight as the URL, no tinted field colour.
     var quiet: Bool = false
+    /// Set on a split pane. Nil copies the selected tab.
+    var tabID: UUID? = nil
 
     @Environment(BrowserModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
     @State private var confirmed = false
     @State private var resetTask: Task<Void, Never>?
 
+    private var boundTab: BrowserTab? {
+        if let tabID { return model.tabs[tabID] }
+        return model.selectedTab
+    }
+
     private var resolved: ToolbarChrome {
-        chrome ?? ToolbarChrome.resolve(tint: model.selectedTab?.themeColor, colorScheme: colorScheme)
+        chrome ?? ToolbarChrome.resolve(tint: boundTab?.themeColor, colorScheme: colorScheme)
     }
 
     private var hasLink: Bool {
-        guard let url = model.selectedTab?.url else { return false }
+        guard let url = boundTab?.url else { return false }
         return BrowserTab.isPageURL(url)
     }
 
     var body: some View {
         Button {
+            if let tabID { model.focusPane(tabID: tabID) }
             model.copyCurrentLink()
         } label: {
             Image(systemName: confirmed ? "checkmark" : "link")

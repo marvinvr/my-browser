@@ -33,6 +33,7 @@ struct MainWindowView: View {
         .background {
             WindowConfigurator(anchor: $traffic)
         }
+        .environment(\.trafficClearance, max(traffic.clearance, SidebarMetrics.minimumTrafficClearance))
         .overlay { CommandBarOverlay() }
         .importPresentations(model: model)
         .sheet(isPresented: Binding(
@@ -110,9 +111,12 @@ struct MainWindowView: View {
 
     private func contentCard(sidebarVisible: Bool) -> some View {
         let inset = sidebarVisible ? SidebarMetrics.contentInset : 0
-        let showsToolbar = showsContentToolbar(sidebarVisible: sidebarVisible)
-        // Outer inset and this spacer trade off, so the toolbar stays on the traffic-light line.
-        let topCompensation = showsToolbar && !sidebarVisible ? SidebarMetrics.contentInset : 0
+        let split = model.displayedContent?.isSplit == true
+        let showsToolbar = showsContentToolbar(sidebarVisible: sidebarVisible) && !split
+        // A split replaces this bar with one toolbar per pane, on the same line.
+        // Outer inset and this spacer trade off, so that line stays on the traffic lights.
+        let reservesToolbarLine = showsToolbar || (split && !sidebarVisible)
+        let topCompensation = reservesToolbarLine && !sidebarVisible ? SidebarMetrics.contentInset : 0
         return VStack(spacing: 0) {
             Color.clear
                 .frame(height: topCompensation)
