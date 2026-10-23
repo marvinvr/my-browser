@@ -25,6 +25,8 @@ final class LibraryStore {
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     /// Non-nil while a mutation is collecting ids so callers see one `onChange` per action.
     @ObservationIgnored private var batchedChangeIDs: Set<UUID>?
+    /// Per-parent child lists. Not one observed dictionary: each list notifies only the folder that shows it.
+    @ObservationIgnored private var siblingLists: [SidebarSiblingKey: SidebarSiblingList] = [:]
 
     private static let schemaVersion = 1
     private static let saveDelay: Duration = .milliseconds(500)
@@ -55,6 +57,15 @@ final class LibraryStore {
         items.values
             .filter { $0.deletedAt == nil && $0.spaceID == spaceID && $0.section == section && $0.parentID == parentID }
             .sorted { ($0.sortKey, $0.id.uuidString) < ($1.sortKey, $1.id.uuidString) }
+    }
+
+    /// The observed child list for one parent. Reading it does not subscribe the caller to `items`.
+    func siblings(of parentID: UUID?, section: SidebarItem.Section, in spaceID: UUID) -> SidebarSiblingList {
+        let key = SidebarSiblingKey(spaceID: spaceID, section: section, parentID: parentID)
+        if let list = siblingLists[key] { return list }
+        let list = SidebarSiblingList()
+        siblingLists[key] = list
+        return list
     }
 
     // MARK: Spaces
@@ -306,6 +317,7 @@ final class LibraryStore {
     }
 
     private func publish(_ ids: Set<UUID>) {
+        refreshSiblingLists()
         guard !ids.isEmpty else { return }
         onChange?(ids)
         scheduleSave()
@@ -345,8 +357,33 @@ final class LibraryStore {
             for profile in snapshot.profiles { profiles[profile.id] = profile }
             for space in snapshot.spaces { spaces[space.id] = space }
             for item in snapshot.items { items[item.id] = item }
+            refreshSiblingLists()
         } catch {
             return
+        }
+    }
+
+    /// Rebuilds the per-parent lists from `items`. Unchanged lists are left alone so their views do not refresh.
+    func refreshSiblingLists() {
+        var grouped: [SidebarSiblingKey: [SidebarItem]] = [:]
+        for item in items.values where item.deletedAt == nil {
+            let key = SidebarSiblingKey(spaceID: item.spaceID, section: item.section, parentID: item.parentID)
+            grouped[key, default: []].append(item)
+        }
+        var seen: Set<SidebarSiblingKey> = []
+        seen.reserveCapacity(grouped.count)
+        for (key, children) in grouped {
+            var ordered = children
+            ordered.sort { ($0.sortKey, $0.id.uuidString) < ($1.sortKey, $1.id.uuidString) }
+            seen.insert(key)
+            let list = siblingLists[key] ?? SidebarSiblingList()
+            if list.items != ordered {
+                list.items = ordered
+            }
+            siblingLists[key] = list
+        }
+        for (key, list) in siblingLists where !seen.contains(key) && !list.items.isEmpty {
+            list.items = []
         }
     }
 
@@ -362,6 +399,19 @@ final class LibraryStore {
     private func fileURL(in directory: URL) -> URL {
         directory.appending(path: "library.json", directoryHint: .notDirectory)
     }
+}
+
+/// Identity of one sibling run. Not observed; the list object it points at is.
+struct SidebarSiblingKey: Hashable, Sendable {
+    var spaceID: UUID
+    var section: SidebarItem.Section
+    var parentID: UUID?
+}
+
+/// Live children of one folder (or a section root). A toggle publishes only the list that holds that folder.
+@Observable
+final class SidebarSiblingList {
+    var items: [SidebarItem] = []
 }
 
 nonisolated private struct LibrarySnapshot: Codable, Sendable {

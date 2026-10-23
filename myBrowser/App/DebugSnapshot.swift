@@ -99,6 +99,14 @@ enum DebugSnapshot {
                 try? result.write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
             }
         })
+        relays.append(observe("ch.marvinvr.mybrowser.debug.frames") { note in
+            let dir = note.userInfo?["dir"] as? String
+            let count = Self.intValue(note.userInfo?["count"]) ?? 20
+            let interval = Self.intValue(note.userInfo?["interval"]) ?? 16
+            Task { @MainActor in
+                await DebugSnapshot.recordFrames(directory: dir, count: count, interval: interval)
+            }
+        })
         relays.append(observe("ch.marvinvr.mybrowser.debug.command") { note in
             let mode = note.userInfo?["mode"] as? String
             Task { @MainActor in
@@ -126,6 +134,55 @@ enum DebugSnapshot {
             suspensionBehavior: .deliverImmediately
         )
         return relay
+    }
+
+    /// Composited window frames. `CGWindowListCreateImage` is unavailable to other processes here,
+    /// but the app can still read its own window. Used to record sidebar motion.
+    @MainActor
+    private static func recordFrames(directory: String?, count: Int, interval: Int) async {
+        guard let directory, directory.hasPrefix("/") else { return }
+        let folder = URL(fileURLWithPath: directory, isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let frames = min(max(count, 1), 60)
+        let step = max(interval, 8)
+        for index in 0..<frames {
+            let started = Date()
+            if let image = ownWindowImage() {
+                let url = folder.appendingPathComponent(String(format: "f%02d.png", index))
+                Task.detached {
+                    let rep = NSBitmapImageRep(cgImage: image)
+                    if let data = rep.representation(using: .png, properties: [:]) {
+                        try? data.write(to: url)
+                    }
+                }
+            }
+            let elapsed = Date().timeIntervalSince(started)
+            let remaining = Double(step) / 1000 - elapsed
+            if remaining > 0 {
+                try? await Task.sleep(for: .milliseconds(Int(remaining * 1000)))
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(200))
+    }
+
+    nonisolated private static func intValue(_ value: Any?) -> Int? {
+        if let number = value as? Int { return number }
+        if let number = value as? NSNumber { return number.intValue }
+        if let text = value as? String { return Int(text) }
+        return nil
+    }
+
+    /// Own-window composite. Returns nil when the window server refuses the capture.
+    private static func ownWindowImage() -> CGImage? {
+        guard let window = targetWindow(preferring: nil), window.windowNumber > 0 else { return nil }
+        typealias Create = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let symbol = dlsym(dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_LAZY), "CGWindowListCreateImage") else {
+            return nil
+        }
+        let create = unsafeBitCast(symbol, to: Create.self)
+        let includingWindow: UInt32 = 1 << 3
+        let options: UInt32 = (1 << 0) | (1 << 3)
+        return create(.null, includingWindow, UInt32(window.windowNumber), options)?.takeRetainedValue()
     }
 
     @MainActor

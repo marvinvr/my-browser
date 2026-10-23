@@ -2,17 +2,21 @@ import AppKit
 import SwiftUI
 
 /// Pinned sites and nested folders for one space.
-struct PinnedTree: View {
+struct PinnedTree: View, Equatable {
     var spaceID: UUID
     var parentID: UUID? = nil
     var depth: Int = 0
     var onRename: (SidebarItem) -> Void
     var onNewFolder: (UUID?) -> Void
 
+    static func == (lhs: PinnedTree, rhs: PinnedTree) -> Bool {
+        lhs.spaceID == rhs.spaceID && lhs.parentID == rhs.parentID && lhs.depth == rhs.depth
+    }
+
     @Environment(BrowserModel.self) private var model
 
     var body: some View {
-        let children = model.library.children(of: parentID, section: .pinned, in: spaceID)
+        let children = model.library.siblings(of: parentID, section: .pinned, in: spaceID).items
         VStack(alignment: .leading, spacing: 1) {
             if children.isEmpty, parentID == nil {
                 EmptyPinned(spaceID: spaceID)
@@ -28,7 +32,6 @@ struct PinnedTree: View {
                         onRename: { onRename(item) },
                         onNewFolderInside: { onNewFolder(item.parentID) }
                     )
-                    .transition(.opacity.combined(with: .offset(y: -4)))
                 }
             }
         }
@@ -46,10 +49,12 @@ struct PinnedTree: View {
                     onRename: onRename,
                     onNewFolder: onNewFolder
                 )
-                .transition(.opacity.combined(with: .offset(y: -4)))
+                .equatable()
+                .transition(.opacity)
             }
         }
-        .animation(SidebarMotion.row, value: item.isExpanded)
+        .clipped()
+        .animation(SidebarMotion.disclosure, value: item.isExpanded)
     }
 
     private func folderRow(_ item: SidebarItem) -> some View {
@@ -99,7 +104,7 @@ private struct FolderRow: View {
                 .foregroundStyle(.tertiary)
                 .rotationEffect(.degrees(item.isExpanded ? 90 : 0))
                 .frame(width: 12, height: 12)
-                .animation(SidebarMotion.row, value: item.isExpanded)
+                .animation(SidebarMotion.disclosure, value: item.isExpanded)
             Image(systemName: "folder")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
@@ -126,7 +131,6 @@ private struct FolderRow: View {
         .onContinuousHover { phase in
             hovering = if case .active = phase { true } else { false }
         }
-        .animation(SidebarMotion.row, value: hovering)
         .onTapGesture(count: 2) {
             interaction.editingID = item.id
         }

@@ -13,7 +13,7 @@ struct FavoritesGrid: View {
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 4)
 
     var body: some View {
-        let items = model.library.children(of: nil, section: .favorites, in: spaceID)
+        let items = model.library.siblings(of: nil, section: .favorites, in: spaceID).items
         if items.isEmpty {
             Color.clear
                 .frame(height: 12)

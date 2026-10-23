@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 import WebKit
 
 /// Per-window coordinator: selected space and tab, live tabs, and every user action
@@ -64,6 +65,8 @@ final class BrowserModel {
     var selectedTab: BrowserTab? { selectedItemID.flatMap { tabs[$0] } }
     /// Row the keyboard acts on. A folder can be focused while the open tab stays loaded.
     var sidebarFocusID: UUID?
+    /// Site rows read this instead of the library, so a folder toggle does not redraw every row.
+    private(set) var sidebarFocusIsFolder = false
 
     /// Menu enablement for the selected tab. Stored here so command items observe this model,
     /// not a nested tab that `Commands` does not track.
@@ -124,7 +127,7 @@ final class BrowserModel {
     /// Selects an item and creates its live tab if needed. The web view itself is created by `BrowserTab.loadIfNeeded`.
     func select(_ itemID: UUID) {
         guard let item = library.item(itemID), item.kind == .site else { return }
-        sidebarFocusID = itemID
+        setSidebarFocus(itemID)
         let previous = selectedTab
         if selectedSpaceID != item.spaceID {
             adoptSpace(item.spaceID)
@@ -190,7 +193,7 @@ final class BrowserModel {
             session.interactionStates[itemID] = state
         }
         unloadTab(itemID)
-        if sidebarFocusID == itemID { sidebarFocusID = nil }
+        if sidebarFocusID == itemID { setSidebarFocus(nil) }
 
         guard wasSelected else { return }
         if let index, let neighbour = neighbourID(in: order, closing: index) {
@@ -216,7 +219,7 @@ final class BrowserModel {
             unloadTab(id)
         }
         if sidebarFocusID == itemID || sidebarFocusID.map(removed.contains) == true {
-            sidebarFocusID = nil
+            setSidebarFocus(nil)
         }
         library.deleteItem(itemID)
 
@@ -327,7 +330,9 @@ final class BrowserModel {
 
     func toggleExpanded(_ folderID: UUID) {
         guard let item = library.item(folderID), item.kind == .folder else { return }
-        library.updateItem(folderID) { $0.isExpanded.toggle() }
+        withAnimation(SidebarMotion.disclosure) {
+            library.updateItem(folderID) { $0.isExpanded.toggle() }
+        }
     }
 
     /// Focuses a folder without unloading the open page. A site goes through `select`.
@@ -340,7 +345,12 @@ final class BrowserModel {
         if item.spaceID != selectedSpaceID {
             adoptSpace(item.spaceID)
         }
+        setSidebarFocus(id)
+    }
+
+    private func setSidebarFocus(_ id: UUID?) {
         sidebarFocusID = id
+        sidebarFocusIsFolder = id.flatMap { library.item($0)?.isFolder } ?? false
     }
 
     /// Moves an item, and a folder's subtree with it.
@@ -388,7 +398,7 @@ final class BrowserModel {
                     } else {
                         session.selectedItemBySpace[origin] = nil
                         if sidebarFocusID == id || sidebarFocusID.map(movedSites.contains) == true {
-                            sidebarFocusID = nil
+                            setSidebarFocus(nil)
                         }
                         refreshNavigationState()
                     }
@@ -399,7 +409,7 @@ final class BrowserModel {
         }
 
         if let focus = sidebarFocusID, library.item(focus)?.spaceID != selectedSpaceID {
-            sidebarFocusID = nil
+            setSidebarFocus(nil)
         }
     }
 

@@ -54,7 +54,10 @@ extension LibraryStore {
             if spaces.removeValue(forKey: id) != nil { changed = true }
             if items.removeValue(forKey: id) != nil { changed = true }
         }
-        if changed { scheduleSave() }
+        if changed {
+            refreshSiblingLists()
+            scheduleSave()
+        }
     }
 
     /// Saves and deletes to enqueue for `ids`. Unknown ids and `.tabs` rows are skipped
@@ -115,7 +118,10 @@ extension LibraryStore {
                 removed.insert(id)
             }
         }
-        if !removed.isEmpty { scheduleSave() }
+        if !removed.isEmpty {
+            refreshSiblingLists()
+            scheduleSave()
+        }
         return removed
     }
 

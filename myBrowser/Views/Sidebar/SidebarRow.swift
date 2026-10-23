@@ -16,7 +16,7 @@ struct SidebarRow: View {
     var body: some View {
         let tab = model.tabs[item.id]
         let title = SidebarTitle.text(for: item, tab: tab)
-        let isSelected = model.selectedItemID == item.id && !folderHoldsFocus
+        let isSelected = model.selectedItemID == item.id && !model.sidebarFocusIsFolder
         let isEditing = interaction.editingID == item.id && item.section != .tabs
         let isLoaded = tab?.isLoaded == true
         let icon = tab?.favicon ?? (item.url ?? tab?.url).flatMap { model.favicons.cachedFavicon(for: $0) }
@@ -90,12 +90,6 @@ struct SidebarRow: View {
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
-
-    /// The open tab keeps its loaded wash. The selection chip moves to a focused folder.
-    private var folderHoldsFocus: Bool {
-        guard let focus = model.sidebarFocusID else { return false }
-        return model.library.item(focus)?.isFolder == true
-    }
 }
 
 /// Opaque sidebar title. Vibrant `Text` over the selection fill cache-displays as grey and
@@ -114,6 +108,8 @@ private struct FlatLabel: NSViewRepresentable {
         field.lineBreakMode = .byTruncatingTail
         field.maximumNumberOfLines = 1
         field.stringValue = text
+        field.wantsLayer = true
+        field.layerContentsRedrawPolicy = .onSetNeedsDisplay
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.setContentHuggingPriority(.defaultHigh, for: .vertical)
         return field

@@ -11,7 +11,7 @@ struct TabList: View {
     @State private var newTabToken = UUID()
 
     var body: some View {
-        let items = model.library.children(of: nil, section: .tabs, in: spaceID)
+        let items = model.library.siblings(of: nil, section: .tabs, in: spaceID).items
         VStack(alignment: .leading, spacing: 1) {
             Button {
                 model.showCommandBar(.newTab)

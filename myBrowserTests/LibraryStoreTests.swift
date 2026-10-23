@@ -30,6 +30,36 @@ struct LibraryStoreTests {
         #expect(added[1].sortKey < added[2].sortKey)
     }
 
+    @Test func folderToggleUpdatesOnlyTheParentList() {
+        let store = LibraryStore(directory: nil)
+        let space = store.createSpace(name: "Personal")
+        let folder = store.addItem(spaceID: space.id, section: .pinned, kind: .folder, title: "Notes")
+        let child = store.addItem(
+            spaceID: space.id,
+            section: .pinned,
+            parentID: folder.id,
+            title: "One",
+            url: URL(string: "https://example.com")
+        )
+        _ = store.addItem(spaceID: space.id, section: .tabs, title: "Tab", url: URL(string: "https://example.com/t"))
+
+        let root = store.siblings(of: nil, section: .pinned, in: space.id)
+        let nested = store.siblings(of: folder.id, section: .pinned, in: space.id)
+        let tabs = store.siblings(of: nil, section: .tabs, in: space.id)
+        let tabsBefore = tabs.items
+        let nestedBefore = nested.items
+
+        #expect(nested.items.map(\.id) == [child.id])
+        #expect(store.children(of: nil, section: .pinned, in: space.id).map(\.id) == root.items.map(\.id))
+
+        store.updateItem(folder.id) { $0.isExpanded = false }
+
+        #expect(root.items.first?.isExpanded == false)
+        #expect(nested.items == nestedBefore)
+        #expect(tabs.items == tabsBefore)
+        #expect(store.children(of: folder.id, section: .pinned, in: space.id).map(\.id) == [child.id])
+    }
+
     @Test func collidingSiblingKeysAreRenormalizedBeforeInsert() {
         let store = LibraryStore(directory: nil)
         let space = store.createSpace(name: "Personal")
