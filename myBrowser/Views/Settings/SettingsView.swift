@@ -83,6 +83,7 @@ private struct GeneralSettingsView: View {
                 LabeledContent("Passkeys", value: passkeys.statusLabel)
                 if passkeys.access != .authorized {
                     Button("Allow Passkeys…") { passkeys.requestAccess() }
+                        .disabled(!passkeys.entitlementInSignature)
                 }
                 Button("AutoFill Providers…") {
                     ASSettingsHelper.openCredentialProviderAppSettings { _ in }

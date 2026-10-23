@@ -46,9 +46,14 @@ final class PasskeyBroker {
         }
     }
 
-    /// Asks the system to let this browser use platform passkeys. No-op while a request is up.
+    /// Asks the system to let this browser use platform passkeys.
+    /// Returns without calling the system when this signature has no passkey entitlement.
     func requestAccess() {
         refresh()
+        guard entitlementInSignature else {
+            statusDetail = "Apple has not granted the web-browser passkey entitlement for this build."
+            return
+        }
         guard !requestInFlight else { return }
         guard access != .authorized else { return }
         requestInFlight = true
