@@ -7,6 +7,16 @@
     <description>Updates of myBrowser</description>
     <language>en</language>
     <item>
+      <title>Version 0.4.3</title>
+      <pubDate>Fri, 23 Oct 2026 10:01:41 +0000</pubDate>
+      <sparkle:version>8</sparkle:version>
+      <sparkle:shortVersionString>0.4.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://github.com/marvinvr/my-browser/releases/tag/v0.4.3</sparkle:fullReleaseNotesLink>
+      <description><![CDATA[<ul><li>Spin the reload arrow around its symbol anchor</li><li>Release v0.4.2</li><li>Redraw the open folder as one connected flap</li><li>Draw expanded folders as an open outline</li><li>Note why a sidebar row takes the first click</li><li>Fix sidebar rows that ignore the first click</li><li>Inset sidebar content to match the traffic lights</li><li>Round favicon corners to a quarter of the icon</li><li>Inset the traffic lights six points to the right</li><li>Request current Chrome builds from the Web Store</li><li>Enlarge sidebar text and icons by one point</li><li>Release v0.4.1</li><li>Ask 1Password to authorize the browser from a content script</li><li>Release v0.4.0</li><li>Keep a loaded blank pinned pane on close</li></ul>]]></description>
+      <enclosure url="https://github.com/marvinvr/my-browser/releases/download/v0.4.3/myBrowser-0.4.3-8.dmg" length="5085991" type="application/octet-stream" sparkle:edSignature="nKrMzmC6ZXnUWh5xl0bE3mLdlT+veAVXuFkJ3jge51gWKdLxEbjGKukNoDusPxLNeQDO9h9zmGNk2mPYvjI5Bg=="/>
+    </item>
+    <item>
       <title>Version 0.4.2</title>
       <pubDate>Fri, 23 Oct 2026 09:02:12 +0000</pubDate>
       <sparkle:version>7</sparkle:version>

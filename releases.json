@@ -1,6 +1,34 @@
 {
   "releases": [
     {
+      "version": "0.4.3",
+      "build": "8",
+      "commit": "870b65dff27b9283b5187d095b637eeb1c6c0c41",
+      "date": "2026-10-23T10:01:41Z",
+      "url": "https://github.com/marvinvr/my-browser/releases/download/v0.4.3/myBrowser-0.4.3-8.dmg",
+      "length": 5085991,
+      "edSignature": "nKrMzmC6ZXnUWh5xl0bE3mLdlT+veAVXuFkJ3jge51gWKdLxEbjGKukNoDusPxLNeQDO9h9zmGNk2mPYvjI5Bg==",
+      "minimumSystemVersion": "26.0",
+      "notes": [
+        "Spin the reload arrow around its symbol anchor",
+        "Release v0.4.2",
+        "Redraw the open folder as one connected flap",
+        "Draw expanded folders as an open outline",
+        "Note why a sidebar row takes the first click",
+        "Fix sidebar rows that ignore the first click",
+        "Inset sidebar content to match the traffic lights",
+        "Round favicon corners to a quarter of the icon",
+        "Inset the traffic lights six points to the right",
+        "Request current Chrome builds from the Web Store",
+        "Enlarge sidebar text and icons by one point",
+        "Release v0.4.1",
+        "Ask 1Password to authorize the browser from a content script",
+        "Release v0.4.0",
+        "Keep a loaded blank pinned pane on close"
+      ],
+      "page": "https://github.com/marvinvr/my-browser/releases/tag/v0.4.3"
+    },
+    {
       "version": "0.4.2",
       "build": "7",
       "commit": "a983afcd8729a789448c6d4a9cd1a9516549ddd7",
