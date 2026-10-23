@@ -98,9 +98,11 @@ private struct FolderRow: View {
         let leading = SidebarDropGeometry.rowLeading + CGFloat(depth) * SidebarDropGeometry.indent
 
         let label = HStack(spacing: 8) {
-            // Custom outline, same weight as `folder`, with the front flap open.
-            Image(systemName: item.isExpanded ? "folder.open" : "folder")
+            // Catalog symbol. `systemName` only resolves SF Symbols, so the open folder drew nothing.
+            // Same view either way, so the replace still runs from `folder` to `folder.open`.
+            (item.isExpanded ? Image("folder.open") : Image(systemName: "folder"))
                 .font(.system(size: SidebarMetrics.folderSymbol))
+                .symbolRenderingMode(.monochrome)
                 .foregroundStyle(.secondary)
                 // Replace runs on its own timeline. Double speed finishes with the 0.2s spring.
                 .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp), options: .speed(2)))
