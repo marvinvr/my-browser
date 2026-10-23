@@ -162,6 +162,17 @@ final class BrowserTab: NSObject, Identifiable {
         favicon = faviconStore?.cachedFavicon(for: url)
     }
 
+    /// Points the displayed URL and title at a page without starting a navigation.
+    /// Tests and the debug snapshot use this. A real visit goes through `load`.
+    func showDisplayedLocation(url: URL, title: String) {
+        let nextTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let urlChanged = self.url != url
+        let titleChanged = !nextTitle.isEmpty && nextTitle != self.title
+        if urlChanged { self.url = url }
+        if titleChanged { self.title = nextTitle }
+        if urlChanged || titleChanged { onStateChange?(self) }
+    }
+
     /// Destroys the web view (pinned tab "closed"). State can be captured first via `interactionState`.
     func unload() {
         sampleTask?.cancel()

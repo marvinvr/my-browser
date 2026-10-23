@@ -69,7 +69,7 @@ SidebarItem {
 - **pinned**: pinned sites and (nested) folders below the grid.
 - **tabs**: today's unpinned tabs. Sites only, flat. Every open unpinned tab *is* a `.tabs` item, which is how tabs survive relaunch.
 
-A pinned/favorite site keeps its `url` as the home URL even when its live tab navigates elsewhere (Arc behaviour). Closing a pinned tab unloads its web view, the item stays.
+A pinned or favorite site keeps `url` as its home. Navigating the live tab does not change that URL or the saved title. `PinnedPage` treats two URLs as the same page when only the fragment or a trailing slash differs. While the live page differs, a pinned row shows a secondary `/` between the icon and the current page title, and a favorite tile shows a small dot. Clicking the pin's icon loads the home URL (a new load, not a history walk). Clicking a favorite that is already selected does the same. Closing the tab unloads it and drops its interaction state, so the next open loads the home URL. The context menu item "Replace Pinned URL with Current", shown only while away, writes the live URL and title through `LibraryStore.updateItem` (one record, `modifiedAt` updated). The favicon is the host cache the live tab already filled; sidebar items have no icon field.
 
 ### Tabs (runtime)
 `BrowserTab` (`@Observable`, main actor) is the live counterpart of a site item: `tab.id == item.id`. It owns at most one `WKWebView`, created lazily on first selection, so restored tabs cost nothing until used. It exposes `title`, `url`, `favicon`, `isLoading`, `estimatedProgress`, `canGoBack/Forward`, `themeColor`, and `goBack/goForward/reload/stop/load`. `themeColor` is the page tint: WebKit's `themeColor` when that colour is opaque, else `underPageBackgroundColor`, else a sample of the top of the page. On creation it restores `interactionState` from the session store if present (back/forward history survives relaunch).
@@ -150,7 +150,7 @@ File → Import… (⌘⇧I) lists what it found. The first launch, when `hasCom
 |---|---|
 | Cmd+T | Command bar, new tab |
 | Cmd+L | Command bar, edit current URL |
-| Cmd+W | Close tab (pinned/favorite: unload; tabs: delete) |
+| Cmd+W | Close tab (pinned/favorite: unload and reset to the saved URL; tabs: delete) |
 | Cmd+Shift+T | Reopen last closed tab |
 | Cmd+1…8 | Select n-th item in sidebar order (favorites, pinned (expanded), tabs); Cmd+9 = last |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous item in sidebar order |
@@ -172,7 +172,7 @@ The sidebar is a `VStack`/`ForEach`, not a `List`. Rows use `.draggable` and one
 - `move` takes a folder's live descendants with it in one batch: one `onChange`, one save. Descendants keep their parent links. Their `spaceID` and `section` change with the folder. `canDrop` rejects a folder dropped into itself or a descendant, and rejects folders in favorites or tabs (those sections are sites only, at the root).
 - Dropping on a folder row inserts at the end of that folder. The folder expands after the pointer hovers there for about 0.6 s. Dropping between rows inserts before or after; the pointer's indentation picks the depth. An accent line (2 pt, rounded) marks the slot, inset to that depth. The dragged row fades. Its close button keeps its space and hides, so the title does not jump. Other rows reflow with `SidebarMotion.row`. Folder rows are plain buttons, like site rows: a tap gesture on the row would take the mouse-down and the folder would never start a drag. The expand click is ignored when a drag session is active or has just ended.
 - Favorites accept sites only. Dragging between the tabs list and pinned pins or unpins. A link dragged from a page or another app (http/https only) becomes a new site at that slot. WebKit provides that link as an `NSURL`; the plain-text URL is the fallback. The insertion line clears when the drop is accepted. A link load finishes after that, and later updates from the same drop session do not bring the line back. A new tab in the current space is selected.
-- Dropping on a space icon moves the item and its subtree. Sites keep their section. Folders can only live in pinned, so they land there. The current space stays selected. A live tab that changes space is unloaded, because the destination profile has different cookies, and the page URL is stored on the item.
+- Dropping on a space icon moves the item and its subtree. Sites keep their section. Folders can only live in pinned, so they land there. The current space stays selected. A live tab that changes space is unloaded, because the destination profile has different cookies. An unpinned tab stores its page URL on the item. A pinned or favorite site keeps its home URL.
 - A two-finger space swipe that is still tracking always settles: a new touch that begins outside the sidebar, the window resigning key, or the app resigning active. Under 30% of the column width it springs back to 0. Past that, or on a flick, it commits.
 - Drag haptics, also via `Haptics`: a new drop slot, a cross between Tabs and Pinned, a folder that opens after the hover delay, a Space icon becoming the drop target, and the drop itself. Each fires once per change. Hovering a folder without it opening is silent. Patterns and timing live in `Views/Haptics.swift`.
 

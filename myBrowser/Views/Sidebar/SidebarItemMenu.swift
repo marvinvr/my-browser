@@ -30,6 +30,11 @@ struct SidebarItemMenu: ViewModifier {
             } else {
                 Button("Unpin") { model.unpin(item.id) }
                 Button("Rename") { onRename() }
+                if model.isPinnedAway(item.id) {
+                    Button("Replace Pinned URL with Current") {
+                        model.replacePinnedURLWithCurrent(item.id)
+                    }
+                }
                 Button("New Folder") { onNewFolderInside() }
                 moveMenu
                 if let url = link {
