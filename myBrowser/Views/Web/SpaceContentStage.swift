@@ -10,9 +10,10 @@ final class SpaceContentSurface {
     /// Puts `spaceID` on screen before returning. False when the stage has no size yet.
     var reveal: ((UUID) -> Bool)?
     /// Finger down. `offset` matches the sidebar: positive reveals the previous space.
+    /// The page does not move; its opacity follows `offset / width`.
     var track: ((_ anchor: UUID, _ offset: CGFloat, _ width: CGFloat) -> Void)?
-    /// Finger up. Animate from the current offset toward `offset` (0, +width, or −width).
-    /// `velocity` is points per second, already clamped to the direction of that move.
+    /// Finger up. Ease the cross-fade toward `offset` (0, +width, or −width).
+    /// `velocity` belongs to the sidebar spring. The page fade does not take it.
     var settle: ((_ offset: CGFloat, _ width: CGFloat, _ velocity: CGFloat) -> Void)?
     var endGesture: (() -> Void)?
     /// Attach web views created by prewarm.
@@ -76,9 +77,11 @@ enum SpaceSwitchTrace {
 
 /// One AppKit view for every Space's selected page.
 ///
-/// Neighbours sit under the current page (same frame, so WebKit has painted them) and
-/// slide sideways while a sidebar swipe is on the finger. A click reorders the target
-/// to the front before `selectSpace` returns.
+/// Neighbours sit under the current page (same frame, so WebKit has painted them).
+/// A switch cross-fades: the incoming page fades in on top of the opaque outgoing page,
+/// so the card background never shows through and nothing slides sideways. A click starts
+/// that fade on the turn the web view is attached. A sidebar swipe ties the opacity to
+/// the finger and eases the rest of the way on release.
 struct SpaceContentRepresentable: NSViewRepresentable {
     var model: BrowserModel
     var hidden: Bool
@@ -115,17 +118,22 @@ final class SpaceContentStage: NSView {
     }
 
     private var slots: [UUID: Slot] = [:]
-    /// Space the gesture started on. Nil when the stage is at rest.
+    /// Full cross-fade. Ease-in-out, independent of the sidebar's 0.22s spring.
+    static let fadeDuration: CFTimeInterval = 0.20
+    /// Space the gesture started on. Nil when the stage is at rest or a click fade is running.
     private var anchorID: UUID?
     private var restingID: UUID?
-    /// Sidebar offset / column width. Positive reveals the previous space.
+    /// Click or shortcut target. Nil while a swipe picks the incoming space from `progress`.
+    private var fadeTarget: UUID?
+    /// Sidebar offset / column width while a finger is down. Positive reveals the previous space.
+    /// During a click fade this runs from 0 to 1.
     private var progress: CGFloat = 0
     private var settling = false
     private var settleFrom: CGFloat = 0
     private var settleTo: CGFloat = 0
-    /// Progress units per second. Points per second divided by the column width.
-    private var settleVelocity: CGFloat = 0
     private var settleStart: CFTimeInterval = 0
+    /// Last logged opacity band, so a fade writes a handful of lines instead of every frame.
+    private var loggedFadeBand = -2
     private let sampler = SpaceContentSampler()
 
     override var isFlipped: Bool { true }
@@ -178,20 +186,42 @@ final class SpaceContentStage: NSView {
         }
     }
 
-    /// Discrete switch. The target's web view is in front before this returns.
+    /// Discrete switch. The target's web view is attached before this returns, then fades in.
     func reveal(_ id: UUID) -> Bool {
-        guard anchorID == nil, !settling else { return isShowing(id) }
+        guard anchorID == nil else { return isShowing(id) }
         isHidden = false
-        restingID = id
         ensureSlot(id)
+        let from: UUID?
+        if settling, progress > 0.5, let fadeTarget {
+            from = fadeTarget
+        } else {
+            from = restingID
+        }
+        stopSettle()
+        if from == nil || from == id || slots[id] == nil || slots[from ?? id] == nil {
+            restingID = id
+            fadeTarget = nil
+            progress = 0
+            placeSlots()
+            layoutSubtreeIfNeeded()
+            return isShowing(id)
+        }
+        restingID = from
+        fadeTarget = id
         progress = 0
+        startFade(from: 0, to: 1)
         placeSlots()
         layoutSubtreeIfNeeded()
         return isShowing(id)
     }
 
     func track(anchor: UUID, offset: CGFloat, width: CGFloat) {
+        let restarted = anchorID != anchor || fadeTarget != nil
         stopSettle()
+        if restarted {
+            loggedFadeBand = -2
+        }
+        fadeTarget = nil
         anchorID = anchor
         progress = width > 1 ? offset / width : 0
         ensureSlot(anchor)
@@ -199,23 +229,23 @@ final class SpaceContentStage: NSView {
         placeSlots()
     }
 
-    func beginSettle(offset: CGFloat, width: CGFloat, velocity: CGFloat) {
+    func beginSettle(offset: CGFloat, width: CGFloat, velocity _: CGFloat) {
+        fadeTarget = nil
         let target = width > 1 ? offset / width : 0
-        settleFrom = progress
-        settleTo = target
-        settleVelocity = width > 1 ? velocity / width : 0
-        settleStart = CACurrentMediaTime()
-        settling = true
-        sampler.start(on: self) { [weak self] in
-            MainActor.assumeIsolated {
-                self?.stepSettle()
-            }
+        guard abs(progress - target) > 0.0008 else {
+            progress = target
+            finishFade(elapsed: 0)
+            return
         }
+        startFade(from: progress, to: target)
+        placeSlots()
     }
 
     func endGesture() {
-        stopSettle()
+        // The sidebar spring can finish first. The page fade keeps its own clock.
+        guard !settling else { return }
         anchorID = nil
+        fadeTarget = nil
         progress = 0
         if let model {
             restingID = model.selectedSpaceID
@@ -263,23 +293,53 @@ final class SpaceContentStage: NSView {
         return visible.width / bounds.width
     }
 
+    private func startFade(from: CGFloat, to: CGFloat) {
+        settleFrom = from
+        settleTo = to
+        settleStart = CACurrentMediaTime()
+        settling = true
+        loggedFadeBand = -2
+        sampler.start(on: self) { [weak self] in
+            MainActor.assumeIsolated {
+                self?.stepSettle()
+            }
+        }
+    }
+
     private func stepSettle() {
         let elapsed = CACurrentMediaTime() - settleStart
-        let delta = settleTo - settleFrom
-        // Same unit spring as the sidebar. Duration does not depend on how far the page still has to go.
-        let relative = delta == 0 ? 0 : Double(settleVelocity / delta)
-        let unit = SpaceSwipeMotion.spring.value(
-            target: 1.0,
-            initialVelocity: relative,
-            time: elapsed
-        )
-        progress = settleFrom + delta * unit
-        if elapsed >= SpaceSwipeMotion.duration || abs(progress - settleTo) < 0.0008 {
+        let duration = Self.fadeDuration
+        let t = duration > 0 ? min(1, elapsed / duration) : 1
+        let eased = Self.easeInOut(CGFloat(t))
+        progress = settleFrom + (settleTo - settleFrom) * eased
+        if t >= 1 {
             progress = settleTo
-            stopSettle()
-            SpaceSwitchTrace.mark(String(format: "content-settled %.0fms", elapsed * 1000))
+            placeSlots()
+            finishFade(elapsed: elapsed)
+            return
         }
         placeSlots()
+    }
+
+    /// Cubic ease-in-out on the unit interval.
+    private static func easeInOut(_ t: CGFloat) -> CGFloat {
+        let x = min(max(t, 0), 1)
+        if x < 0.5 {
+            return 4 * x * x * x
+        }
+        let f = -2 * x + 2
+        return 1 - (f * f * f) / 2
+    }
+
+    private func finishFade(elapsed: CFTimeInterval) {
+        stopSettle()
+        let landed = model?.selectedSpaceID ?? fadeTarget ?? restingID
+        anchorID = nil
+        fadeTarget = nil
+        progress = 0
+        restingID = landed
+        placeSlots()
+        SpaceSwitchTrace.mark(String(format: "content-settled %.0fms", max(0, elapsed) * 1000))
     }
 
     private func stopSettle() {
@@ -338,45 +398,89 @@ final class SpaceContentStage: NSView {
         let width = bounds.width
         let height = bounds.height
         guard width > 2, height > 2 else { return }
-        let center = anchorID ?? restingID
-        let sliding = anchorID != nil || settling
-        if !sliding, let center, let top = slots[center]?.canvas {
-            for slot in slots.values {
-                slot.canvas.isHidden = false
-                if slot.canvas.frame != bounds {
-                    slot.canvas.frame = bounds
-                }
+        let frame = bounds
+        let fading = anchorID != nil || settling
+        // Opacity changes are sampled. An implicit 0.25s fade would lag the finger.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        for slot in slots.values {
+            slot.canvas.isHidden = false
+            if slot.canvas.frame != frame {
+                slot.canvas.frame = frame
             }
-            if subviews.last !== top {
+            if !fading {
+                slot.canvas.alphaValue = 1
+            }
+        }
+        if !fading {
+            if let center = restingID, let top = slots[center]?.canvas, subviews.last !== top {
                 addSubview(top)
             }
             return
         }
-        guard let center, let model else { return }
+        let outgoing = anchorID ?? restingID
+        let incoming = incomingID(around: outgoing)
+        let coverage = coverage(for: incoming)
+        // The outgoing page stays opaque. Fading it as well would show the card background.
+        for (id, slot) in slots where id != incoming {
+            slot.canvas.alphaValue = 1
+        }
+        stack(outgoing: outgoing, incoming: incoming, coverage: coverage)
+        noteFade(coverage: coverage, incoming: incoming)
+    }
+
+    /// Incoming page for this frame. A click names it. A swipe takes the neighbour the finger is opening.
+    private func incomingID(around outgoing: UUID?) -> UUID? {
+        if let fadeTarget, fadeTarget != outgoing, slots[fadeTarget] != nil {
+            return fadeTarget
+        }
+        guard fadeTarget == nil, let outgoing, progress != 0, let model else { return nil }
         let spaces = model.library.orderedSpaces
-        let index = spaces.firstIndex { $0.id == center } ?? 0
-        let previous = index > 0 ? spaces[index - 1].id : nil
-        let next = index + 1 < spaces.count ? spaces[index + 1].id : nil
-        let shown: Set<UUID> = [previous, center, next].compactMap { $0 }.reduce(into: []) { $0.insert($1) }
-        for (id, slot) in slots {
-            guard shown.contains(id) else {
-                slot.canvas.isHidden = true
-                continue
+        guard let index = spaces.firstIndex(where: { $0.id == outgoing }) else { return nil }
+        if progress > 0, index > 0 { return spaces[index - 1].id }
+        if progress < 0, index + 1 < spaces.count { return spaces[index + 1].id }
+        return nil
+    }
+
+    private func coverage(for incoming: UUID?) -> CGFloat {
+        guard incoming != nil else { return 0 }
+        if fadeTarget != nil {
+            return min(max(progress, 0), 1)
+        }
+        return min(max(abs(progress), 0), 1)
+    }
+
+    /// Incoming page in front, outgoing page directly under it. Both fill the card.
+    private func stack(outgoing: UUID?, incoming: UUID?, coverage: CGFloat) {
+        let showIncoming = incoming != nil && coverage > 0 && incoming != outgoing
+        if showIncoming, let incoming, let front = slots[incoming]?.canvas {
+            front.alphaValue = coverage
+            if let outgoing, outgoing != incoming, let back = slots[outgoing]?.canvas {
+                back.alphaValue = 1
+                if subviews.last !== front || subviews.dropLast().last !== back {
+                    addSubview(back)
+                    addSubview(front)
+                }
+            } else if subviews.last !== front {
+                addSubview(front)
             }
-            slot.canvas.isHidden = false
-            let shift: CGFloat
-            if id == previous {
-                shift = progress - 1
-            } else if id == next {
-                shift = progress + 1
-            } else {
-                shift = progress
-            }
-            let frame = CGRect(x: shift * width, y: 0, width: width, height: height)
-            if slot.canvas.frame != frame {
-                slot.canvas.frame = frame
+            return
+        }
+        if let outgoing, let back = slots[outgoing]?.canvas {
+            back.alphaValue = 1
+            if subviews.last !== back {
+                addSubview(back)
             }
         }
+    }
+
+    private func noteFade(coverage: CGFloat, incoming: UUID?) {
+        let band = Int((min(max(coverage, 0), 1) * 4).rounded(.down))
+        guard band != loggedFadeBand else { return }
+        loggedFadeBand = band
+        let x = incoming.flatMap { slots[$0]?.canvas.frame.origin.x } ?? 0
+        SpaceSwitchTrace.mark(String(format: "content-fade in=%.2f out=1.00 x=%.0f", coverage, x))
     }
 
     private static func signature(_ content: DisplayedContent) -> String {
@@ -388,7 +492,7 @@ final class SpaceContentStage: NSView {
     }
 }
 
-/// Steps the content spring. This hosting view's display link never fires, so a common-mode
+/// Steps the content cross-fade. This hosting view's display link never fires, so a common-mode
 /// timer does. Common mode keeps the callbacks running inside a trackpad tracking loop.
 nonisolated private final class SpaceContentSampler: NSObject, @unchecked Sendable {
     private let lock = NSLock()

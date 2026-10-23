@@ -488,6 +488,10 @@ enum DebugSnapshot {
             // Short and fast, so the finger is still moving when it lifts and the spring keeps that speed.
             await replaySpaceSwipe(model: model, clip: clip, samples: 4, step: -40, gap: 16)
             writeSpaceSwitchReady("flicked")
+        case "cancel":
+            // Toward the next space, under the commit line and under a flick, so the page fades back.
+            await replaySpaceSwipe(model: model, clip: clip, samples: 3, step: -18, gap: 30)
+            writeSpaceSwitchReady("cancelled")
         default:
             break
         }
