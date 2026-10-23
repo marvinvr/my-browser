@@ -7,6 +7,16 @@
     <description>Updates of myBrowser</description>
     <language>en</language>
     <item>
+      <title>Version 0.4.1</title>
+      <pubDate>Fri, 23 Oct 2026 08:05:05 +0000</pubDate>
+      <sparkle:version>6</sparkle:version>
+      <sparkle:shortVersionString>0.4.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://github.com/marvinvr/my-browser/releases/tag/v0.4.1</sparkle:fullReleaseNotesLink>
+      <description><![CDATA[<ul><li>Release v0.4.0</li><li>Keep a loaded blank pinned pane on close</li><li>Fix split view section, PiP, and pane controls</li><li>Deliver the 1Password native-port handshake for passkeys</li><li>Keep the passkey entitlement out of signed files</li><li>Add passkey consent and 1Password extension support</li><li>Archive idle unpinned tabs after a chosen interval</li><li>Rename sidebar rows only from the context menu</li><li>Add downloads with a toolbar list and in-browser open</li><li>Make uBlock Origin load and apply cosmetic filters</li><li>Keep a pin&#x27;s home URL when the tab navigates</li><li>Show folder disclosure on the folder icon</li><li>Drop the loaded-tab wash from sidebar items</li><li>Show split panes side by side in the content area</li><li>Keep plain HTTP for local and tailnet hosts</li></ul>]]></description>
+      <enclosure url="https://github.com/marvinvr/my-browser/releases/download/v0.4.1/myBrowser-0.4.1-6.dmg" length="5086893" type="application/octet-stream" sparkle:edSignature="c+bIbgAFxKbH6w0d5EnRfrVvnysnFURGA6TlIrYijF3O6ECJFXAiIz1AHb0BWG7Ch3lsDNR0cvUJg3xSvIFmDw=="/>
+    </item>
+    <item>
       <title>Version 0.4.0</title>
       <pubDate>Fri, 23 Oct 2026 08:02:55 +0000</pubDate>
       <sparkle:version>5</sparkle:version>

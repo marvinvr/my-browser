@@ -1,6 +1,34 @@
 {
   "releases": [
     {
+      "version": "0.4.1",
+      "build": "6",
+      "commit": "47498462109f52ae82d5f3aeca965b18bdd1ea24",
+      "date": "2026-10-23T08:05:05Z",
+      "url": "https://github.com/marvinvr/my-browser/releases/download/v0.4.1/myBrowser-0.4.1-6.dmg",
+      "length": 5086893,
+      "edSignature": "c+bIbgAFxKbH6w0d5EnRfrVvnysnFURGA6TlIrYijF3O6ECJFXAiIz1AHb0BWG7Ch3lsDNR0cvUJg3xSvIFmDw==",
+      "minimumSystemVersion": "26.0",
+      "notes": [
+        "Release v0.4.0",
+        "Keep a loaded blank pinned pane on close",
+        "Fix split view section, PiP, and pane controls",
+        "Deliver the 1Password native-port handshake for passkeys",
+        "Keep the passkey entitlement out of signed files",
+        "Add passkey consent and 1Password extension support",
+        "Archive idle unpinned tabs after a chosen interval",
+        "Rename sidebar rows only from the context menu",
+        "Add downloads with a toolbar list and in-browser open",
+        "Make uBlock Origin load and apply cosmetic filters",
+        "Keep a pin's home URL when the tab navigates",
+        "Show folder disclosure on the folder icon",
+        "Drop the loaded-tab wash from sidebar items",
+        "Show split panes side by side in the content area",
+        "Keep plain HTTP for local and tailnet hosts"
+      ],
+      "page": "https://github.com/marvinvr/my-browser/releases/tag/v0.4.1"
+    },
+    {
       "version": "0.4.0",
       "build": "5",
       "commit": "d8ddbb4186d194498c61f9e8d7b0f9fcdca24cd3",
