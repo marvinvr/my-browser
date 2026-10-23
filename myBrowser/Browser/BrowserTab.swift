@@ -151,7 +151,10 @@ final class BrowserTab: NSObject, Identifiable {
             return
         }
         let list = webView.backForwardList
-        guard list.backList.isEmpty, list.forwardList.isEmpty else {
+        // A reload after the extension loads commits a real document. Putting the
+        // saved snapshot back on top of that replaces the document without
+        // `document_start`, so content scripts never stay injected.
+        guard webView.url == nil, list.backList.isEmpty, list.forwardList.isEmpty else {
             storedInteractionState = nil
             return
         }
@@ -294,10 +297,23 @@ final class BrowserTab: NSObject, Identifiable {
     /// Ignores a second call within 200ms. ⌘R is handled by `KeyMonitor`; the menu item is a fallback
     /// and both can see one keypress.
     func reload() {
+        performReload(throttled: true)
+    }
+
+    /// Extension injection can reload twice in one launch, once per content-script
+    /// extension. The keypress guard would drop the second of those.
+    func reloadIgnoringThrottle() {
+        performReload(throttled: false)
+    }
+
+    private func performReload(throttled: Bool) {
         guard let webView else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        guard now - lastReloadTime >= 0.2 else { return }
+        if throttled {
+            guard now - lastReloadTime >= 0.2 else { return }
+        }
         lastReloadTime = now
+        storedInteractionState = nil
         webView.reload()
     }
 
@@ -307,6 +323,7 @@ final class BrowserTab: NSObject, Identifiable {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastReloadTime >= 0.2 else { return }
         lastReloadTime = now
+        storedInteractionState = nil
         webView.reloadFromOrigin()
     }
 

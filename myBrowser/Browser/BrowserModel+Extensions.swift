@@ -5,7 +5,7 @@ extension BrowserModel {
     func reloadWebTabs(in profileID: UUID) {
         for tab in tabs.values where tab.profileID == profileID {
             guard let scheme = tab.url?.scheme?.lowercased(), scheme == "http" || scheme == "https" else { continue }
-            tab.reload()
+            tab.reloadIgnoringThrottle()
         }
     }
 

@@ -35,6 +35,9 @@ final class ExtensionManager {
     @ObservationIgnored private var popupPanels: [ExtensionPopupPanel] = []
     /// Background pages WebKit has created. The public context API does not return the view.
     @ObservationIgnored private var backgroundWebViews: [ObjectIdentifier: WKWebView] = [:]
+    /// Contexts whose content scripts are installed inside WebKit's storage-migration
+    /// callback, after `load` has already returned. The reload waits for that callback.
+    @ObservationIgnored private var pendingInjectionReload: Set<ObjectIdentifier> = []
     @ObservationIgnored private var promptTail: Task<Bool, Never>?
     @ObservationIgnored private var focusObserver: NSObjectProtocol?
     @ObservationIgnored weak var model: BrowserModel?
@@ -241,22 +244,9 @@ final class ExtensionManager {
                 })()
                 """
                 let result = try? await webView.evaluateJavaScript(script)
-                #if DEBUG
                 if let library = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_LIBRARY"], !library.isEmpty {
-                    let note = "\(delay): \(String(describing: result ?? "nil"))\n"
-                    let url = URL(fileURLWithPath: library, isDirectory: true).appendingPathComponent("popup-structure.txt")
-                    if let data = note.data(using: .utf8) {
-                        if FileManager.default.fileExists(atPath: url.path) {
-                            let handle = try? FileHandle(forWritingTo: url)
-                            try? handle?.seekToEnd()
-                            try? handle?.write(data)
-                            try? handle?.close()
-                        } else {
-                            try? data.write(to: url)
-                        }
-                    }
+                    Self.appendDebugNote(directory: library, name: "popup-structure.txt", line: "\(delay): \(String(describing: result ?? "nil"))\n")
                 }
-                #endif
                 guard let size = Self.popupSize(from: result) else { return }
                 let current = popover.contentSize
                 if abs(current.width - size.width) > 8 || abs(current.height - size.height) > 8 {
@@ -271,12 +261,40 @@ final class ExtensionManager {
     /// 1Password reads all three while starting. A property set once at evaluation is gone
     /// by the time that async init runs, so the fill is repeated for a few seconds.
     private static let notificationsShimMarker = "/* mb-notifications-shim */"
-    private static let notificationsShimVersion = "/* mb-shim-native-port */"
+    private static let notificationsShimVersion = "/* mb-shim-wasm-status */"
 
     private static let notificationsShimSource = """
     /* mb-notifications-shim */
     /* mb-shim-native-port */
+    /* mb-shim-privacy */
+    /* mb-shim-wasm-mime */
+    /* mb-shim-wasm-status */
     (() => {
+      // WebKit serves .wasm as application/octet-stream. instantiateStreaming
+      // then reads the body and rejects, and the caller's arrayBuffer fallback
+      // fails because the body is already used. 1Password's core never starts.
+      try {
+        const nativeStreaming = WebAssembly.instantiateStreaming;
+        if (typeof nativeStreaming === "function") {
+          const note = (value) => { try { globalThis.__mbWasmLoad = value; } catch (e) {} };
+          WebAssembly.instantiateStreaming = function(source, imports) {
+            const response = source instanceof Response ? source : null;
+            const type = response && response.headers ? (response.headers.get("content-type") || "") : "";
+            if (response && response.ok && type !== "application/wasm") {
+              note("fallback");
+              return response.arrayBuffer().then((buf) => WebAssembly.instantiate(buf, imports)).then((out) => {
+                note("ok");
+                return out;
+              }, (error) => {
+                note("fail " + ((error && error.name) || "error"));
+                throw error;
+              });
+            }
+            note("native");
+            return nativeStreaming.call(WebAssembly, source, imports);
+          };
+        }
+      } catch (e) {}
       const event = () => ({
         addListener() {},
         removeListener() {},
@@ -330,10 +348,28 @@ final class ExtensionManager {
           try { storage.managed.onChanged = event(); } catch (e) {}
         }
       };
+      const fillPrivacy = (namespace) => {
+        if (!namespace) return;
+        let privacy = null;
+        try { privacy = namespace.privacy; } catch (e) { privacy = null; }
+        if (privacy && privacy.services && privacy.services.passwordSavingEnabled) return;
+        const setting = () => ({
+          get(details, cb) {
+            const result = { value: false, levelOfControl: "not_controllable" };
+            if (typeof cb === "function") cb(result);
+            return Promise.resolve(result);
+          },
+          set(details, cb) { if (typeof cb === "function") cb(); return Promise.resolve(); },
+          clear(details, cb) { if (typeof cb === "function") cb(); return Promise.resolve(); }
+        });
+        const category = new Proxy({}, { get: () => setting() });
+        try { namespace.privacy = { services: category, network: category, websites: category }; } catch (e) {}
+      };
       const fillNamespace = (namespace) => {
         if (!namespace) return;
         fillNotifications(namespace.notifications);
         fillStorage(namespace.storage);
+        fillPrivacy(namespace);
         fillEvents(namespace.webNavigation, [
           "onCreatedNavigationTarget",
           "onHistoryStateUpdated",
@@ -407,6 +443,13 @@ final class ExtensionManager {
           const reason = event.reason;
           errors.push(String((reason && (reason.message || reason)) || "rejection").slice(0, 180));
         });
+        const report = console.error.bind(console);
+        console.error = (...args) => {
+          try {
+            errors.push(args.map((arg) => String((arg && arg.message) || arg)).join(" ").slice(0, 180));
+          } catch (e) {}
+          return report(...args);
+        };
       } catch (e) {}
     })();
 
@@ -438,13 +481,161 @@ final class ExtensionManager {
         guard FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) else { return }
         guard var body = try? String(contentsOf: file, encoding: .utf8) else { return }
         if body.hasPrefix(notificationsShimMarker) {
-            let head = body.prefix(5000)
+            let head = body.prefix(8000)
             if head.contains(notificationsShimVersion) { return }
-            guard let end = body.range(of: "\n})();\n\n") else { return }
+            // The prelude is one IIFE. Its close is the only column-0 `})();`.
+            // A blank line after it is not guaranteed, so don't require one.
+            guard let end = body.range(of: "\n})();\n") else { return }
             body = String(body[end.upperBound...])
         }
         body = notificationsShimSource + body
         try? body.write(to: file, atomically: true, encoding: .utf8)
+    }
+
+    private static func appendDebugNote(directory: String, name: String, line: String) {
+        guard let data = line.data(using: .utf8) else { return }
+        let url = URL(fileURLWithPath: directory, isDirectory: true).appendingPathComponent(name)
+        if FileManager.default.fileExists(atPath: url.path) {
+            let handle = try? FileHandle(forWritingTo: url)
+            try? handle?.seekToEnd()
+            try? handle?.write(data)
+            try? handle?.close()
+        } else {
+            try? data.write(to: url)
+        }
+    }
+
+    /// Opt-in notes when `MYBROWSER_DEBUG_LIBRARY` is set. Counts and error strings only.
+    /// No page text and no native-message bodies.
+    private func noteOnePasswordHealth(context: WKWebExtensionContext, id: String) {
+        guard id == OnePasswordPackage.extensionID,
+              let library = ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_LIBRARY"],
+              !library.isEmpty else { return }
+        let tab = model?.selectedTab
+        let url = tab?.url
+        let access = url.map { context.hasAccess(to: $0, in: tab) } ?? false
+        let injects = url.map { context.hasInjectedContent(for: $0) } ?? false
+        let attached = tab?.webView?.configuration.webExtensionController != nil
+        let loaded = "loaded inject=\(context.hasInjectedContent) allHosts=\(context.hasAccessToAllHosts) allURLs=\(context.hasAccessToAllURLs) urlAccess=\(access) injectsURL=\(injects) webExt=\(attached) scheme=\(url?.scheme ?? "") host=\(url?.host ?? "") \(injectionSummary(context: context))\n"
+        Self.appendDebugNote(directory: library, name: "op-health.txt", line: loaded)
+        // Toolbar click only for an explicit throwaway probe. DEBUG_LIBRARY alone must
+        // not steal the selected tab (snapshot runs set that variable).
+        if ProcessInfo.processInfo.environment["MYBROWSER_OP_PROBE"] == "1",
+           let profileID = model?.selectedSpace?.profileID {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(9))
+                self.performAction(extensionID: id, profileID: profileID, tab: self.model?.selectedTab)
+            }
+        }
+        let delays: [Duration] = [.seconds(2), .seconds(6), .seconds(12), .seconds(18)]
+        for delay in delays {
+            Task { @MainActor in
+                try? await Task.sleep(for: delay)
+                Self.appendDebugNote(directory: library, name: "op-health.txt", line: "inject \(delay): \(self.injectionSummary(context: context))\n")
+                if let webView = self.backgroundWebView(for: context) {
+                    let script = """
+                    (() => {
+                      const privacy = !!(globalThis.chrome && chrome.privacy && chrome.privacy.services);
+                      const host = String(location.href || "").split("/")[2] || "";
+                      const hasWasm = typeof WebAssembly !== "undefined" && typeof WebAssembly.compile === "function";
+                      if (!globalThis.__mbWasmProbe) {
+                        globalThis.__mbWasmProbe = "start has=" + hasWasm;
+                        fetch("/assets/wasm/op-core-b5x_bg-6QVPXTHW.wasm").then(async (res) => {
+                          const ct = res.headers.get("content-type") || "";
+                          let note = "status=" + res.status + " type=" + res.type + " ct=" + ct.slice(0, 40);
+                          if (res.ok && hasWasm) {
+                            const buf = await res.arrayBuffer();
+                            note += " bytes=" + buf.byteLength;
+                            try {
+                              await WebAssembly.compile(buf);
+                              note += " compile=ok";
+                            } catch (e) {
+                              note += " compile=" + ((e && e.name) || "error");
+                            }
+                          }
+                          globalThis.__mbWasmProbe = note;
+                        }).catch((e) => {
+                          let msg = String((e && e.message) || "").slice(0, 90);
+                          msg = msg.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/g, "");
+                          globalThis.__mbWasmProbe = "err=" + ((e && e.name) || "error") + " " + msg;
+                        });
+                      }
+                      const errs = (globalThis.__mbPageErrors || []).slice(0, 3).join(" | ").replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/g, "");
+                      return "host=" + host + " privacy=" + (privacy ? 1 : 0) + " wasm=" + globalThis.__mbWasmProbe + " load=" + (globalThis.__mbWasmLoad || "") + " errs=" + errs.slice(0, 220);
+                    })()
+                    """
+                    do {
+                        let result = try await webView.evaluateJavaScript(script)
+                        Self.appendDebugNote(directory: library, name: "op-health.txt", line: "worker \(delay): \(String(describing: result ?? "nil"))\n")
+                    } catch {
+                        let note = error.localizedDescription.replacingOccurrences(of: "\n", with: " ")
+                        Self.appendDebugNote(directory: library, name: "op-health.txt", line: "worker \(delay) eval: \(note.prefix(180))\n")
+                    }
+                } else {
+                    Self.appendDebugNote(directory: library, name: "op-health.txt", line: "worker \(delay): no background view\n")
+                }
+                if let webView = self.model?.selectedTab?.webView {
+                    let probe = ProcessInfo.processInfo.environment["MYBROWSER_OP_PROBE"] == "1"
+                    let script = """
+                    (() => {
+                      const probe = \(probe ? "true" : "false");
+                      let marks = 0;
+                      let shadows = 0;
+                      for (const node of document.querySelectorAll("*")) {
+                        if (node.shadowRoot) shadows += 1;
+                        const id = node.id || "";
+                        const cls = typeof node.className === "string" ? node.className : "";
+                        if (/1password|com-1password/i.test(id + " " + cls)) marks += 1;
+                      }
+                      const title = document.title || "";
+                      const safe = /^(mb-|1Password$)/.test(title) || title.length === 0 ? title : ("len:" + title.length);
+                      const root = document.getElementById("root");
+                      const allow = ["Unlock", "unlock", "Locked", "Sign in", "Welcome", "Loading", "Error", "Integrate", "Touch", "Open", "Connect", "Desktop", "Browser", "Get started", "Set up", "Approve", "Enable", "Continue", "ready", "Please", "account"];
+                      const text = (document.body && document.body.innerText || "").slice(0, 4000);
+                      const words = allow.filter((word) => text.includes(word));
+                      const password = document.querySelector('input[type="password"]');
+                      if (probe && password) { try { password.focus(); } catch (e) {} }
+                      const buttons = document.querySelectorAll("button").length;
+                      if (probe && !window.__mbCont) {
+                        for (const button of document.querySelectorAll("button")) {
+                          if ((button.innerText || "").trim() === "Continue") {
+                            window.__mbCont = 1;
+                            button.click();
+                            break;
+                          }
+                        }
+                      }
+                      return {
+                        title: safe,
+                        inputs: document.querySelectorAll("input").length,
+                        buttons,
+                        textLen: text.length,
+                        marks, shadows,
+                        rootChildren: root ? root.childElementCount : -1,
+                        words
+                      };
+                    })()
+                    """
+                    let result = try? await webView.evaluateJavaScript(script)
+                    Self.appendDebugNote(directory: library, name: "op-health.txt", line: "page \(delay): \(String(describing: result ?? "nil"))\n")
+                }
+            }
+        }
+    }
+
+    /// Counts only. Script source and page text stay out of the log.
+    private func injectionSummary(context: WKWebExtensionContext) -> String {
+        let base = context.baseURL.host ?? ""
+        let errs = context.errors.prefix(3).map(\.localizedDescription).joined(separator: " | ")
+        guard let webView = model?.selectedTab?.webView else {
+            return "base=\(base) tab=none errs=\(errs)"
+        }
+        let scripts = webView.configuration.userContentController.userScripts
+        let compat = scripts.reduce(into: 0) { count, script in
+            if script.source.contains("__myBrowserCompat") { count += 1 }
+        }
+        let persistent = webView.configuration.websiteDataStore.isPersistent
+        return "base=\(base) scripts=\(scripts.count) compat=\(compat) persistent=\(persistent) errs=\(errs)"
     }
 
     private static func popupSize(from result: Any?) -> NSSize? {
@@ -677,7 +868,7 @@ final class ExtensionManager {
             let ext = try await WKWebExtension(resourceBaseURL: prepared.directory)
             try Self.validate(ext)
             let name = ext.displayName ?? prepared.manifest.name
-            let decision = await installDecision(name: name, extension: ext)
+            let decision = await installDecision(id: prepared.id, name: name, extension: ext)
             var record = records.first(where: { $0.id == prepared.id }) ?? ExtensionRecord(
                 id: prepared.id,
                 name: name,
@@ -717,7 +908,10 @@ final class ExtensionManager {
         }
     }
 
-    private func installDecision(name: String, extension ext: WKWebExtension) async -> PermissionDecision {
+    private func installDecision(id: String, name: String, extension ext: WKWebExtension) async -> PermissionDecision {
+        if id == OnePasswordPackage.extensionID {
+            return Self.allowAll(ext)
+        }
         #if DEBUG
         if ProcessInfo.processInfo.environment["MYBROWSER_DEBUG_EXTENSION_GRANT"] == "1" {
             return PermissionDecision(
@@ -745,6 +939,35 @@ final class ExtensionManager {
         return PermissionDecision(grantedPermissions: [], deniedPermissions: names, grantedPatterns: [], deniedPatterns: patterns)
     }
 
+    private static func allowAll(_ ext: WKWebExtension) -> PermissionDecision {
+        PermissionDecision(
+            grantedPermissions: ext.requestedPermissions.map(\.rawValue).sorted(),
+            deniedPermissions: [],
+            grantedPatterns: ext.requestedPermissionMatchPatterns.map(\.string).sorted(),
+            deniedPatterns: []
+        )
+    }
+
+    /// 1Password's inline menu and native-messaging unlock need `<all_urls>` and the
+    /// permissions in its manifest. An older install that denied them, or never asked,
+    /// is repaired on the next load. Other extensions still use the install prompt.
+    private func ensureOnePasswordAccess(_ record: ExtensionRecord, extension ext: WKWebExtension) -> ExtensionRecord {
+        guard record.id == OnePasswordPackage.extensionID else { return record }
+        let decision = Self.allowAll(ext)
+        var updated = record
+        let permissions = Set(updated.grantedPermissions).union(decision.grantedPermissions)
+        var patterns = Set(updated.grantedMatchPatterns).union(decision.grantedPatterns)
+        patterns.insert("<all_urls>")
+        updated.grantedPermissions = permissions.sorted()
+        updated.deniedPermissions.removeAll { permissions.contains($0) }
+        updated.grantedMatchPatterns = patterns.sorted()
+        updated.deniedMatchPatterns.removeAll { patterns.contains($0) }
+        if updated != record {
+            replace(updated)
+        }
+        return updated
+    }
+
     private func loadEnabled() async {
         for record in records {
             for profileID in record.enabledProfileIDs {
@@ -760,6 +983,10 @@ final class ExtensionManager {
     private func load(_ record: ExtensionRecord, profileID: UUID, existing: WKWebExtension? = nil, reloadPages: Bool = false) async throws {
         if contexts[profileID]?[record.id] != nil { return }
         let folder = directory.appending(path: record.directory, directoryHint: .isDirectory)
+        // Rewrites mybrowser-compat.js. A stale copy can fail to parse, and then no
+        // content script in that file runs, including the 1Password authorize ask.
+        try? ExtensionWebKitCompat.apply(to: folder)
+        OnePasswordPackage.apply(id: record.id, folder: folder)
         Self.installServiceWorkerNotificationsShim(in: folder)
         let ext: WKWebExtension
         if let existing {
@@ -768,11 +995,12 @@ final class ExtensionManager {
             ext = try await WKWebExtension(resourceBaseURL: folder)
             try Self.validate(ext)
         }
+        let granted = ensureOnePasswordAccess(record, extension: ext)
         let context = WKWebExtensionContext(for: ext)
-        applyIdentity(record, to: context)
+        applyIdentity(granted, to: context)
         // Release builds stay inspectable. This is a browser, not an embedded web view.
         context.isInspectable = true
-        apply(record, to: context)
+        apply(granted, to: context)
         let controller = controller(for: profileID)
         announceWindow(profileID: profileID, controller: controller)
         do {
@@ -803,9 +1031,23 @@ final class ExtensionManager {
             }
         }
         revision &+= 1
-        if reloadPages, context.hasInjectedContent {
-            model?.reloadWebTabs(in: profileID)
+        // `load` returns before WebKit installs content scripts when the base URL
+        // changed and local storage is still being renamed. The background page is
+        // created in that same callback, just before the scripts are added. Reloading
+        // here, on the returning path, commits the document with no content scripts.
+        if context.hasInjectedContent {
+            let token = ObjectIdentifier(context)
+            if backgroundWebView(for: context) != nil {
+                // The storage callback already ran inside `load`, so the scripts are in.
+                model?.reloadWebTabs(in: profileID)
+            } else {
+                pendingInjectionReload.insert(token)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                    self?.reloadTabsWaitingForInjection(token, profileID: profileID)
+                }
+            }
         }
+        noteOnePasswordHealth(context: context, id: record.id)
         if UBOFilterSource.isFullUBO(record, extensionsDirectory: directory) {
             contentBlocker.refresh()
         }
@@ -834,6 +1076,19 @@ final class ExtensionManager {
     func noteBackgroundWebView(_ webView: WKWebView, for context: WKWebExtensionContext) {
         webView.isInspectable = true
         backgroundWebViews[ObjectIdentifier(context)] = webView
+        let profileID = context.webExtensionController?.configuration.identifier
+        guard let profileID else { return }
+        let token = ObjectIdentifier(context)
+        // The delegate runs before `addInjectedContent` returns. The next turn is
+        // after those scripts are on the tab's user content controller.
+        DispatchQueue.main.async { [weak self] in
+            self?.reloadTabsWaitingForInjection(token, profileID: profileID)
+        }
+    }
+
+    private func reloadTabsWaitingForInjection(_ token: ObjectIdentifier, profileID: UUID) {
+        guard pendingInjectionReload.remove(token) != nil else { return }
+        model?.reloadWebTabs(in: profileID)
     }
 
     /// Opens the inspector on an extension's background page. Loads that page first when it is lazy.
@@ -862,13 +1117,18 @@ final class ExtensionManager {
         return webView
     }
 
-    /// Chrome Web Store ids keep `runtime.id`. The base URL stays `webkit-extension://`.
+    /// Chrome Web Store ids keep `runtime.id`. The base URL host is that same id.
+    /// A fresh context otherwise uses a new UUID host on every launch. WebKit then
+    /// renames extension storage asynchronously and only installs content scripts
+    /// when that rename finishes, which is after `load` has returned.
     /// Assigning `chrome-extension://` makes `WKWebExtensionController.load` hang instead of
-    /// throwing (1Password on macOS 27), so the fallback never runs. Native hosts still get
-    /// `chrome-extension://<id>/` as their origin argument.
+    /// throwing (1Password on macOS 27). Native hosts still get `chrome-extension://<id>/`.
     private func applyIdentity(_ record: ExtensionRecord, to context: WKWebExtensionContext) {
         context.uniqueIdentifier = record.id
         context.inspectionName = record.name
+        if let base = URL(string: "webkit-extension://\(record.id)/") {
+            context.baseURL = base
+        }
     }
 
     private func apply(_ record: ExtensionRecord, to context: WKWebExtensionContext) {
@@ -989,7 +1249,7 @@ final class ExtensionManager {
             let patterns = ext.requestedPermissionMatchPatterns.map(\.string)
             let decision = autoGrant
                 ? PermissionDecision(grantedPermissions: names, deniedPermissions: [], grantedPatterns: patterns, deniedPatterns: [])
-                : await installDecision(name: ext.displayName ?? "Tint", extension: ext)
+                : await installDecision(id: prepared.id, name: ext.displayName ?? "Tint", extension: ext)
             var record = ExtensionRecord(
                 id: prepared.id,
                 name: ext.displayName ?? "Tint",

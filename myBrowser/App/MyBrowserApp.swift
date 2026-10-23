@@ -112,14 +112,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // On the main thread, not a later MainActor task: distributed-notification observers
         // only fire on the thread that registered them.
         DebugSnapshot.install(model: model)
+        installDebugToggle()
+        #endif
+        // After the first frame, in every build. Calling this from `init` runs during
+        // SwiftUI's launch notification and trips a main-actor assertion when 1Password
+        // is already installed. Release used to skip it, so an enabled extension never
+        // loaded again after quit.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             Task { @MainActor in
                 await self.extensions.loadEnabledExtensions()
+                #if DEBUG
                 DebugSnapshot.reregister()
+                #endif
             }
         }
-        installDebugToggle()
-        #endif
     }
 
     #if DEBUG

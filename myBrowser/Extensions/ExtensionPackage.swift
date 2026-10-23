@@ -67,6 +67,7 @@ nonisolated enum ExtensionPackage {
         }
         try fileManager.moveItem(at: loaded.root, to: folder)
         try ExtensionWebKitCompat.apply(to: folder)
+        OnePasswordPackage.apply(id: id, folder: folder)
         return Prepared(id: id, directory: folder, manifest: loaded.manifest, source: sourceKind)
     }
 
