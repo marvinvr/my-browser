@@ -19,6 +19,7 @@ struct SyncTests {
             id: spaceID,
             name: "Work",
             symbol: "briefcase.fill",
+            emoji: "📁",
             color: .orange,
             profileID: profileID,
             sortKey: "M",

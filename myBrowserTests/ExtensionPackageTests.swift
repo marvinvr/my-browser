@@ -32,4 +32,36 @@ struct ExtensionPackageTests {
         #expect(prepared.directory.deletingLastPathComponent().standardizedFileURL == extensions.standardizedFileURL)
     }
 
+    @Test func storePackageRejectsADifferentSignedID() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "mb-crx-mismatch-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let key = Data([0x2b, 0x10, 0xff, 0x01])
+        var data = Data("Cr24".utf8)
+        data.append(contentsOf: withUnsafeBytes(of: UInt32(2).littleEndian) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: UInt32(key.count).littleEndian) { Array($0) })
+        data.append(contentsOf: withUnsafeBytes(of: UInt32(0).littleEndian) { Array($0) })
+        data.append(key)
+        let crx = root.appending(path: "extension.crx", directoryHint: .notDirectory)
+        try data.write(to: crx)
+        let requested = String(repeating: "b", count: 32)
+        let signed = CRXArchive.extensionID(publicKey: key)
+        #expect(signed != requested)
+        do {
+            _ = try await ExtensionPackage.prepare(
+                source: crx,
+                into: root.appending(path: "out", directoryHint: .isDirectory),
+                sourceKind: .chromeWebStore,
+                preferredID: requested
+            )
+            Issue.record("a mismatched store package was installed")
+        } catch let error as ExtensionInstallError {
+            guard case .store(let detail) = error else {
+                Issue.record("expected a store error, got \(error)")
+                return
+            }
+            #expect(detail.contains(signed))
+        }
+    }
 }

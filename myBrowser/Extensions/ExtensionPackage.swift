@@ -45,6 +45,12 @@ nonisolated enum ExtensionPackage {
         case .crx, .chromeWebStore:
             let payload = try crxZip(at: source)
             crxID = payload.extensionID
+            if let preferredID, let crxID,
+               ChromeWebStoreLink.isExtensionID(preferredID),
+               ChromeWebStoreLink.isExtensionID(crxID),
+               preferredID != crxID {
+                throw ExtensionInstallError.store("The downloaded package is \(crxID), not the requested extension.")
+            }
             let zipURL = scratch.appending(path: "extension.zip", directoryHint: .notDirectory)
             try payload.zip.write(to: zipURL)
             try unzip(zipURL, to: unpacked)

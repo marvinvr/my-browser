@@ -15,6 +15,7 @@ nonisolated enum RecordMapper {
         static let modifiedAt = "modifiedAt"
         static let deletedAt = "deletedAt"
         static let symbol = "symbol"
+        static let emoji = "emoji"
         static let color = "color"
         static let profileID = "profileID"
         static let sortKey = "sortKey"
@@ -40,6 +41,9 @@ nonisolated enum RecordMapper {
         let record = baseRecord(type: SyncSchema.RecordType.space, id: space.id, systemFields: systemFields)
         set(record, Field.name, space.name)
         set(record, Field.symbol, space.symbol)
+        if let emoji = space.emoji?.trimmingCharacters(in: .whitespacesAndNewlines), !emoji.isEmpty {
+            set(record, Field.emoji, emoji)
+        }
         set(record, Field.color, space.color.rawValue)
         set(record, Field.profileID, space.profileID.uuidString)
         set(record, Field.sortKey, space.sortKey)
@@ -99,10 +103,15 @@ nonisolated enum RecordMapper {
               let profileID = uuidString(record, Field.profileID),
               let sortKey = string(record, Field.sortKey),
               let modifiedAt = date(record, Field.modifiedAt) else { return nil }
+        let emoji = string(record, Field.emoji).flatMap { value -> String? in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
         var space = Space(
             id: id,
             name: name,
             symbol: symbol,
+            emoji: emoji,
             color: color,
             profileID: profileID,
             sortKey: sortKey,

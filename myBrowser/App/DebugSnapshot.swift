@@ -66,6 +66,39 @@ enum DebugSnapshot {
                 UserDefaults.standard.set(raw, forKey: AddressBarPosition.defaultsKey)
             }
         })
+        relays.append(observe("ch.marvinvr.mybrowser.debug.space") { note in
+            let name = note.userInfo?["name"] as? String
+            let action = note.userInfo?["action"] as? String
+            Task { @MainActor in
+                guard let model = attachedModel else { return }
+                if action == "new" {
+                    let title = (name?.isEmpty == false ? name : nil) ?? "Space"
+                    _ = model.createSpace(name: title, symbol: "circle.fill", color: .green)
+                    return
+                }
+                guard let name, let space = model.library.orderedSpaces.first(where: { $0.name == name }) else { return }
+                model.selectSpace(space.id)
+            }
+        })
+        relays.append(observe("ch.marvinvr.mybrowser.debug.eval") { note in
+            let script = note.userInfo?["script"] as? String
+            let path = note.userInfo?["path"] as? String
+            Task { @MainActor in
+                guard let script, let path, path.hasPrefix("/") else { return }
+                let result: String
+                if let webView = attachedModel?.selectedTab?.webView {
+                    do {
+                        let value = try await webView.evaluateJavaScript(script)
+                        result = String(describing: value ?? "nil")
+                    } catch {
+                        result = "error: \(error.localizedDescription)"
+                    }
+                } else {
+                    result = "error: no web view"
+                }
+                try? result.write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
+            }
+        })
         relays.append(observe("ch.marvinvr.mybrowser.debug.command") { note in
             let mode = note.userInfo?["mode"] as? String
             Task { @MainActor in
@@ -145,6 +178,7 @@ enum DebugSnapshot {
             pages.append((shot, imageRect(for: frame, in: content)))
         }
         let sheetImage = attachedSheetImage(on: window, content: content)
+        let commandFill = commandBarFill(for: window)
 
         var buttons: [(NSImage, NSRect)] = []
         for kind: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
@@ -193,15 +227,18 @@ enum DebugSnapshot {
         for (shot, frame) in pages {
             shot.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
         }
-        if let (shot, frame) = sheetImage {
-            shot.draw(in: frame, from: .zero, operation: .sourceOver, fraction: 1)
+        if let sheet = sheetImage {
+            // The sheet material cacheDisplays clear, so the title and buttons would sit on the page.
+            let card = NSBezierPath(roundedRect: sheet.frame, xRadius: 12, yRadius: 12)
+            sheet.fill.setFill()
+            card.fill()
+            sheet.image.draw(in: sheet.frame, from: .zero, operation: .sourceOver, fraction: 1)
         }
         if let overlay = overlayCapture(in: content) {
-            // Glass often cacheDisplays as clear pixels, and the window background is white,
-            // so a white card disappears on the page. A slightly gray card keeps the panel readable.
-            // An opaque panel image covers it.
+            // Glass often cacheDisplays as clear pixels. Paint a solid card in the
+            // current appearance so the panel stays readable on the page.
             let card = NSBezierPath(roundedRect: overlay.panel, xRadius: 14, yRadius: 14)
-            NSColor(deviceWhite: 0.97, alpha: 1).setFill()
+            commandFill.setFill()
             card.fill()
             NSGraphicsContext.current?.saveGraphicsState()
             card.addClip()
@@ -228,8 +265,14 @@ enum DebugSnapshot {
         return found
     }
 
+    private struct SheetCapture {
+        var image: NSImage
+        var frame: NSRect
+        var fill: NSColor
+    }
+
     /// An `NSAlert` sheet is a separate window. Draw it on top of the parent capture.
-    private static func attachedSheetImage(on window: NSWindow, content: NSView) -> (NSImage, NSRect)? {
+    private static func attachedSheetImage(on window: NSWindow, content: NSView) -> SheetCapture? {
         guard let sheet = window.attachedSheet, sheet !== window, let sheetContent = sheet.contentView,
               sheetContent.bounds.width > 1, sheetContent.bounds.height > 1 else { return nil }
         sheetContent.layoutSubtreeIfNeeded()
@@ -238,7 +281,20 @@ enum DebugSnapshot {
         let inScreen = sheet.convertToScreen(inWindow)
         let inParent = window.convertFromScreen(inScreen)
         let inContent = content.convert(inParent, from: nil)
-        return (cached.image, imageRect(for: inContent, in: content))
+        var fill = NSColor.windowBackgroundColor
+        sheet.effectiveAppearance.performAsCurrentDrawingAppearance {
+            fill = NSColor.windowBackgroundColor.usingColorSpace(.deviceRGB) ?? NSColor.windowBackgroundColor
+        }
+        return SheetCapture(image: cached.image, frame: imageRect(for: inContent, in: content), fill: fill)
+    }
+
+    /// Solid stand-in for a glass command bar. Light stays near white; dark stays near the window.
+    private static func commandBarFill(for window: NSWindow) -> NSColor {
+        var dark = false
+        window.effectiveAppearance.performAsCurrentDrawingAppearance {
+            dark = window.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        }
+        return dark ? NSColor(deviceWhite: 0.2, alpha: 1) : NSColor(deviceWhite: 0.97, alpha: 1)
     }
 
     /// Content view is flipped; the bitmap context is not. Map a content-view rect into the image.

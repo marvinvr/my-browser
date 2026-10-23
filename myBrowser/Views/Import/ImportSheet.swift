@@ -43,6 +43,10 @@ struct ImportSheet: View {
         }
         .frame(width: 500)
         .fixedSize(horizontal: false, vertical: true)
+        // Grouped form sections paint their own cards. The title and buttons sit
+        // outside those cards, so the sheet itself needs a surface or they float on the page.
+        .background(Color(nsColor: .windowBackgroundColor))
+        .presentationBackground(Color(nsColor: .windowBackgroundColor))
         .background { ImportWindowMarker(identifier: offersStartFresh ? "welcome" : "import") }
         .onAppear {
             session.load()
