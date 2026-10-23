@@ -10,21 +10,10 @@
       "edSignature": "JB/hUmH3sY7kEm9vW4hGyjKdeKLevWDIVkQGed0aOdIWKnWAaH7kKn1HCyOxeq1l/v4GSX/nor2HJOAyXWvPBA==",
       "minimumSystemVersion": "26.0",
       "notes": [
-        "Round-trip space emoji and keep import sheets readable",
-        "Add web extension support",
-        "Add Chrome and Arc importers",
-        "Keep invalid remote sort keys from crashing",
-        "Add sidebar drag and drop",
-        "Add CloudKit sync layer behind a flag",
-        "Release v0.1.0",
-        "Restore back/forward history once the web view is on screen",
-        "Add app icon with light/dark option",
-        "Render each snapshot layer once",
-        "Add tinted toolbar, clean URL display and copy link",
-        "Add address bar position setting and fix collapsed sidebar",
-        "Honor MYBROWSER_APPEARANCE and even out space icons",
-        "Move toolbar above content and fix sidebar selection",
-        "Add two-finger swipe to switch spaces"
+        "Sidebar drag and drop",
+        "Chrome and Arc import, plus first-launch onboarding",
+        "Web extensions, including the Chrome Web Store and .xpi",
+        "iCloud sync is prepared and stays off"
       ],
       "page": "https://github.com/marvinvr/my-browser/releases/tag/v0.2.0"
     },
