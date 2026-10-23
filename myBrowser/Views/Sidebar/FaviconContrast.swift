@@ -7,6 +7,8 @@ enum FaviconContrast {
         var image: NSImage
         /// A rounded plate behind ink that is dark on a dark UI, or light on a light UI.
         var plate: Bool
+        /// Continuous rounded clip. Only an opaque edge-to-edge square.
+        var roundsCorners: Bool
     }
 
     static func presentation(for image: NSImage, colorScheme: ColorScheme) -> Presentation {
@@ -15,12 +17,12 @@ enum FaviconContrast {
         if let luminance = measured.glyphLuminance {
             let invert = dark ? luminance < 0.45 : luminance > 0.78
             if invert, let flipped = measured.inverted {
-                return Presentation(image: flipped, plate: false)
+                return Presentation(image: flipped, plate: false, roundsCorners: false)
             }
-            return Presentation(image: image, plate: false)
+            return Presentation(image: image, plate: false, roundsCorners: measured.fullBleed)
         }
         let plate = dark ? measured.needsLightPlate : measured.needsDarkPlate
-        return Presentation(image: image, plate: plate)
+        return Presentation(image: image, plate: plate, roundsCorners: measured.fullBleed)
     }
 
     // MARK: Measure
@@ -33,12 +35,21 @@ enum FaviconContrast {
         let needsLightPlate: Bool
         /// Light multi-colour ink. A dark plate keeps it visible on a light sidebar.
         let needsDarkPlate: Bool
+        /// Opaque pixels touch every edge of a square bitmap.
+        let fullBleed: Bool
         let inverted: NSImage?
 
-        init(glyphLuminance: CGFloat?, needsLightPlate: Bool, needsDarkPlate: Bool, inverted: NSImage?) {
+        init(
+            glyphLuminance: CGFloat?,
+            needsLightPlate: Bool,
+            needsDarkPlate: Bool,
+            fullBleed: Bool,
+            inverted: NSImage?
+        ) {
             self.glyphLuminance = glyphLuminance
             self.needsLightPlate = needsLightPlate
             self.needsDarkPlate = needsDarkPlate
+            self.fullBleed = fullBleed
             self.inverted = inverted
         }
     }
@@ -57,8 +68,14 @@ enum FaviconContrast {
     /// Samples at most 64px. Anti-aliased edges stay out of the colour test; they have a low alpha.
     private static func measure(_ image: NSImage) -> Measurement {
         let (width, height) = pixelSize(of: image)
-        guard let bitmap = raster(image, width: width, height: height), let bytes = bitmap.bitmapData else {
-            return Measurement(glyphLuminance: nil, needsLightPlate: false, needsDarkPlate: false, inverted: nil)
+        guard let bytes = FaviconBitmap.bytes(of: image, width: width, height: height) else {
+            return Measurement(
+                glyphLuminance: nil,
+                needsLightPlate: false,
+                needsDarkPlate: false,
+                fullBleed: false,
+                inverted: nil
+            )
         }
         let count = width * height
         var transparent = 0
@@ -69,9 +86,16 @@ enum FaviconContrast {
         var sumG = 0.0
         var sumB = 0.0
         var sumY = 0.0
+        let square = width == height && width > 0
+        var edgeOpaque = square
 
         for index in 0..<count {
             let pixel = read(bytes, index: index)
+            let x = index % width
+            let y = index / width
+            if square, x == 0 || y == 0 || x == width - 1 || y == height - 1, pixel.alpha < 0.90 {
+                edgeOpaque = false
+            }
             if pixel.alpha < 0.12 {
                 transparent += 1
                 continue
@@ -111,13 +135,14 @@ enum FaviconContrast {
             glyphLuminance: glyph,
             needsLightPlate: needsLightPlate,
             needsDarkPlate: needsDarkPlate,
+            fullBleed: edgeOpaque,
             inverted: inverted
         )
     }
 
     /// One gray, with a transparent ground. A second colour (a white eye, a coloured tile) is not a glyph.
     private static func glyphLuminance(
-        bytes: UnsafeMutablePointer<UInt8>,
+        bytes: [UInt8],
         count: Int,
         high: Int,
         transparentFraction: Double,
@@ -154,7 +179,7 @@ enum FaviconContrast {
     }
 
     /// The context stores premultiplied channels. Straight colour is what the glyph test needs.
-    private static func read(_ bytes: UnsafeMutablePointer<UInt8>, index: Int) -> Sample {
+    private static func read(_ bytes: [UInt8], index: Int) -> Sample {
         let offset = index * 4
         let alpha = Double(bytes[offset + 3]) / 255
         guard alpha > 0.001 else {
@@ -167,19 +192,10 @@ enum FaviconContrast {
         return Sample(red: red, green: green, blue: blue, alpha: alpha, luminance: luminance)
     }
 
-    private static func invertedImage(bytes: UnsafeMutablePointer<UInt8>, width: Int, height: Int) -> NSImage? {
-        guard let copy = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: width,
-            pixelsHigh: height,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: width * 4,
-            bitsPerPixel: 32
-        ), let destination = copy.bitmapData else { return nil }
+    private static func invertedImage(bytes: [UInt8], width: Int, height: Int) -> NSImage? {
+        guard let context = FaviconBitmap.context(width: width, height: height),
+              let destination = context.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        context.clear(CGRect(x: 0, y: 0, width: width, height: height))
         let count = width * height
         for index in 0..<count {
             let pixel = read(bytes, index: index)
@@ -197,10 +213,8 @@ enum FaviconContrast {
             destination[offset + 2] = UInt8(min(255, (1 - pixel.blue) * alpha * 255))
             destination[offset + 3] = UInt8(min(255, alpha * 255))
         }
-        copy.size = NSSize(width: width, height: height)
-        let image = NSImage(size: copy.size)
-        image.addRepresentation(copy)
-        return image
+        guard let cgImage = context.makeImage() else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: width, height: height))
     }
 
     private static func pixelSize(of image: NSImage) -> (Int, Int) {
@@ -221,31 +235,73 @@ enum FaviconContrast {
         return (max(1, Int((Double(width) * scale).rounded())), max(1, Int((Double(height) * scale).rounded())))
     }
 
-    private static func raster(_ image: NSImage, width: Int, height: Int) -> NSBitmapImageRep? {
-        guard let bitmap = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: width,
-            pixelsHigh: height,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: width * 4,
-            bitsPerPixel: 32
-        ) else { return nil }
-        bitmap.size = NSSize(width: width, height: height)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-        NSColor.clear.setFill()
-        NSRect(x: 0, y: 0, width: width, height: height).fill()
-        image.draw(
-            in: NSRect(x: 0, y: 0, width: width, height: height),
-            from: .zero,
-            operation: .sourceOver,
-            fraction: 1
+}
+
+/// Premultiplied sRGB bitmap for a favicon. Cleared first. Never opaque, never JPEG.
+enum FaviconBitmap {
+    static func pixelSize(of image: NSImage, cap: Int) -> (Int, Int) {
+        var width = 0
+        var height = 0
+        for rep in image.representations where rep.pixelsWide * rep.pixelsHigh > width * height {
+            width = rep.pixelsWide
+            height = rep.pixelsHigh
+        }
+        if width <= 0 || height <= 0 {
+            width = max(1, Int((image.size.width * 2).rounded()))
+            height = max(1, Int((image.size.height * 2).rounded()))
+        }
+        let longest = max(width, height)
+        guard longest > cap else { return (max(width, 1), max(height, 1)) }
+        let scale = Double(cap) / Double(longest)
+        return (
+            max(1, Int((Double(width) * scale).rounded())),
+            max(1, Int((Double(height) * scale).rounded()))
         )
+    }
+
+    static func context(width: Int, height: Int) -> CGContext? {
+        guard width > 0, height > 0, let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        return CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: space,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        )
+    }
+
+    static func draw(_ image: NSImage, in context: CGContext, width: Int, height: Int) {
+        let rect = CGRect(x: 0, y: 0, width: width, height: height)
+        context.clear(rect)
+        context.interpolationQuality = .high
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        image.draw(in: NSRect(x: 0, y: 0, width: width, height: height), from: .zero, operation: .sourceOver, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
-        return bitmap
+    }
+
+    static func bytes(of image: NSImage, width: Int, height: Int) -> [UInt8]? {
+        guard let context = context(width: width, height: height) else { return nil }
+        draw(image, in: context, width: width, height: height)
+        guard let data = context.data else { return nil }
+        let count = width * height * 4
+        let pointer = data.assumingMemoryBound(to: UInt8.self)
+        return Array(UnsafeBufferPointer(start: pointer, count: count))
+    }
+
+    static func rendered(_ image: NSImage, width: Int, height: Int) -> NSImage? {
+        guard let context = context(width: width, height: height) else { return nil }
+        draw(image, in: context, width: width, height: height)
+        guard let cgImage = context.makeImage() else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: width, height: height))
+    }
+
+    static func pngData(of image: NSImage, width: Int, height: Int) -> Data? {
+        guard let context = context(width: width, height: height) else { return nil }
+        draw(image, in: context, width: width, height: height)
+        guard let cgImage = context.makeImage() else { return nil }
+        return NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:])
     }
 }

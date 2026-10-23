@@ -116,7 +116,7 @@ final class FaviconStore {
                 return nil
             }
             guard let image = NSImage(data: data), Self.isUsable(image) else { return nil }
-            return image
+            return Self.normalized(image)
         } catch {
             return nil
         }
@@ -127,8 +127,9 @@ final class FaviconStore {
         guard let file = fileURL(for: key), let image = NSImage(contentsOf: file), Self.isUsable(image) else {
             return nil
         }
-        memory[key] = image
-        return image
+        let clean = Self.normalized(image)
+        memory[key] = clean
+        return clean
     }
 
     private func store(_ image: NSImage, for key: String) {
@@ -183,9 +184,15 @@ final class FaviconStore {
         image.isValid && image.size.width > 0 && image.size.height > 0
     }
 
+    /// One premultiplied bitmap. Transparent padding stays clear; nothing is flattened to black.
+    private static func normalized(_ image: NSImage) -> NSImage {
+        let (width, height) = FaviconBitmap.pixelSize(of: image, cap: 128)
+        return FaviconBitmap.rendered(image, width: width, height: height) ?? image
+    }
+
     private static func pngData(from image: NSImage) -> Data? {
-        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return nil }
-        return rep.representation(using: .png, properties: [:])
+        let (width, height) = FaviconBitmap.pixelSize(of: image, cap: 128)
+        return FaviconBitmap.pngData(of: image, width: width, height: height)
     }
 
     /// Picks one href per appearance. An explicit `prefers-color-scheme` icon outranks `apple-touch-icon`.

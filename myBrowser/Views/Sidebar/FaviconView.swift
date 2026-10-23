@@ -10,8 +10,7 @@ struct FaviconView: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    /// Continuous corner, 24% of the box. Square bitmaps soften; a round or
-    /// transparent mark sits inside the curve, so the clip does not shave it.
+    /// Continuous corner, 24% of the box. Applied only to opaque edge-to-edge art.
     private static let cornerFraction: CGFloat = 0.24
 
     private var iconShape: RoundedRectangle {
@@ -21,18 +20,7 @@ struct FaviconView: View {
     var body: some View {
         Group {
             if let image {
-                let presentation = FaviconContrast.presentation(for: image, colorScheme: colorScheme)
-                ZStack {
-                    if presentation.plate {
-                        iconShape.fill(plateColor)
-                    }
-                    Image(nsImage: presentation.image)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFit()
-                }
-                .frame(width: size, height: size)
-                .clipShape(iconShape)
+                favicon(image)
             } else if let letter = SidebarTitle.monogram(url: url, title: title) {
                 Text(letter)
                     .font(.system(size: size * 0.55, weight: .semibold, design: .rounded))
@@ -47,6 +35,28 @@ struct FaviconView: View {
             }
         }
         .accessibilityHidden(true)
+    }
+
+    /// Scaled to fit and centred. A full-bleed square is the only icon that is clipped.
+    /// Anything else keeps its transparent padding, with no fill behind it other than the contrast plate.
+    @ViewBuilder
+    private func favicon(_ image: NSImage) -> some View {
+        let presentation = FaviconContrast.presentation(for: image, colorScheme: colorScheme)
+        let content = ZStack {
+            if presentation.plate {
+                iconShape.fill(plateColor)
+            }
+            Image(nsImage: presentation.image)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+        }
+        .frame(width: size, height: size)
+        if presentation.roundsCorners {
+            content.clipShape(iconShape)
+        } else {
+            content
+        }
     }
 
     /// Light chip in dark mode, dark chip in light mode. Solid, so vibrancy does not wash it out.
